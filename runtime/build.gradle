@@ -1,0 +1,189 @@
+plugins {
+    // Boot 플러그인은 app 모듈에만 적용한다.
+    alias(libs.plugins.spring.boot) apply false
+    alias(libs.plugins.spring.dependency.management) apply false
+    alias(libs.plugins.spotless)
+}
+
+// 루트 프로젝트: 빌드 스크립트와 버전 카탈로그의 공백·마지막 줄바꿈 규칙 (FR-11).
+spotless {
+    lineEndings = 'UNIX'
+    format 'gradle', {
+        target '*.gradle', '**/*.gradle', 'gradle/*.toml'
+        targetExclude '**/build/**', '**/.gradle/**'
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+// subprojects 블록 안에서 루트의 카탈로그를 부모 프로젝트 속성으로 찾으면 Gradle 10 에서 오류가 된다.
+// 루트 스크립트의 지역 변수로 잡아 둔다.
+def catalog = libs
+
+// ---- 모든 모듈 공통 Java 규칙 (FR-02) ----
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'io.spring.dependency-management'
+    apply plugin: 'com.diffplug.spotless'
+
+    java {
+        toolchain {
+            // Gradle 런처는 JDK 17 에서 돌 수 있다. 컴파일과 테스트는 Java 21 toolchain 으로 한다.
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    dependencyManagement {
+        imports {
+            mavenBom "org.springframework.boot:spring-boot-dependencies:${catalog.versions.spring.boot.get()}"
+        }
+    }
+
+    dependencies {
+        // 모든 모듈의 단위 테스트는 JUnit 5 와 AssertJ 를 쓴다. Spring 테스트 지원은 필요한 모듈만 더한다.
+        testImplementation catalog.junit.jupiter
+        testImplementation catalog.assertj.core
+        // Gradle 9 는 JUnit Platform launcher 를 직접 선언해야 한다.
+        testRuntimeOnly catalog.junit.platform.launcher
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        // 모든 경고를 오류로 다룬다 (main 과 test 모두).
+        // -parameters: Boot 플러그인은 app 에만 이 옵션을 넣는다. adapter-web 의 @PathVariable/@RequestParam 이
+        // 이름 없이도 동작하려면 모든 모듈에 필요하다.
+        options.compilerArgs.addAll(['-Xlint:all', '-Werror', '-parameters'])
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        testLogging {
+            events 'failed', 'skipped'
+            exceptionFormat = 'full'
+        }
+    }
+
+    spotless {
+        lineEndings = 'UNIX'
+        java {
+            googleJavaFormat()
+            removeUnusedImports()
+            trimTrailingWhitespace()
+            endWithNewline()
+        }
+    }
+}
+
+// ---- 모듈 의존 규칙 (FR-03) ----
+// 금지된 import 는 모듈 선언 때문에 컴파일에서 실패한다. 이 검사는 그 선언 자체를 지킨다:
+// 나중에 build.gradle 을 고쳐 모듈 경계를 조용히 넓히면 어떤 태스크도 실행되기 전에 빌드가 실패한다.
+// 검사 대상:
+//   - 표준 선언 설정(api, implementation, compileOnly, compileOnlyApi, runtimeOnly)의 선언
+//   - compileClasspath, runtimeClasspath 의 allDependencies: extendsFrom 으로 이어진 모든 설정(사용자 정의 설정 포함)의
+//     선언을 모은다. 의존성을 해석(resolve)하지 않으므로 projectsEvaluated 에서 읽어도 비용이 없다.
+// 테스트 설정(testImplementation 등)은 main 클래스패스에 들어가지 않으므로 검사하지 않는다.
+// 파일 의존성(files(...), fileTree(...))은 app 을 뺀 모든 모듈에서 거부한다. 다른 모듈의 클래스를 프로젝트 의존 없이 끌어오는 길이다.
+// 클래스 수준의 두 번째 방어선은 app 테스트의 ArchUnit 규칙이다.
+def checkedConfigurations = ['api', 'implementation', 'compileOnly', 'compileOnlyApi', 'runtimeOnly']
+def classpathConfigurations = ['compileClasspath', 'runtimeClasspath']
+def runtimeRootDir = projectDir
+
+// 모듈 종류는 프로젝트 경로로 정한다. 최상위 프로젝트(:domain, :application, :app, :adapter-*, :provider-*)만 인정한다.
+// 이름만 보면 :adapter-web:app 같은 중첩 프로젝트가 app 으로 분류되어 검사를 피한다.
+def moduleKind = { String path ->
+    if (path == ':domain' || path == ':application' || path == ':app') {
+        return path.substring(1)
+    }
+    if (path ==~ /:adapter-[a-z0-9]+(-[a-z0-9]+)*/) {
+        return 'adapter'
+    }
+    if (path ==~ /:provider-[a-z0-9]+(-[a-z0-9]+)*/) {
+        return 'provider'
+    }
+    return null
+}
+
+def allowedProjects = [
+    domain     : [],
+    application: [':domain'],
+    adapter    : [':application', ':domain'],
+    provider   : [':application', ':domain', ':adapter-dbprovider'],
+]
+
+def ruleText = [
+    domain     : 'domain 은 어떤 의존성도 선언하지 않는다',
+    application: 'application 은 :domain 만 선언할 수 있다',
+    adapter    : 'adapter-* 는 프로젝트로 :application, :domain 만 선언할 수 있고 파일 의존성은 선언할 수 없다',
+    provider   : 'provider-* 는 프로젝트로 :application, :domain, :adapter-dbprovider 만 선언할 수 있고 파일 의존성은 선언할 수 없다',
+]
+
+gradle.projectsEvaluated {
+    def violations = []
+    subprojects.each { p ->
+        if (p.path.indexOf(':', 1) >= 0) {
+            violations << "${p.path}: 중첩 프로젝트는 허용하지 않는다 (모듈은 settings.gradle 에 최상위로 include 하고 runtime/<이름>/ 에 둔다)".toString()
+            return
+        }
+        def kind = moduleKind(p.path)
+        if (kind == null) {
+            violations << "${p.path}: 알 수 없는 모듈 이름이다 (domain, application, adapter-*, provider-*, app 중 하나여야 한다)"
+            return
+        }
+        // 게이트의 모듈 탐색(scripts/gate/lib.sh)은 runtime/<이름>/build.gradle 로 모듈을 찾는다. 위치가 다르거나 build.gradle 이
+        // 없으면 그 모듈의 테스트 결과가 판정에서 빠진다. 그래서 위치와 빌드 파일을 여기서 강제한다.
+        if (p.projectDir.canonicalFile != new File(runtimeRootDir, p.name).canonicalFile) {
+            violations << "${p.path}: 프로젝트 디렉터리는 runtime/${p.name} 이어야 한다 (현재: ${p.projectDir})".toString()
+        }
+        if (!new File(p.projectDir, 'build.gradle').isFile()) {
+            violations << "${p.path}: 자기 build.gradle 이 없다 (게이트가 build.gradle 로 모듈을 찾으므로 내용이 없어도 파일이 있어야 한다)".toString()
+        }
+        if (new File(p.projectDir, 'build.gradle.kts').exists()) {
+            violations << "${p.path}: build.gradle.kts 는 쓰지 않는다 (Groovy build.gradle 만 쓴다)".toString()
+        }
+        if (kind == 'app') {
+            return
+        }
+        def declarationSets = []
+        checkedConfigurations.each { configurationName ->
+            def configuration = p.configurations.findByName(configurationName)
+            if (configuration != null) {
+                declarationSets << [configurationName, configuration.dependencies]
+            }
+        }
+        classpathConfigurations.each { configurationName ->
+            def configuration = p.configurations.findByName(configurationName)
+            if (configuration != null) {
+                declarationSets << ["${configurationName}(상속된 설정 포함)".toString(), configuration.allDependencies]
+            }
+        }
+        // 같은 선언이 implementation 과 compileClasspath(상속) 에서 두 번 보고되지 않게 한다.
+        def seen = Collections.newSetFromMap(new IdentityHashMap())
+        declarationSets.each { declarationSet ->
+            def where = declarationSet[0]
+            declarationSet[1].each { dependency ->
+                if (!seen.add(dependency)) {
+                    return
+                }
+                def allowed
+                def label
+                if (dependency instanceof FileCollectionDependency) {
+                    allowed = false
+                    label = '파일 의존성(files/fileTree)'
+                } else if (dependency instanceof ProjectDependency) {
+                    allowed = allowedProjects[kind].contains(dependency.path)
+                    label = "project ${dependency.path}"
+                } else {
+                    // 외부 라이브러리: adapter-*, provider-* 만 허용한다.
+                    allowed = kind == 'adapter' || kind == 'provider'
+                    label = "${dependency.group}:${dependency.name}"
+                }
+                if (!allowed) {
+                    violations << "${p.path}: ${where} ${label} (${ruleText[kind]})".toString()
+                }
+            }
+        }
+    }
+    if (!violations.isEmpty()) {
+        throw new GradleException('모듈 의존 규칙 위반 (runtime/build.gradle 의 모듈 의존 규칙 참고):\n  - ' + violations.join('\n  - '))
+    }
+}

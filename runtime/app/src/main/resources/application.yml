@@ -1,0 +1,37 @@
+# 모든 프로파일 공통 설정.
+# 프로파일을 지정하지 않으면 desktop 이다. 실수로 프로파일 없이 실행해도 루프백(127.0.0.1)에만 바인딩된다.
+# 서버 배포는 SPRING_PROFILES_ACTIVE=server 로 명시해야 한다.
+server:
+  # 공통 기본 바인딩 주소는 루프백이다. 모든 인터페이스로 넓히는 것은 server 프로파일(application-server.yml)뿐이다.
+  # 그래서 desktop 프로파일 파일이 적용되지 않는 경우(예: 다른 프로파일만 켠 경우)에도 외부 인터페이스에 열리지 않는다.
+  address: 127.0.0.1
+
+spring:
+  application:
+    name: queryhub-runtime
+  profiles:
+    default: desktop
+  web:
+    # 오류 응답은 QueryHubErrorController 와 GlobalExceptionHandler 가 공통 형식으로 만든다.
+    # Boot 기본 오류 속성에도 내부 정보가 들어가지 않게 막아 둔다.
+    error:
+      include-stacktrace: never
+      include-message: never
+      include-binding-errors: never
+      include-exception: false
+    # 정적 리소스를 제공하지 않는다. 없는 경로는 NoHandlerFoundException -> 404 NOT_FOUND 가 된다.
+    resources:
+      add-mappings: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # health 만 공개한다. 나머지 actuator 엔드포인트는 404 다.
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        # /actuator/health/liveness, /actuator/health/readiness
+        enabled: true

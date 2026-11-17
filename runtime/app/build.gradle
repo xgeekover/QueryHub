@@ -1,0 +1,28 @@
+// app: Spring Boot 조립, 프로파일, 실행 JAR. 모든 모듈을 아는 유일한 모듈이다.
+plugins {
+    id 'org.springframework.boot'
+}
+
+dependencies {
+    implementation project(':adapter-web')
+    implementation project(':application')
+    implementation libs.spring.boot.starter.webmvc
+    implementation libs.spring.boot.starter.actuator
+
+    testImplementation libs.spring.boot.starter.test
+    testImplementation libs.spring.boot.starter.webmvc.test
+    // 아키텍처 규칙(R1-R7). app 의 테스트 클래스패스에는 모든 모듈이 있으므로 나중에 추가되는 모듈도 자동으로 검사된다.
+    testImplementation libs.archunit
+}
+
+springBoot {
+    // BuildProperties 로 버전을 제공한다. 빌드 시각을 빼야 같은 입력에서 같은 결과가 나와 UP-TO-DATE 가 유지된다.
+    buildInfo {
+        excludes = ['time']
+    }
+}
+
+tasks.named('bootJar') {
+    // P0-C 와 README 가 참조하는 고정 경로: runtime/app/build/libs/queryhub-runtime.jar
+    archiveFileName = 'queryhub-runtime.jar'
+}

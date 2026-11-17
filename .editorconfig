@@ -1,0 +1,27 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.gradle]
+indent_style = space
+indent_size = 4
+
+# Java 형식은 Spotless(google-java-format)가 정하며 2칸 들여쓰기다. 다르게 두면 편집기 결과가 lint 게이트에서 실패한다.
+[*.java]
+indent_style = space
+indent_size = 2
+
+[*.{yml,yaml,json,toml}]
+indent_style = space
+indent_size = 2
+
+# Markdown 은 줄 끝 공백 두 개가 줄바꿈이므로 지우지 않는다.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.bat]
+end_of_line = crlf

@@ -1,0 +1,18 @@
+plugins {
+    // 로컬에는 JDK 17 만 있을 수 있다. Java 21 toolchain 이 없으면 foojay 로 내려받는다.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+dependencyResolutionManagement {
+    // 저장소는 여기 한 곳에서만 선언한다. 모듈 build.gradle 에 repositories 를 두면 빌드가 실패한다.
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'queryhub-runtime'
+
+// 모듈은 필요해지는 Phase 에 추가한다. 이름 규칙(domain, application, adapter-*, provider-*, app)은
+// runtime/build.gradle 의 모듈 의존 규칙 검사가 강제한다.
+include 'domain', 'application', 'adapter-web', 'app'

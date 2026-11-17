@@ -1,0 +1,4 @@
+// application: 유스케이스와 포트. domain 에만 의존하는 순수 Java 모듈이다.
+dependencies {
+    api project(':domain')
+}

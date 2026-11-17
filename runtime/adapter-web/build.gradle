@@ -1,0 +1,8 @@
+// adapter-web: 관리 REST, 공통 응답 형식, 요청 ID, 오류 매핑 (Spring MVC).
+dependencies {
+    implementation project(':application')
+    implementation libs.spring.boot.starter.webmvc
+
+    // 필터 단위 테스트에 spring-test 의 MockHttpServletRequest 등을 쓴다.
+    testImplementation libs.spring.boot.starter.test
+}

@@ -1,0 +1,15 @@
+# 기본: 텍스트는 저장소와 작업 트리 모두 LF 로 고정한다 (Windows 체크아웃도 LF).
+* text=auto eol=lf
+
+# Windows 배치 파일만 CRLF 로 둔다.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리
+*.jar binary
+*.png binary
+*.ico binary
+
+# 셸 스크립트는 어떤 플랫폼에서도 LF 여야 실행된다.
+gradlew text eol=lf
+*.sh text eol=lf
