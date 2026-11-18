@@ -3,3 +3,14 @@
 server:
   address: 127.0.0.1
   port: 18580
+
+# 관리 API(/admin/api/v1/**)의 CORS: Tauri WebView 의 출처만 허용한다 (GET 만, 자격 증명 없음).
+# tauri://localhost 는 macOS·Linux, http://tauri.localhost 는 Windows 의 WebView 출처다.
+# 개발 서버(Vite, http://localhost:1420)는 Origin 을 지우는 프록시로 붙으므로 여기에 넣지 않는다.
+# application.yml 과 application-server.yml 에는 이 키가 없다 (server 프로파일에는 CORS 가 없다).
+queryhub:
+  admin:
+    cors:
+      allowed-origins:
+        - tauri://localhost
+        - http://tauri.localhost

@@ -19,6 +19,15 @@ indent_size = 2
 indent_style = space
 indent_size = 2
 
+# Rust 형식은 rustfmt 가 정하며 4칸 들여쓰기다 (lint 게이트의 cargo fmt --check).
+[*.rs]
+indent_style = space
+indent_size = 4
+
+[*.{ts,tsx,js,css}]
+indent_style = space
+indent_size = 2
+
 # Markdown 은 줄 끝 공백 두 개가 줄바꿈이므로 지우지 않는다.
 [*.md]
 trim_trailing_whitespace = false

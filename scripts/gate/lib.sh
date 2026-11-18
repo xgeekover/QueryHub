@@ -97,3 +97,55 @@ run_with_timeout() {
   wait "$pid" || status=$?
   return "$status"
 }
+
+# ---- desktop (P0-C): pnpm 프로젝트 desktop/ 와 Tauri 크레이트 desktop/src-tauri/ ----
+
+DESKTOP_MANIFEST="desktop/src-tauri/Cargo.toml"
+
+# require_tool NAME...
+# 도구가 PATH 에 있는지 확인하고 버전을 출력한다. 하나라도 없으면 0 이 아닌 값으로 끝난다(게이트는 건너뛰지 않고 실패한다).
+require_tool() {
+  local tool status=0
+  for tool in "$@"; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '  %-6s %s\n' "$tool" "$("$tool" --version 2>&1 | head -n 1)"
+    else
+      echo "  $tool 이 없다 (PATH 에서 찾지 못했다)" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+# desktop 이 있는지 확인한다. 없거나 불완전하면 실패한다(desktop 단계를 건너뛰어 녹색이 되는 일을 막는다).
+require_desktop() {
+  local path status=0
+  for path in desktop/package.json desktop/pnpm-lock.yaml "$DESKTOP_MANIFEST" desktop/src-tauri/Cargo.lock; do
+    if [ ! -f "$path" ]; then
+      echo "desktop 이 없거나 불완전하다: $path 가 없다. desktop 단계는 건너뛰지 않고 실패한다." >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+# pnpm_desktop ARGS...: desktop/ 에서 pnpm 을 실행한다.
+pnpm_desktop() {
+  pnpm --dir desktop "$@"
+}
+
+# cargo_desktop SUBCOMMAND ARGS...: desktop/src-tauri 크레이트에 cargo 를 --locked 로 실행한다(잠금 파일을 바꾸지 않는다).
+cargo_desktop() {
+  local subcommand="$1"
+  shift
+  cargo "$subcommand" --manifest-path "$DESKTOP_MANIFEST" --locked "$@"
+}
+
+# 잠금 파일 그대로 의존성을 설치한다. package.json 과 pnpm-lock.yaml 이 어긋나면 실패한다.
+desktop_install() {
+  if [ ! -f desktop/package.json ]; then
+    echo "desktop/package.json 이 없다: 설치할 수 없다" >&2
+    return 1
+  fi
+  pnpm --dir desktop install --frozen-lockfile
+}

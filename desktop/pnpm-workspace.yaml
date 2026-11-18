@@ -1,0 +1,8 @@
+# pnpm 설정만 둔다 (workspace 패키지는 없다). desktop/ 하나가 프로젝트다.
+# 의존성의 설치 스크립트(postinstall 등): 지금 의존성에는 승인이 필요한 것이 없다(pnpm 11.9.0 install 이 아무것도 보고하지 않았다).
+# 필요해지면 이 파일에 이름을 적어 명시적으로 승인한다. 대화형 승인(pnpm approve-builds)은 쓰지 않는다.
+
+# pnpm 11 은 공개된 지 하루가 안 된 버전을 기본으로 거부한다(minimumReleaseAge).
+# lucide-react 1.74.0 은 고정 버전(FR-02)을 정한 날 공개되어 pnpm install 이 직접 이 예외를 적었다. 버전을 바꾸면 이 줄도 지운다.
+minimumReleaseAgeExclude:
+  - lucide-react@1.74.0

@@ -1,0 +1,25 @@
+[package]
+name = "queryhub-desktop"
+version = "0.1.0"
+description = "QueryHub 데스크톱 셸 (Tauri)"
+edition = "2021"
+publish = false
+
+# 데스크톱 전용: 모바일 진입점(staticlib, cdylib)은 만들지 않는다.
+[lib]
+name = "queryhub_desktop_lib"
+crate-type = ["rlib"]
+
+# Tauri 는 2.11 로 고정한다. Cargo.lock 은 NexTerm 의 검증된 잠금 파일에서 복사했고 모든 cargo 명령은 --locked 로 실행한다.
+# 크레이트나 기능(feature)을 더하면 잠금 파일에 없는 버전(예: 2.12 계열)이 섞일 수 있다. lint 게이트의 Tauri 고정 검사가 지킨다.
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 런타임 종료 신호(SIGTERM)를 보낸다.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

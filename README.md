@@ -8,13 +8,14 @@ SQL 을 저장하고 API 엔드포인트와 연결해, 외부 시스템이 HTTP 
 - **desktop**: Tauri 데스크톱 앱이 런타임을 자식 프로세스로 띄운다. 루프백(127.0.0.1)에만 바인딩한다.
 - **server**: `java -jar` 나 Docker 로 서버에 배포한다. 모든 인터페이스에 바인딩한다.
 
-## 현재 상태: Phase 0 / P0-B (메타데이터 기반)
+## 현재 상태: Phase 0 / P0-C (Desktop 셸 스파이크)
 
 | 구분 | 내용 |
 |---|---|
 | 구현됨 (P0-A) | Gradle 멀티 모듈 빌드(`runtime/`), 모듈 의존 규칙(Gradle 선언 검사 + ArchUnit), 공통 응답·오류 형식, X-Request-Id, health 엔드포인트, 런타임 상태 관리 API, 프로파일(desktop/server), 게이트 스크립트(`scripts/gate/`) |
 | 구현됨 (P0-B) | Metadata DB(MariaDB) 연결과 기동 검사, Flyway 마이그레이션 V1(`app_setting`), `AppSettingRepository` 포트와 JDBC 구현(`adapter-metadata`), ArchUnit R8, Testcontainers 통합 테스트와 통합 테스트 게이트(`integration.sh`), 개발용 compose(`deploy/compose.dev.yml`) |
-| 계획 | Desktop 셸 스파이크(P0-C), CI(P0-D), 설계 문서 `docs/`(후속 태스크) |
+| 구현됨 (P0-C) | Tauri 2.11 데스크톱 셸(`desktop/`): 런타임 JAR 을 자식 프로세스로 자동 시작·중지·재시작, 상태 화면(React 19 + shadcn/ui), 앱 종료 시 런타임 정지, 런타임의 부모 프로세스 감시(`QUERYHUB_DESKTOP_PARENT_PID`), desktop 프로파일의 관리 API CORS, 게이트의 desktop 단계(vitest, cargo test 판정기 `cargo-test-check.sh`, Tauri 버전 고정 검사) |
+| 계획 | CI(P0-D), 설계 문서 `docs/`(후속 태스크) |
 | 계획 | DB 연결과 Provider 4종·관리자 토큰·보안·비밀번호 암호화(Phase 1), SQL 저장소(Phase 2), API 관리(Phase 3), API 런타임·API Key(Phase 4), Export(Phase 5), Desktop UI와 Metadata DB 접속 화면(Phase 6), 모니터링(Phase 7), 배포·Dockerfile(Phase 8) |
 
 설계 문서(요구사항, 아키텍처, ADR, ERD, API 명세 등)는 `docs/` 에 둘 예정이다(계획: 별도 태스크). 그때까지는 이 README 가 저장소의 유일한 문서다.
@@ -29,8 +30,12 @@ SQL 을 저장하고 API 엔드포인트와 연결해, 외부 시스템이 HTTP 
 │  ├─ adapter-web/         관리 REST, 공통 응답 형식, 요청 ID 필터, 오류 매핑
 │  ├─ adapter-metadata/    메타데이터 저장소: JdbcAppSettingRepository, Flyway 마이그레이션(db/migration)
 │  └─ app/                 Spring Boot 조립, 프로파일, Metadata DB 설정, 실행 JAR, 아키텍처 테스트, 통합 테스트(src/integrationTest)
+├─ desktop/                Tauri 데스크톱 셸 (pnpm 프로젝트: package.json, pnpm-lock.yaml, vite.config.ts, components.json)
+│  ├─ src/                 UI: App.tsx, components/RuntimePanel.tsx, components/ui/(shadcn), runtime/(shell.ts, adminApi.ts …)
+│  └─ src-tauri/           Rust 크레이트 queryhub-desktop: Cargo.toml, Cargo.lock(NexTerm 에서 복사), tauri.conf.json,
+│                          capabilities/, icons/, src/(lib.rs, commands.rs, runtime/: supervisor, launch, java, health, output)
 ├─ deploy/                 개발용 compose (compose.dev.yml), 환경변수 예시 (env.example)
-├─ scripts/gate/           build · test · lint · integration 게이트 스크립트와 JUnit 결과 판정기
+├─ scripts/gate/           build · test · lint · integration 게이트 스크립트, JUnit 결과 판정기, cargo test 결과 판정기
 ├─ .editorconfig  .gitattributes  .gitignore
 └─ README.md
 ```
@@ -209,6 +214,147 @@ bash scripts/gate/build.sh
   `spring.main.lazy-initialization=true` 여도 마찬가지다(모드 검사 빈은 `@Lazy(false)`).
 - P0-A 에는 인증이 없다. `server` 프로파일은 모든 인터페이스에 바인딩하므로 신뢰할 수 있는 네트워크에서만 실행한다. 관리자 토큰,
   루프백 전용 관리 API, API Key 는 Phase 1·4 에서 추가한다(계획).
+
+## Desktop 셸 (P0-C 스파이크)
+
+`desktop/` 은 Tauri 2.11 앱이다. Rust 셸이 런타임 JAR 을 자식 프로세스
+`<java> -jar <jar> --spring.profiles.active=desktop --server.port=18580` 로 띄운다(Tauri sidecar·`externalBin` 은 쓰지 않는다).
+UI 는 수명 주기만 셸 커맨드 네 개(`runtime_status`, `runtime_start`, `runtime_stop`, `runtime_restart`)로 다루고, 런타임 정보는
+HTTP 로 관리 API 에서 읽는다. 셸은 `/admin/api/**` 를 부르지 않는다.
+
+### 준비물 (desktop)
+
+- Node 24, pnpm 11.9.0(`package.json` 의 `packageManager`), Rust 1.97 과 rustfmt·clippy, Xcode Command Line Tools(macOS).
+- **JDK 21**(런타임 실행용). 셸은 `<java> -version` 의 주 버전이 21 미만이면 `java_too_old` 로 거부한다. 이 머신의 기본 `java`(17)는
+  거부되므로 `QUERYHUB_DESKTOP_JAVA` 에 JDK 21 의 `bin/java` 를 지정한다(예: Gradle toolchain
+  `~/.gradle/jdks/<배포판 디렉터리>/Contents/Home/bin/java`).
+- 실행 중인 Metadata DB(개발용 compose)와 런타임 JAR.
+
+### 실행 (개발 모드)
+
+```sh
+docker compose -f deploy/compose.dev.yml up -d --wait   # 메인 체크아웃에서. 중지는 위 "개발용 DB" 의 stop
+sh runtime/gradlew -p runtime :app:bootJar              # 런타임 JAR (bash scripts/gate/build.sh 도 만든다)
+set -a; . deploy/.env; set +a                           # Metadata DB 변수를 셸 환경으로
+export QUERYHUB_DESKTOP_JAVA="$HOME/.gradle/jdks/<배포판 디렉터리>/Contents/Home/bin/java"
+pnpm --dir desktop install
+pnpm --dir desktop tauri dev
+```
+
+`tauri dev` 가 Vite 개발 서버(`http://localhost:1420`, strictPort)를 띄우고 앱을 연다. 앱은 시작하자마자 런타임을 자동으로 시작한다
+(버튼을 누르지 않아도 된다). 디버그 빌드는 상태 전이(예: `runtime: starting -> failed(exited) ...`)와 비밀번호를 가린 런타임 출력을
+셸의 stderr 에 찍는다.
+
+### 환경변수 (desktop)
+
+| 변수 | 읽는 쪽 | 설명 |
+|---|---|---|
+| `QUERYHUB_DESKTOP_JAVA` | 셸 | java 실행 파일 경로. 없으면 `JAVA_HOME/bin/java`, 그다음 `PATH` 의 `java`. 지정했는데 실행할 수 없으면 다른 곳으로 넘어가지 않고 `java_not_found` |
+| `QUERYHUB_DESKTOP_RUNTIME_JAR` | 셸 | 런타임 JAR 경로. 없으면 디버그 빌드는 저장소의 `runtime/app/build/libs/queryhub-runtime.jar`, 릴리스 빌드는 `jar_not_found`(JAR 묶기는 Phase 8 계획) |
+| `QUERYHUB_METADATA_DB_HOST`, `_PORT`(선택), `_NAME`, `_USERNAME`, `_PASSWORD` | 셸 → 런타임 | 셸이 자기 환경에서 읽어 런타임에 **환경변수로만** 넘긴다(명령행 인자에 넣지 않는다). 셸은 비어 있지 않은지만 보고 형식 검사는 런타임이 한다. 없으면 `metadata_settings_missing`(빠진 이름만 말한다) |
+| `QUERYHUB_DESKTOP_PARENT_PID` | 셸 → 런타임 | 셸의 PID. 런타임의 부모 감시가 읽는다(아래). 손으로 설정하지 않는다 |
+
+- 셸은 런타임(과 `java -version` 확인)을 빈 환경에서 띄우고, 자기 환경에서 허용 목록의 변수만 물려준다:
+  `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TMPDIR`(Windows 는 `PATH`, `SYSTEMROOT`, `WINDIR`, `TEMP`,
+  `TMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PATHEXT`, `COMPUTERNAME`, 대소문자 무시, 미검증). 그다음 위 Metadata DB
+  변수와 `QUERYHUB_DESKTOP_PARENT_PID` 를 넣는다. 목적: Spring Boot 는 OS 환경변수를 `application-desktop.yml` 보다 앞세우므로,
+  셸의 환경(`SERVER_ADDRESS`, `MANAGEMENT_*`, `LOGGING_*`, `DEBUG`, `SPRING_*`, `JAVA_TOOL_OPTIONS` 같은 JVM 옵션 변수 등)이
+  런타임의 바인딩 주소, 엔드포인트 노출, 로깅, 프로파일을 바꾸지 못하게 한다. 허용 목록의 이름은 Spring 속성에 바인딩되지 않는다.
+- 셸은 환경을 로그에 남기지 않고 로그 파일을 쓰지 않는다. 화면의 출력 꼬리(마지막 40 줄)와 디버그 stderr 에서는 비밀번호 값을
+  `********` 로 바꾼다.
+- **계획**: Metadata DB 첫 실행 설정 화면과 OS 키체인 저장(Phase 6). 그때까지 Finder 에서 연 앱은 변수가 없어
+  `metadata_settings_missing` 를 보인다.
+- Claude Code 셸에서 앱을 시작하면 그 셸의 환경(세션 변수 포함)을 물려받는다. 셸이 허용 목록 밖의 변수를 런타임에 넘기지 않으므로 런타임에는 영향이 없지만,
+  깨끗한 환경에서 시작하려면 `env -i` 를 쓴다.
+
+```sh
+env -i HOME="$HOME" USER="$USER" PATH="$PATH" QUERYHUB_DESKTOP_JAVA="$QUERYHUB_DESKTOP_JAVA" \
+  sh -c 'set -a; . deploy/.env; set +a; exec pnpm --dir desktop tauri dev'
+```
+
+### 상태와 버튼
+
+| 상태 | 화면 | 시작 | 중지 | 재시작 |
+|---|---|---|---|---|
+| `stopped` | 중지됨 | 가능 | | |
+| `starting` | 시작 중 | | 가능 | |
+| `running` | 실행 중 | | 가능 | 가능 |
+| `failed` | 실패 | 가능 | | 가능 |
+
+- `starting` → `running`: `GET /actuator/health/readiness` 가 200 일 때(500 ms 간격). 90 초 안에 안 되면 런타임을 죽이고
+  `failed(startup_timeout)`.
+- `running` 동안 `GET /actuator/health` 를 5 초마다 확인해 health(정상·비정상)를 따로 보인다. 상태는 `running` 그대로다.
+- 중지 요청 없이 런타임이 끝나면 `failed(exited)` 와 종료 코드, 출력 꼬리를 보인다. 자동 재시작은 하지 않는다.
+- 실패 종류: `java_not_found`, `java_too_old`, `jar_not_found`, `metadata_settings_missing`, `port_in_use`
+  (`lsof -nP -iTCP:18580 -sTCP:LISTEN` 으로 확인), `spawn_failed`, `exited`, `startup_timeout`. 메시지는 한국어이고 변수 이름과 경로만
+  말한다(비밀 값은 넣지 않는다).
+- 포트는 18580 고정이다. 운영 CSP 의 `connect-src` 와 데이터 API 사용자에게 고정 주소가 필요하므로 빈 포트를 찾지 않는다.
+- `running` 이면 런타임 정보 카드(이름, 버전, 모드, 시작 시각, 가동 시간)를 `GET /admin/api/v1/runtime` 에서 10 초마다 읽는다.
+  상태는 셸 커맨드로 1 초(시작 중)·3 초 간격으로 읽는다. 브라우저에서 개발 서버만 열면(Tauri 밖) 안내만 보이고 셸을 부르지 않는다.
+
+### 런타임이 멈추는 방식
+
+- **앱 종료**(창 닫기, Cmd+Q): `RunEvent::Exit` 에서 셸이 런타임에 SIGTERM 을 보내고(Spring 의 정상 종료), 10 초 안에 끝나지
+  않으면 SIGKILL 한다. 중지·재시작 버튼도 같다.
+- **셸이 비정상 종료**(SIGKILL, 크래시)되면 셸은 아무것도 할 수 없다. 대신 런타임의 부모 감시가 `QUERYHUB_DESKTOP_PARENT_PID` 의
+  프로세스가 끝난 것을 감지해(JDK 가 최대 5 초 간격으로 확인하고 PID 재사용도 확인한다) INFO 로그 한 줄을 남기고 종료한다(exit 0).
+  30 초 안에 끝나지 않으면 `Runtime.halt`. 값이 잘못되었으면(숫자가 아님, 0 이하, 살아 있지 않은 PID) 포트를 열기 전에 종료 코드 2 로
+  끝난다. 변수가 없으면(server 모드, 손으로 실행한 `java -jar`) 감시하지 않는다.
+- **미검증**: Windows 와 Linux(정상 종료 신호가 없는 Windows 의 즉시 종료, `java.exe` 콘솔 창, Windows 출처
+  `http://tauri.localhost`, WebKitGTK). P0-D CI 에서 확인한다.
+
+### CORS 와 개발 프록시
+
+- 앱 번들의 UI(출처 `tauri://localhost`, Windows 는 `http://tauri.localhost`)는 `http://127.0.0.1:18580` 의 관리 API 를 직접 읽는다.
+  desktop 프로파일(`application-desktop.yml`)의 `queryhub.admin.cors.allowed-origins` 가 이 두 출처만 둔다.
+- 허용 범위: `/admin/api/v1/**` 만, GET 만, 요청 헤더 없음, 자격 증명 없음, 노출 헤더 `X-Request-Id`. server 프로파일과 기본 설정에는
+  CORS 가 없다. 거부된 CORS 요청은 공통 오류 형식이 아니라 Spring 의 403 `Invalid CORS request` 다(Phase 1 에서 다시 본다).
+  출처는 `scheme://host[:port]`(http, https, tauri)만 받는다. `*`, `null`, 경로가 있는 값은 기동을 실패시킨다.
+- 개발 서버(`http://localhost:1420`)의 UI 는 같은 출처의 `/admin/api` 로 요청하고, Vite 프록시가 Origin 헤더를 지워
+  `http://127.0.0.1:18580` 으로 넘긴다. 그래서 런타임은 개발 출처를 허용하지 않는다.
+- Tauri 권한: `build.rs` 의 앱 매니페스트가 커맨드 네 개를 등록하고, `capabilities/default.json` 이 main 창에 `allow-runtime-status`,
+  `allow-runtime-start`, `allow-runtime-stop`, `allow-runtime-restart` 만 준다(core 권한 없음). 운영 CSP 는
+  `connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:18580` 이고 `'unsafe-eval'` 이 없다.
+- **계획**: 관리자 토큰(Phase 1). 그때까지 이 머신의 모든 Tauri 앱이 같은 출처 `tauri://localhost` 로 관리 API 의 GET 응답을 읽을 수
+  있다(Phase 0 의 관리 API 에는 민감한 정보가 없다).
+
+### 게이트의 desktop 단계
+
+| 게이트 | runtime 단계 뒤에 더한 단계 |
+|---|---|
+| `build.sh` | 필수 도구(node, pnpm, cargo), desktop 존재 확인, `pnpm --dir desktop install --frozen-lockfile`, `pnpm --dir desktop run build`(tsc --noEmit, vite build) 와 `dist/index.html` 확인, `cargo build --locked` |
+| `test.sh` | 필수 도구, 존재 확인, 설치, vitest(이전 XML 을 지우고 실행, `junit-check.sh --require-each --newer` 로 판정), `cargo test --locked`(출력을 임시 파일에 담아 `cargo-test-check.sh --require-lib` 로 판정). 앞 단계가 실패해도 모든 단계를 실행하고, 모든 종료 코드가 0 일 때만 마지막 줄이 `GATE PASS: test` 다 |
+| `lint.sh` | 필수 도구, 존재 확인, Tauri 버전 고정 검사, 설치, `pnpm --dir desktop run typecheck`, `pnpm --dir desktop run lint`(eslint `--max-warnings 0`), `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` |
+
+거짓 통과 방어:
+
+- desktop 이 없거나 도구가 없으면 건너뛰지 않고 실패한다.
+- vitest: 0 건, 실패, `it.skip`(skipped), 이전 실행의 XML 은 `junit-check.sh` 가 거부한다. `it.only` 는 Vitest 설정
+  `allowOnly: false` 가, 테스트 파일이 하나도 없으면 `passWithNoTests: false` 가 실패시킨다.
+- cargo test: `cargo-test-check.sh` 가 결과 없음 `[NO_RESULTS]`, 0 건 `[ZERO_TESTS]`, 실패 `[FAILURES]`, `#[ignore]` `[IGNORED]`,
+  이름 필터 `[FILTERED]`, lib 단위 테스트 없음 `[LIB_WITHOUT_TESTS]`, 해석할 수 없는 출력이나 결과 없이 끝난 바이너리 `[INVALID]` 를
+  거부한다. `selftest.sh` 가 시나리오마다 픽스처로 이 판정기를 먼저 검증한다.
+- 잠금 파일: `--frozen-lockfile` 과 `cargo --locked` 는 잠금 파일과 어긋나면 실패한다. `Cargo.lock` 은 NexTerm 의 검증된 잠금 파일에서
+  복사했다. `cargo update` 나 `cargo generate-lockfile` 은 실행하지 않는다.
+- Tauri 버전 고정 검사: `@tauri-apps/api`·`@tauri-apps/cli` 가 정확한 2.11.x 이고, `Cargo.toml` 이 `tauri = "=2.11.5"`,
+  `tauri-build = "=2.6.3"` 이고, `Cargo.lock` 의 tauri 가 2.11.5 하나이며 npm 패키지와 major.minor 가 같아야 한다. 어기면 그 항목을
+  말하고 실패한다(Tauri CLI 는 major.minor 가 다르면 거부하고, 새로 해석하면 2.12 크레이트가 섞인다).
+- 셸 감독 테스트는 가짜 자식(sh 스크립트, 경로에 표식 `queryhub-fake-runtime`)과 임시 포트의 작은 HTTP 서버를 쓴다. 실제 런타임과
+  DB 가 필요 없다. 테스트가 끝난 뒤 `pgrep -fl queryhub-fake-runtime` 은 아무것도 출력하지 않아야 한다.
+- 비용: `desktop/src-tauri/target` 은 작업 트리마다 수 GB 다. 처음 cargo build 는 Tauri 의존성을 컴파일한다.
+
+### 서명하지 않은 번들 확인 (macOS)
+
+```sh
+pnpm --dir desktop tauri build --debug --bundles app --no-sign
+# 결과: desktop/src-tauri/target/debug/bundle/macos/QueryHub.app (git 이 무시한다)
+```
+
+번들 안의 실행 파일(`QueryHub.app/Contents/MacOS/`)을 위 "실행" 과 같은 환경에서 실행한다. 번들은 JAR 을 담지 않는다. 디버그 번들은
+저장소의 JAR 경로를 기본값으로 쓰고, 다른 JAR 은 `QUERYHUB_DESKTOP_RUNTIME_JAR` 로 지정한다.
+
+**계획**: JRE 묶기(jlink), JAR 묶기(`bundle.resources`), dmg·설치 프로그램, 코드 서명과 공증(Phase 8). Windows·Linux 의 빌드와 실행은
+**미검증**이다(P0-D CI, Phase 8).
 
 ## P0-A 엔드포인트
 

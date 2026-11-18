@@ -152,6 +152,125 @@ expect reject INVALID '(i6) 깨진 심볼릭 링크인 TEST-link.xml' --require-
 expect pass - '(ml) 속성이 여러 줄에 걸친 <testsuite' --require-each --newer "$MARKER" "$WORK/ml-clean"
 expect reject SKIPPED '(ml-s) 여러 줄 태그의 뒤쪽 줄에 있는 skipped=1' --require-each "$WORK/ml-skipped"
 
+# ---- cargo-test-check.sh 자체 검증 (P0-C): cargo test 출력 픽스처 ----
+# 깨끗한 다중 바이너리 출력(lib 에 테스트, main 과 doc-tests 는 0 건)은 통과하고, 거짓 통과 시나리오는 모두 거부되어야 한다.
+CARGO_CHECK="$SCRIPT_DIR/cargo-test-check.sh"
+CARGO_WORK="$WORK/cargo"
+mkdir -p "$CARGO_WORK"
+
+# cargo_result PASSED FAILED IGNORED FILTERED: cargo 의 test result 줄
+cargo_result() {
+  local verdict=ok
+  [ "$2" -eq 0 ] || verdict=FAILED
+  echo "test result: $verdict. $1 passed; $2 failed; $3 ignored; 0 measured; $4 filtered out; finished in 0.01s"
+}
+
+# write_cargo NAME LIB_RESULT_ARGS... : lib(4 개 인자), main(0 건), doc-tests(0 건) 블록이 있는 출력 파일
+write_cargo() {
+  local name="$1"
+  shift
+  {
+    echo "   Compiling queryhub-desktop v0.1.0 (/x/desktop/src-tauri)"
+    echo "    Finished \`test\` profile [unoptimized + debuginfo] target(s) in 1.00s"
+    echo "     Running unittests src/lib.rs (target/debug/deps/queryhub_desktop_lib-0123)"
+    echo ""
+    echo "running $1 tests"
+    echo "test runtime::tests::sample ... ok"
+    echo ""
+    cargo_result "$@"
+    echo ""
+    echo "     Running unittests src/main.rs (target/debug/deps/queryhub_desktop-4567)"
+    echo ""
+    echo "running 0 tests"
+    echo ""
+    cargo_result 0 0 0 0
+    echo ""
+    echo "   Doc-tests queryhub_desktop_lib"
+    echo ""
+    echo "running 0 tests"
+    echo ""
+    cargo_result 0 0 0 0
+  } >"$CARGO_WORK/$name.txt"
+}
+
+write_cargo ok 3 0 0 0
+write_cargo zero 0 0 0 0
+write_cargo failures 2 1 0 0
+echo "error: test failed, to rerun pass \`--lib\`" >>"$CARGO_WORK/failures.txt"
+write_cargo ignored 2 0 1 0
+write_cargo filtered 2 0 0 3
+# lib 블록은 0 건이고 다른 바이너리(tests/it.rs)에만 테스트가 있다: --require-lib 이면 거부, 없으면 통과.
+write_cargo lib-empty 0 0 0 0
+{
+  echo "     Running tests/it.rs (target/debug/deps/it-89ab)"
+  echo ""
+  echo "running 3 tests"
+  echo ""
+  cargo_result 3 0 0 0
+} >>"$CARGO_WORK/lib-empty.txt"
+# 컴파일 실패: test result 줄이 없다.
+printf 'error[E0308]: mismatched types\nerror: could not compile `queryhub-desktop` (lib test) due to 1 previous error\n' \
+  >"$CARGO_WORK/no-results.txt"
+# 해석할 수 없는 test result 줄 (숫자가 아니다)
+write_cargo malformed 3 0 0 0
+echo "test result: ok. many passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s" \
+  >>"$CARGO_WORK/malformed.txt"
+# 결과 줄 없이 끝난 바이너리 (비정상 종료)
+write_cargo crashed 3 0 0 0
+printf '     Running tests/crash.rs (target/debug/deps/crash-cdef)\n\nrunning 2 tests\n' >>"$CARGO_WORK/crashed.txt"
+# 색 코드가 섞인 깨끗한 출력도 통과한다.
+esc="$(printf '\033')"
+sed "s/Running/${esc}[1m${esc}[92mRunning${esc}[0m/" "$CARGO_WORK/ok.txt" >"$CARGO_WORK/colored.txt"
+# 읽기 권한이 없는 파일
+write_cargo unreadable 3 0 0 0
+chmod 000 "$CARGO_WORK/unreadable.txt"
+
+# expect_cargo WANT REASON LABEL ARGS...: expect 와 같지만 cargo-test-check.sh 를 실행한다.
+expect_cargo() {
+  local want="$1" reason="$2" label="$3"
+  shift 3
+  local output status verdict
+  set +e
+  output="$(bash "$CARGO_CHECK" "$@" 2>&1)"
+  status=$?
+  set -e
+  verdict=FAIL
+  if [ "$want" = pass ] && [ "$status" -eq 0 ]; then
+    verdict=PASS
+  elif [ "$want" = reject ] && [ "$status" -ne 0 ]; then
+    if [ "$reason" = - ] || printf '%s\n' "$output" | grep -q "\[$reason\]"; then
+      verdict=PASS
+    fi
+  fi
+  echo "$verdict cargo $label: expected $want${reason:+ [$reason]}, exit $status"
+  if [ "$verdict" != PASS ]; then
+    printf '%s\n' "$output" | sed 's/^/    | /'
+    unmet=$((unmet + 1))
+  fi
+}
+
+expect_cargo pass - '(c-ok) 깨끗한 다중 바이너리 출력 (lib 3, main 0, doc-tests 0)' --require-lib "$CARGO_WORK/ok.txt"
+expect_cargo pass - '(c-color) ANSI 색 코드가 섞인 깨끗한 출력' --require-lib "$CARGO_WORK/colored.txt"
+expect_cargo reject NO_RESULTS '(c-a) test result 줄 없음 (컴파일 실패)' "$CARGO_WORK/no-results.txt"
+expect_cargo reject ZERO_TESTS '(c-b) 모든 바이너리가 0 건' "$CARGO_WORK/zero.txt"
+expect_cargo reject FAILURES '(c-c) failed>0 과 FAILED 결과' "$CARGO_WORK/failures.txt"
+expect_cargo reject IGNORED '(c-d) ignored>0' "$CARGO_WORK/ignored.txt"
+expect_cargo reject FILTERED '(c-e) filtered out>0' "$CARGO_WORK/filtered.txt"
+expect_cargo pass - '(c-f0) --require-lib 없이는 lib 블록 0 건을 허용' "$CARGO_WORK/lib-empty.txt"
+expect_cargo reject LIB_WITHOUT_TESTS '(c-f) --require-lib 에서 lib 블록 0 건' --require-lib "$CARGO_WORK/lib-empty.txt"
+expect_cargo reject LIB_WITHOUT_TESTS '(c-f2) --require-lib 에서 lib 블록 없음' --require-lib "$CARGO_WORK/no-results.txt"
+expect_cargo reject INVALID '(c-i1) 해석할 수 없는 test result 줄' "$CARGO_WORK/malformed.txt"
+expect_cargo reject INVALID '(c-i2) 결과 줄 없이 끝난 바이너리' "$CARGO_WORK/crashed.txt"
+expect_cargo reject INVALID '(c-i3) 없는 파일' "$CARGO_WORK/no-such-file.txt"
+if [ -r "$CARGO_WORK/unreadable.txt" ]; then
+  echo "SKIP cargo (c-i4) 읽기 권한이 없는 출력 파일: 현재 사용자는 권한 000 인 파일도 읽을 수 있다 (root)"
+  skipped_scenarios=$((skipped_scenarios + 1))
+else
+  expect_cargo reject INVALID '(c-i4) 읽기 권한이 없는 출력 파일' "$CARGO_WORK/unreadable.txt"
+fi
+expect_cargo reject - '(c-u1) 사용법 오류: FILE 없음' --require-lib
+expect_cargo reject - '(c-u2) 사용법 오류: 모르는 옵션' --strict "$CARGO_WORK/ok.txt"
+
 if [ "$unmet" -ne 0 ]; then
   echo "selftest: FAIL ($unmet 개 시나리오가 기대와 다르다)"
   exit 1
