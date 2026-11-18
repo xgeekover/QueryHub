@@ -8,13 +8,21 @@ spring-dependency-management = "1.1.7"
 archunit = "1.5.1"
 # Gradle 9.7.1 + JDK 17 데몬에서 spotlessCheck 가 동작하는 것을 확인한 버전이다.
 spotless = "8.11.0"
+# BOM 덮어쓰기 예외 (유일). MariaDB Connector/J 는 Boot 4.1.2 BOM 의 3.5.10 대신 이 버전을 쓴다.
+# 라이브러리 항목에는 버전을 적지 않고 runtime/build.gradle 이 BOM 속성 mariadb.version 으로 넣는다 (이유는 그 파일의 주석 참고).
+mariadb-connector-j = "3.5.11"
 
 [libraries]
 # BOM 관리 (버전 없음)
 spring-boot-starter-webmvc = { module = "org.springframework.boot:spring-boot-starter-webmvc" }
 spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
 spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test" }
+flyway-mysql = { module = "org.flywaydb:flyway-mysql" }
+mariadb-java-client = { module = "org.mariadb.jdbc:mariadb-java-client" }
+testcontainers-mariadb = { module = "org.testcontainers:testcontainers-mariadb" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core" }

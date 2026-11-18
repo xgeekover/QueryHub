@@ -1,0 +1,11 @@
+// adapter-metadata: 메타데이터 저장소 (Spring JDBC, Flyway 마이그레이션, MariaDB).
+// application 의 포트(*Repository)를 구현한다. 빈 등록과 접속 설정은 app 이 맡는다(이 모듈에는 Spring 스테레오타입이 없다).
+dependencies {
+    implementation project(':application')
+    implementation libs.spring.boot.starter.jdbc
+    implementation libs.spring.boot.starter.flyway
+    // Flyway 의 MariaDB/MySQL 지원은 별도 아티팩트다.
+    implementation libs.flyway.mysql
+    // 드라이버 클래스는 코드에서 참조하지 않는다(ArchUnit R6). 실행 시에만 필요하다.
+    runtimeOnly libs.mariadb.java.client
+}

@@ -33,6 +33,15 @@ subprojects {
         }
     }
 
+    // BOM 덮어쓰기 예외 (유일): MariaDB Connector/J 는 Boot 4.1.2 BOM 이 관리하는 3.5.10 대신 3.5.11 을 쓴다.
+    // 3.5.10 에는 OSV 권고가 있고(가장 큰 것은 GHSA-fhx5-2xqw-2cgm: 악성·중간자 DB 서버가 LOCAL INFILE 로 클라이언트 호스트의
+    // 파일을 읽는다) 3.5.11 에서 고쳐졌다. 런타임 URL 은 따로 allowLocalInfile=false 도 넣는다.
+    // 속성 이름은 BOM 의 <mariadb.version> 이고 버전 값은 gradle/libs.versions.toml 의 mariadb-connector-j 다.
+    // mavenBom 의 bomProperty 가 아니라 프로젝트 속성(ext)으로 둔다. app 에서는 Boot 플러그인이 BOM 을 한 번 더 가져와 bomProperty 를
+    // 덮어쓰기 때문이다. Boot BOM 이 3.5.11 이상을 관리하게 되면 이 줄과 카탈로그의 버전을 지운다. 확인 방법:
+    //   sh runtime/gradlew -p runtime -q :app:dependencyInsight --dependency mariadb-java-client --configuration runtimeClasspath
+    ext['mariadb.version'] = catalog.versions.mariadb.connector.j.get()
+
     dependencyManagement {
         imports {
             mavenBom "org.springframework.boot:spring-boot-dependencies:${catalog.versions.spring.boot.get()}"
@@ -57,6 +66,9 @@ subprojects {
 
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
+        // 테스트 JVM 은 개발자 셸의 QUERYHUB_* 환경변수를 물려받지 않는다 (예: deploy/.env 를 source 한 셸).
+        // 그래서 결과가 셸 상태에 따라 달라지지 않는다. 테스트가 필요한 값은 테스트 안에서 직접 넣는다.
+        environment.keySet().findAll { it.startsWith('QUERYHUB_') }.each { environment.remove(it) }
         testLogging {
             events 'failed', 'skipped'
             exceptionFormat = 'full'

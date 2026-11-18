@@ -10,7 +10,7 @@ import com.tngtech.archunit.lang.CompositeArchRule;
 import java.util.Objects;
 
 /**
- * 아키텍처 규칙 R1~R7 (FR-04).
+ * 아키텍처 규칙 R1~R8 (P0-A FR-04, P0-B 가 R8 을 더했다).
  *
  * <p>루트 패키지를 받는다. 운영 코드에는 {@code com.queryhub} 를, 자기 검사(ArchitectureRulesSelfTest)에는 고의 위반 클래스가 있는
  * {@code com.queryhub.archfixture} 를 넣어 같은 규칙을 적용한다. 그래서 규칙이 실제로 실패할 수 있음을 증명할 수 있다.
@@ -131,6 +131,27 @@ public final class ArchitectureRules {
         .resideInAnyPackage(
             "com.microsoft.sqlserver..", "oracle.jdbc..", "org.mariadb.jdbc..", "org.postgresql..")
         .because("R6: DB 별 차이는 provider 모듈 안에 가둔다");
+  }
+
+  /**
+   * R8 JDBC, Flyway, javax.sql, 커넥션 풀(Hikari)은 root.adapter.metadata.., root.adapter.dbprovider..,
+   * root.app.. 만 쓴다. java.sql 은 허용한다.
+   *
+   * <p>Gradle 모듈 규칙은 어떤 adapter-* 든 spring-jdbc 를 선언하게 둔다. 이 규칙이 저장 기술을 메타데이터 저장소와 DB Provider, 조립
+   * 지점에 가두는 두 번째 방어선이다.
+   */
+  public ArchRule r8OnlyPersistenceAdaptersAndAppUseJdbc() {
+    return noClasses()
+        .that()
+        .resideInAPackage(root + "..")
+        .and()
+        .resideOutsideOfPackages(
+            root + ".adapter.metadata..", root + ".adapter.dbprovider..", app())
+        .should()
+        .dependOnClassesThat()
+        .resideInAnyPackage(
+            "org.springframework.jdbc..", "org.flywaydb..", "javax.sql..", "com.zaxxer.hikari..")
+        .because("R8: 저장 기술(JDBC, Flyway, 커넥션 풀)은 메타데이터 저장소, DB Provider, app 조립에만 둔다");
   }
 
   /** R7 루트 아래의 모든 클래스는 domain, application, adapter, app 중 한 곳에 있다. */

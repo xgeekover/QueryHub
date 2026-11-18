@@ -15,4 +15,4 @@ rootProject.name = 'queryhub-runtime'
 
 // 모듈은 필요해지는 Phase 에 추가한다. 이름 규칙(domain, application, adapter-*, provider-*, app)은
 // runtime/build.gradle 의 모듈 의존 규칙 검사가 강제한다.
-include 'domain', 'application', 'adapter-web', 'app'
+include 'domain', 'application', 'adapter-web', 'adapter-metadata', 'app'

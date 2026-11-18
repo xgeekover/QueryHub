@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.queryhub.app.support.WithoutMetadataDatabase;
 import com.queryhub.application.runtime.GetRuntimeInfoUseCase;
 import com.queryhub.domain.runtime.RuntimeMode;
 import java.util.List;
@@ -139,6 +140,7 @@ class RuntimeModeResolverTest {
             .lazyInitialization(true)
             .profiles("dev")
             .listeners(webServerListener)
+            .properties(WithoutMetadataDatabase.PROPERTY)
             .build();
 
     Throwable failure =

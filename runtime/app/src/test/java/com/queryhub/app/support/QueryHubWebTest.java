@@ -28,4 +28,5 @@ import org.springframework.test.context.ActiveProfiles;
     properties = "server.address=127.0.0.1")
 @ActiveProfiles("desktop")
 @Import(ErrorProbeTestConfiguration.class)
+@WithoutMetadataDatabase
 public @interface QueryHubWebTest {}

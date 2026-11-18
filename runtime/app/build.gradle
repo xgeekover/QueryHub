@@ -1,18 +1,26 @@
 // app: Spring Boot 조립, 프로파일, 실행 JAR. 모든 모듈을 아는 유일한 모듈이다.
+import java.time.Duration
+
 plugins {
     id 'org.springframework.boot'
 }
 
 dependencies {
     implementation project(':adapter-web')
+    implementation project(':adapter-metadata')
     implementation project(':application')
     implementation libs.spring.boot.starter.webmvc
     implementation libs.spring.boot.starter.actuator
+    // Metadata DB 조립: JdbcConnectionDetails, JdbcClient (starter-jdbc), 기동 검사가 강제하는 FlywayMigrationInitializer (starter-flyway).
+    implementation libs.spring.boot.starter.jdbc
+    implementation libs.spring.boot.starter.flyway
 
     testImplementation libs.spring.boot.starter.test
     testImplementation libs.spring.boot.starter.webmvc.test
-    // 아키텍처 규칙(R1-R7). app 의 테스트 클래스패스에는 모든 모듈이 있으므로 나중에 추가되는 모듈도 자동으로 검사된다.
+    // 아키텍처 규칙(R1-R8). app 의 테스트 클래스패스에는 모든 모듈이 있으므로 나중에 추가되는 모듈도 자동으로 검사된다.
     testImplementation libs.archunit
+    // R6 자기 검사 픽스처(archfixture.adapter.metadata.DriverLeakFixture)가 드라이버 클래스를 참조한다. 운영 코드는 참조하지 않는다.
+    testImplementation libs.mariadb.java.client
 }
 
 springBoot {
@@ -25,4 +33,45 @@ springBoot {
 tasks.named('bootJar') {
     // P0-C 와 README 가 참조하는 고정 경로: runtime/app/build/libs/queryhub-runtime.jar
     archiveFileName = 'queryhub-runtime.jar'
+}
+
+// ---- 통합 테스트 (P0-B): 실제 MariaDB(Testcontainers)로 돈다. Docker 가 필요하다. ----
+// - 소스: src/integrationTest/java, 태스크: integrationTest, 결과: build/test-results/integrationTest
+// - check, build 에 넣지 않는다. 단위 테스트 게이트(test.sh)는 Docker 없이 돈다. 실행은 scripts/gate/integration.sh 가 맡는다.
+// - Testcontainers 는 이 스위트의 클래스패스에만 있다(단위 테스트 클래스패스에는 없다).
+def bootJarFile = tasks.named('bootJar').flatMap { it.archiveFile }
+
+testing {
+    suites {
+        integrationTest(JvmTestSuite) {
+            // 버전을 주지 않으면 Gradle 기본 JUnit(5.x)이 단위 테스트의 BOM 버전과 섞인다. BOM 이 관리하는 버전을 그대로 쓴다.
+            useJUnitJupiter(dependencyManagement.importedProperties['junit-jupiter.version'])
+            dependencies {
+                implementation project()
+                implementation libs.testcontainers.mariadb
+            }
+            targets {
+                all {
+                    testTask.configure {
+                        description = 'Runs the MariaDB (Testcontainers) integration tests. Needs Docker.'
+                        shouldRunAfter tasks.named('test')
+                        // Docker Desktop 이 응답하지 않아도 게이트(900 s)보다 먼저 끝난다. 컨테이너 기동 제한은 3 분이다(MetadataMariaDb).
+                        timeout = Duration.ofMinutes(10)
+                        // 테스트 JVM 기본 시간대를 UTC 가 아닌 값으로 둔다. 저장 값이 JVM 시간대에 기대면 9 시간 차이로 드러난다.
+                        systemProperty 'user.timezone', 'Asia/Seoul'
+                        // BootJarIntegrationTest 가 실행 JAR 을 자식 프로세스로 띄운다(JAR 안에서 마이그레이션을 찾는지 확인).
+                        dependsOn tasks.named('bootJar')
+                        inputs.file(bootJarFile).withPropertyName('bootJar').withPathSensitivity(PathSensitivity.NONE)
+                        systemProperty 'queryhub.it.boot-jar', bootJarFile.get().asFile.absolutePath
+                    }
+                }
+            }
+        }
+    }
+}
+
+configurations {
+    // 단위 테스트와 같은 테스트 라이브러리(Spring Boot Test, AssertJ, JUnit, 드라이버)를 쓴다.
+    integrationTestImplementation.extendsFrom testImplementation
+    integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
 }

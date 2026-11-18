@@ -2,6 +2,7 @@ package com.queryhub.app.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.queryhub.app.support.WithoutMetadataDatabase;
 import com.queryhub.application.runtime.GetRuntimeInfoUseCase;
 import com.queryhub.domain.runtime.RuntimeMode;
 import org.junit.jupiter.api.Nested;
@@ -23,6 +24,7 @@ class ProfileConfigurationTest {
   @Nested
   @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
   @ActiveProfiles("desktop")
+  @WithoutMetadataDatabase
   class DesktopProfile {
 
     @Autowired private Environment environment;
@@ -39,6 +41,7 @@ class ProfileConfigurationTest {
   @Nested
   @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
   @ActiveProfiles("server")
+  @WithoutMetadataDatabase
   class ServerProfile {
 
     @Autowired private Environment environment;
@@ -54,6 +57,7 @@ class ProfileConfigurationTest {
 
   @Nested
   @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+  @WithoutMetadataDatabase
   class NoActiveProfile {
 
     @Autowired private Environment environment;

@@ -3,7 +3,9 @@ package com.queryhub.architecture;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.queryhub.archfixture.adapter.export.DirectJdbcFixture;
 import com.queryhub.archfixture.adapter.metadata.CrossAdapterFixture;
+import com.queryhub.archfixture.adapter.metadata.DriverLeakFixture;
 import com.queryhub.archfixture.adapter.web.admin.AdminFixture;
 import com.queryhub.archfixture.adapter.web.api.DataApiFixture;
 import com.queryhub.archfixture.application.LeakyUseCase;
@@ -21,7 +23,7 @@ import org.junit.jupiter.api.Test;
  * AC-07: 규칙이 실제로 실패할 수 있음을 증명한다.
  *
  * <p>com.queryhub.archfixture 의 고의 위반 클래스에 같은 규칙을 적용한다. 각 규칙은 실패해야 하고, 모든 위반 내용이 그 규칙을 위한 픽스처 클래스를
- * 가리켜야 하며, 다른 규칙용 픽스처는 언급하지 않아야 한다. R6 은 JDBC 드라이버가 들어오는 Phase 1 에서 픽스처를 더한다.
+ * 가리켜야 하며, 다른 규칙용 픽스처는 언급하지 않아야 한다. R6 과 R8 의 픽스처는 P0-B 가 더했다(첫 JDBC 드라이버와 Spring JDBC).
  */
 class ArchitectureRulesSelfTest {
 
@@ -38,7 +40,9 @@ class ArchitectureRulesSelfTest {
           AdminFixture.class,
           DataApiFixture.class,
           CrossAdapterFixture.class,
-          StrayFixture.class);
+          StrayFixture.class,
+          DriverLeakFixture.class,
+          DirectJdbcFixture.class);
 
   @Test
   void fixturesAreImported() {
@@ -79,6 +83,25 @@ class ArchitectureRulesSelfTest {
   void r5FailsWhenAdminDependsOnDataApi() {
     assertFailsOnlyBecauseOf(
         RULES.r5AdminAndDataApiAreIndependent(), AdminFixture.class, DataApiFixture.class);
+  }
+
+  @Test
+  void r6FailsWhenAClassOutsideTheProvidersUsesAJdbcDriver() {
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(RULES.r6OnlyProvidersUseJdbcDrivers(), DriverLeakFixture.class);
+    assertThat(result.getFailureReport().getDetails())
+        .anySatisfy(detail -> assertThat(detail).contains("org.mariadb.jdbc.Driver"));
+  }
+
+  @Test
+  void r8FailsWhenAnAdapterWithoutPersistenceUsesSpringJdbc() {
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(
+            RULES.r8OnlyPersistenceAdaptersAndAppUseJdbc(), DirectJdbcFixture.class);
+    assertThat(result.getFailureReport().getDetails())
+        .anySatisfy(
+            detail ->
+                assertThat(detail).contains("org.springframework.jdbc.core.simple.JdbcClient"));
   }
 
   @Test

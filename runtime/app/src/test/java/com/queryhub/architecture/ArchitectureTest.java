@@ -2,9 +2,11 @@ package com.queryhub.architecture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.queryhub.adapter.metadata.setting.JdbcAppSettingRepository;
 import com.queryhub.adapter.web.common.error.GlobalExceptionHandler;
 import com.queryhub.app.QueryHubApplication;
 import com.queryhub.application.runtime.RuntimeInfoService;
+import com.queryhub.application.setting.AppSettingRepository;
 import com.queryhub.domain.error.ErrorCode;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
@@ -13,7 +15,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
 /**
- * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R7 을 적용한다.
+ * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R8 을 적용한다.
  *
  * <p>app 의 테스트 클래스패스에는 모든 모듈이 있으므로, 나중에 추가되는 모듈의 클래스도 별도 설정 없이 검사된다.
  */
@@ -33,7 +35,9 @@ class ArchitectureTest {
     // 규칙이 빈 집합에 적용되어 통과하는 일을 막는다.
     assertThat(PRODUCTION.contain(ErrorCode.class)).as("domain").isTrue();
     assertThat(PRODUCTION.contain(RuntimeInfoService.class)).as("application").isTrue();
+    assertThat(PRODUCTION.contain(AppSettingRepository.class)).as("application 포트").isTrue();
     assertThat(PRODUCTION.contain(GlobalExceptionHandler.class)).as("adapter-web").isTrue();
+    assertThat(PRODUCTION.contain(JdbcAppSettingRepository.class)).as("adapter-metadata").isTrue();
     assertThat(PRODUCTION.contain(QueryHubApplication.class)).as("app").isTrue();
     assertThat(PRODUCTION.stream().map(JavaClass::getName))
         .noneMatch(name -> name.startsWith("com.queryhub.archfixture."))
@@ -74,5 +78,10 @@ class ArchitectureTest {
   @Test
   void r7EveryClassResidesInAKnownLayer() {
     RULES.r7EveryClassResidesInAKnownLayer().check(PRODUCTION);
+  }
+
+  @Test
+  void r8OnlyPersistenceAdaptersAndAppUseJdbc() {
+    RULES.r8OnlyPersistenceAdaptersAndAppUseJdbc().check(PRODUCTION);
   }
 }
