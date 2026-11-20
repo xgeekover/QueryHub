@@ -14,14 +14,14 @@ Spring Boot 는 OS 환경변수를 패키지에 든 `application-desktop.yml` �
   - unix: `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `TZ`, `TMPDIR`, 그리고 `LC_` 로 시작하는 모든 변수.
   - Windows (미검증, 이름은 대소문자 구분 없이 비교): `PATH`, `SYSTEMROOT`, `WINDIR`, `TEMP`, `TMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PATHEXT`, `COMPUTERNAME`.
   - 그다음 셸이 정하는 값: Metadata DB 변수 다섯 개(`QUERYHUB_METADATA_DB_*`)와 `QUERYHUB_DESKTOP_PARENT_PID`.
-- `java -version` 사전 점검도 같은 환경으로 실행한다.
+- `java -version` 사전 점검은 허용 목록의 변수만 받는다(`launch.rs` 의 `inherited_env`). Metadata DB 변수와 `QUERYHUB_DESKTOP_PARENT_PID` 는 넘기지 않고, 런타임 자식의 환경에만 더한다(`child_env`).
 - 인자는 `-jar <jar> --spring.profiles.active=desktop --server.port=<port>` 그대로다. 비밀 값은 인자에 넣지 않는다.
 
 ## 결과
 
 - 구현됨 (P0-C): `desktop/src-tauri/src/runtime/launch.rs` 의 `INHERITED_NAMES`, `INHERITED_PREFIX` 와 자식 인자 구성. 단위 테스트와 실제 자식 프로세스를 띄우는 테스트가 `SERVER_ADDRESS`, `MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` 같은 변수가 넘어가지 않음을 확인한다.
 - 허용된 이름 중 Spring 속성에 바인딩되는 것은 없다. 셸의 환경으로는 런타임의 바인딩, 노출, 로깅, 프로파일을 바꿀 수 없다.
-- 치르는 값과 남은 문제([BACKLOG](../BACKLOG.md)): `JAVA_HOME` 은 java 를 고르는 데만 쓰고 자식에게 넘기지 않는다(P0C-C2-3). Windows 의 `Path` 대소문자 처리(P0C-C2-4)와 Windows·Linux 전체(PLAT-1)는 미검증이다. 사전 점검 환경은 단위 비교로만 확인했다(P0C-C2-2).
+- 치르는 값과 남은 문제([BACKLOG](../BACKLOG.md)): `JAVA_HOME` 은 java 를 고르는 데만 쓰고 자식에게 넘기지 않는다(P0C-C2-3). Windows 의 `Path` 대소문자 처리(P0C-C2-4)는 P0-D 에서 고쳤지만(`env_value`, 모든 플랫폼에서 컴파일되고 `cfg!(windows)` 로 고른다) Windows 에서 실행해 보지 않았고, Windows·Linux 전체(PLAT-1)와 함께 미검증이다. 사전 점검 환경은 단위 비교로만 확인했다(P0C-C2-2).
 
 ## 근거
 

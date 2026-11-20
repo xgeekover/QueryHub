@@ -63,6 +63,12 @@
 - 셸은 환경을 로그에 남기지 않고 로그 파일을 쓰지 않는다.
 - `java -version` 사전 점검의 환경은 단위 비교와 코드 읽기로만 확인했다([BACKLOG.md](BACKLOG.md) P0C-C2-2, [TEST_PLAN.md](TEST_PLAN.md)).
 
+### CI 워크플로 (정의됨·미실행, P0-D)
+
+- `.github/workflows/ci.yml` 은 비밀 값이 필요 없다. 최상위 권한은 `contents: read` 하나이고 작업별 권한이 없다. 모든 checkout 이 `persist-credentials: false` 라 작업 트리에 자격 증명이 남지 않는다.
+- `pull_request_target` 을 쓰지 않고, `secrets.`, `github.event.`, `github.head_ref` 표현을 쓰지 않는다. action 은 40자 커밋 SHA 와 `# 태그` 주석으로 고정한다.
+- `scripts/gate/workflow-check.sh` 가 lint 단계에서 이 규칙을 점검한다. 워크플로는 한 번도 실행되지 않았다([BACKLOG.md](BACKLOG.md) CI-1, [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)).
+
 ## 알려진 빈 곳
 
 | 내용 | BACKLOG | 목표 |
@@ -75,7 +81,7 @@
 | `spring.autoconfigure.exclude` 로 `MetadataDatabaseAutoConfiguration` 을 빼면 가드, 검사한 연결 정보, Flyway 고정이 함께 사라진다 | P0B-R14 | Phase 1 |
 | `spring.flyway.url`·`user`·`password` 와 `spring.datasource.url`·`password` 를 명령행이나 `-D` 로 주면 무시되지만 거부도 경고도 없다. 값은 프로세스 목록에 보인다 | P0B-R15 | Phase 1 |
 | Metadata DB 연결이 평문이다. 원격 DB 용 TLS 는 계획이다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)) | — | Phase 1 또는 6 |
-| Testcontainers 가 테스트용 MariaDB 포트를 모든 호스트 인터페이스에 연다(테스트가 도는 약 20 초) | P0B-R6 | P0-D |
+| Testcontainers 가 테스트용 MariaDB 포트를 모든 호스트 인터페이스에 연다(테스트가 도는 약 20 초). P0-D 는 runtime 을 바꾸지 않아 미뤘다([ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)) | P0B-R6 | Phase 1 |
 | `.gitignore` 의 `*.key`, `*.p12`, `*.pem` 이 경로 고정 없이 걸려 정상 파일도 커밋에서 말없이 빠진다 | P0A-N4 | Phase 1 |
 | `desktop/pnpm-workspace.yaml` 의 `minimumReleaseAgeExclude` 에 `lucide-react@1.74.0` 예외가 남아 있다 | P0C-R5 | Phase 6 |
 | `JAVA_HOME` 은 java 를 고르는 데만 쓰고 자식에게 넘기지 않는다. 고른 java 가 macOS 의 `/usr/bin/java` 스텁이면 기본 JDK 가 뜬다 | P0C-C2-3 | Phase 8 |

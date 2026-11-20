@@ -22,8 +22,9 @@
 ## 결과
 
 - 구현됨: P0-A 에서 build·test·lint 와 junit-check·selftest, P0-B 에서 integration, P0-C 에서 desktop 단계와 cargo-test-check. 단계별 방어의 자세한 내용은 [TEST_PLAN.md](../TEST_PLAN.md)에 있다.
+- P0-D (커밋 전): build·test·lint 의 `--desktop-only`, lint 의 `docs-check.sh`(DOC-1)와 `workflow-check.sh`, `selftest.sh --no-skip` 과 junit-check 의 합계 형식 거부 분기(`valid_counts`)를 다루는 시나리오(P0A-N1), stdout 만 읽는 Docker 사전 점검(P0B-R4). CI 가 같은 스크립트를 부르는 결정은 [ADR-020](ADR-020-ci-runs-gate-scripts.md)(제안)이다.
 - 판정 스크립트가 검사받는 저장소 안에 있으므로 스크립트 자체의 변경도 리뷰 대상이다.
-- 남은 문제([BACKLOG](../BACKLOG.md)): root 로 돌면 selftest 의 한 시나리오가 SKIP 된다(P0A-N1), 심볼릭 링크 모듈이 탐색에서 빠진다(P0A-N2), Docker 사전 점검의 stderr 처리(P0B-R4), 문서 검사는 아직 게이트 단계가 아니다(DOC-1).
+- 남은 문제([BACKLOG](../BACKLOG.md)): 심볼릭 링크 모듈이 탐색에서 빠진다(P0A-N2). P0A-N1, P0B-R4, DOC-1 은 P0-D 에서 닫았다. CI 에서의 실행은 미검증이다(CI-1).
 
 ## 근거
 

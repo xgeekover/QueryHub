@@ -11,7 +11,7 @@
 ## 결정
 
 - Phase 0 의 셸은 자기 프로세스 환경의 `QUERYHUB_METADATA_DB_*` 변수를 읽어 그대로 자식 런타임의 환경변수로 넘긴다. 명령행 인자에는 넣지 않는다.
-- 필요한 값이 없으면 런타임을 띄우지 않고 `metadata_settings_missing` 으로 실패한다. 메시지는 빠진 변수 이름만 말하고, 개발 모드에서는 `deploy/.env` 를 읽은 셸에서 앱을 시작하라고 안내한다.
+- 필요한 값이 없으면 런타임을 띄우지 않고 `metadata_settings_missing` 으로 실패한다. 메시지는 빠진 변수 이름만 말하고, 개발 모드에서는 [DEPLOYMENT.md](../DEPLOYMENT.md)의 절차대로 `deploy/.env` 를 하위 셸에서만 읽어(`(set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev)`) 앱을 시작하라고 안내한다(이 문구는 P0-D 에서 고쳤다).
 - 런타임 출력에 비밀번호 값이 그대로 나오면 셸이 `********` 로 가린다(`output.rs` 의 `mask_secret`). 인코딩되거나 변형된 형태는 가리지 않는다.
 
 ## 결과

@@ -18,26 +18,13 @@
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-DOCKER_PREFLIGHT_TIMEOUT_SECONDS=60
+# 인자를 받지 않는다(--desktop-only 도 거부한다). 통합 테스트는 runtime 단계뿐이라 범위를 고를 것이 없다. 어떤 도구도 실행하기 전에 끝난다.
+gate_reject_args integration "$@"
+
 REQUIRED_MODULE="runtime/app"
 gate_started=$(date +%s)
 
-# 3 에서 쓴다. docker info 로 데몬이 응답하는지 본다. 제한 시간 안에 서버 버전을 돌려주지 않으면 실패한다.
-docker_preflight() {
-  local output status=0
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker CLI(docker)를 찾지 못했다. 통합 테스트에는 Docker 가 필요하다." >&2
-    return 1
-  fi
-  output="$(run_with_timeout "$DOCKER_PREFLIGHT_TIMEOUT_SECONDS" docker info --format '{{.ServerVersion}}' 2>&1)" ||
-    status=$?
-  if [ "$status" -ne 0 ] || [ -z "$output" ]; then
-    printf '%s\n' "$output" | sed 's/^/    | /' >&2
-    echo "Docker 데몬에 연결하지 못했다 (docker info exit $status). 통합 테스트에는 실행 중인 Docker 가 필요하다." >&2
-    return 1
-  fi
-  echo "Docker 서버 버전: $output"
-}
+# 3 의 docker_preflight 는 lib.sh 에 있다(표준 출력에서만 버전을 읽는다, P0B-R4). 제한 시간은 DOCKER_PREFLIGHT_TIMEOUT_SECONDS 다.
 
 # 1. 판정기 자체 검증
 gate_step 'gate scripts: junit-check self-test' bash scripts/gate/selftest.sh

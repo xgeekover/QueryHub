@@ -72,7 +72,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 
 - **앱 종료**(창 닫기, Cmd+Q): `RunEvent::Exit` 에서 셸이 런타임에 SIGTERM 을 보내고(Spring 의 정상 종료), 10 초(`stop_grace`) 안에 끝나지 않으면 SIGKILL 한다(`desktop/src-tauri/src/lib.rs`). 중지·재시작 버튼도 같다.
 - **셸이 비정상 종료**(SIGKILL, 크래시)되면 셸은 아무것도 할 수 없다. 대신 런타임의 부모 감시가 `QUERYHUB_DESKTOP_PARENT_PID` 의 프로세스가 끝난 것을 감지해(JDK 가 최대 5 초 간격으로 확인하고 PID 재사용도 확인한다) INFO 로그 한 줄을 남기고 종료한다(exit 0). 30 초(`HALT_AFTER`) 안에 끝나지 않으면 `Runtime.halt`(종료 코드 3). 값이 잘못되었으면(숫자가 아님, 0 이하, 살아 있지 않은 PID, 런타임 자신의 PID) 포트를 열기 전에 종료 코드 2 로 끝난다. 변수가 없으면(server 모드, 손으로 실행한 `java -jar`) 감시하지 않는다(`runtime/app/src/main/java/com/queryhub/app/desktop/ParentProcessWatch.java`, `QueryHubApplication.java` 의 `EXIT_INVALID_PARENT_WATCH`, [ADR-014](ADR/ADR-014-runtime-parent-watch.md)).
-- **미검증**: Windows 와 Linux(정상 종료 신호가 없는 Windows 의 즉시 종료, `java.exe` 콘솔 창, Windows 출처 `http://tauri.localhost`, WebKitGTK). P0-D CI 에서 확인한다([BACKLOG.md](BACKLOG.md) PLAT-1).
+- **미검증**: Windows 와 Linux(정상 종료 신호가 없는 Windows 의 즉시 종료, `java.exe` 콘솔 창, Windows 출처 `http://tauri.localhost`, WebKitGTK). CI 워크플로(정의됨·미실행)의 첫 실행과 Phase 8 에서 확인한다([BACKLOG.md](BACKLOG.md) PLAT-1, CI-1).
 
 ## 모듈과 의존 규칙
 
@@ -143,7 +143,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 
 | Phase | 범위 | 통과 기준 | 상태 |
 |---|---|---|---|
-| 0 기반 | 모듈 골격, Gradle, Flyway, 공통 오류·응답, 게이트 스크립트, CI 정의, Desktop 셸 스파이크(D4) | 새 clone 에서 build·test·lint 가 exit 0, ArchUnit 의존 규칙 통과, 런타임 기동 후 health 200, Tauri 에서 런타임 기동·중지 | 진행 중 (아래 표) |
+| 0 기반 | 모듈 골격, Gradle, Flyway, 공통 오류·응답, 게이트 스크립트, CI 정의, Desktop 셸 스파이크(D4) | 새 clone 에서 build·test·lint 가 exit 0, ArchUnit 의존 규칙 통과, 런타임 기동 후 health 200, Tauri 에서 런타임 기동·중지 | P0-D 를 커밋하면 완료. CI 는 정의만 했고 실행되지 않았다(아래 표, [Phase 0 보고](PHASE0-REPORT.md)) |
 | 1 DB 연결 | Provider 4종, 연결 CRUD·테스트, 풀, 비밀번호 암호화, 관리자 토큰 | 4개 DB 실제 컨테이너에서 연결·SELECT·타입 변환·쓰기 거부 통과. 비밀번호 평문이 DB·로그·응답에 없음 | 계획 |
 | 2 SQL 저장소 | SQL CRUD, 파라미터 파서·정의, SELECT 전용 검증, 테스트 실행, 버전 이력 | 명세 12절 Parameter Test 7종 통과. 인젝션 문자열이 값으로만 바인딩됨을 4개 DB 에서 확인. DML·DDL·다중문 거부 | 계획 |
 | 3 API 관리 | API CRUD, 매핑, 라우트 레지스트리, 활성·비활성 | 중복·예약 경로 거부, 수정 즉시 라우팅 반영 | 계획 |
@@ -154,7 +154,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | 8 배포·안정화 | 설치본, JAR, Docker, 문서, 성능·보안 테스트, 번들 JRE(jlink), 서명·공증 | 1천·1만·10만 건과 동시 요청 결과 문서화, Docker 이미지 기동 확인, 문서 완비 | 계획 |
 
 - 운영 지표의 화면(Phase 6)이 수집(Phase 7)보다 먼저다. 이 순서는 Phase 6 을 계획할 때 다시 검토한다(AR-1).
-- 각 Phase 완료 때 구현 기능, 테스트 결과, 남은 문제를 [CHANGELOG.md](../CHANGELOG.md)와 Phase 보고에 적는다(명세 13절).
+- 각 Phase 완료 때 구현 기능, 테스트 결과, 남은 문제를 [CHANGELOG.md](../CHANGELOG.md)와 Phase 보고에 적는다(명세 13절). Phase 0 보고는 [PHASE0-REPORT.md](PHASE0-REPORT.md)다.
 - macOS 에서 검증할 수 없는 Windows·Linux 경로는 CI 에 맡기고 「미검증」으로 적는다. Mock 테스트만으로 실제 DB 호환성을 통과 처리하지 않는다(명세 14절).
 
 ### Phase 0 태스크
@@ -164,8 +164,8 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | P0-A | 런타임 골격(Gradle 멀티 모듈, Boot 앱, health, requestId, 공통 오류·응답), ArchUnit, 정적 분석, 게이트 스크립트, 저장소 기본 파일 | ee00165 | 완료 |
 | P0-B | 메타데이터 기반: Flyway + MariaDB, `app_setting`, Testcontainers 통합 테스트, 개발용 compose, `integration` 게이트 | f913239 | 완료 |
 | P0-C | Desktop 셸 스파이크: Vite + React + Tailwind + shadcn 골격, Tauri 에서 런타임 기동·중지·헬스 표시, 부모 감시 | f84c628 | 완료 |
-| 문서 기준선 | `docs/`, `CHANGELOG.md`, README 정리 (T-20261119-074437-3980) | 커밋 전 | 진행 중 |
-| P0-D | CI 워크플로 정의, Phase 0 보고, 문서 갱신 | | 계획 |
+| 문서 기준선 | `docs/`, `CHANGELOG.md`, README 정리 (T-20261119-074437-3980) | 51141df | 완료 |
+| P0-D | CI 워크플로 정의(`.github/workflows/ci.yml`, 정의됨·미실행), 게이트의 `--desktop-only`·`docs-check.sh`·`workflow-check.sh`·`selftest.sh --no-skip`, Phase 0 보고, 문서 갱신 (T-20261120-181159-c278) | 커밋 전 | 진행 중 |
 
 태스크 사이에는 사람의 검토와 커밋이 들어간다. 테스트 수는 [CHANGELOG.md](../CHANGELOG.md)와 [TEST_PLAN.md](TEST_PLAN.md)에 있다.
 
@@ -182,7 +182,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 7. **Desktop 이 외부 MariaDB 에 의존.** 메타데이터 DB 가 없으면 앱을 쓸 수 없다. 첫 실행 화면과 오류 안내가 중요하다(Phase 6). 지금은 `metadata_settings_missing` 으로 빠진 변수 이름을 보인다.
 8. **숫자 정밀도**(위 「성능 원칙」).
 9. **통합 테스트 시간과 메모리.** 호스트 16 GB, Docker VM 약 8 GB. DB 별 통합 테스트는 순차로 돌린다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)).
-10. **CI.** 원격 저장소가 없고 push 는 사람이 한다. Phase 0 은 워크플로 정의까지만 만든다(P0-D).
+10. **CI.** 원격 저장소가 없고 push 는 사람이 한다. 워크플로(`.github/workflows/ci.yml`)는 P0-D 에서 정의만 했고 한 번도 실행되지 않았다([BACKLOG.md](BACKLOG.md) CI-1, [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)).
 
 ## 설계와 다른 구현
 
@@ -194,7 +194,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | 2 | §1.2 Desktop 포트 「설정값(충돌이 적은 기본값)」 | `127.0.0.1:18580` 고정. 셸이 항상 `--server.port=18580` 을 넘기고 빈 포트를 찾지 않는다 | 운영 CSP `connect-src` 와 데이터 API 사용자에게 고정 주소가 필요하다 | [ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md) (제안) | Phase 6 (설정 화면) |
 | 3 | §1.2 Desktop 의 Metadata DB 는 앱 설정과 첫 실행 화면에서 받고 비밀번호는 OS 키체인 | Phase 0 은 셸 환경변수 `QUERYHUB_METADATA_DB_*` 를 읽는다. Finder 에서 연 앱은 `metadata_settings_missing` 을 보인다 | 화면과 키체인은 Phase 6 범위다. 스파이크에는 환경변수로 충분했다 | [ADR-017](ADR/ADR-017-desktop-metadata-settings-from-env.md) (제안) | Phase 6 |
 | 4 | §2 「Boot BOM 이 관리하는 것은 덮어쓰지 않는다」 | MariaDB Connector/J 만 BOM 의 3.5.10 대신 3.5.11 (`runtime/build.gradle` 의 `ext['mariadb.version']`) | GHSA-fhx5-2xqw-2cgm. `allowLocalInfile=false` 와 함께 쓴다 | [ADR-018](ADR/ADR-018-mariadb-connector-j-override.md) (제안) | BOM 이 3.5.11 이상을 담을 때 예외를 지운다 |
-| 5 | §9.1 「(이후 `integration.sh`)」 | P0-B 에서 `scripts/gate/integration.sh` 를 만들었다. Docker 가 필요하고 Docker 가 없으면 건너뛰지 않고 실패한다. `integrationTest` 소스 세트는 `runtime/app` 에 있다 | 실제 MariaDB 없이는 Metadata DB 동작을 통과 처리할 수 없다(명세 14절) | [ADR-019](ADR/ADR-019-gate-scripts-judge-results.md) (승인됨) | P0-D (CI 의 Docker) |
+| 5 | §9.1 「(이후 `integration.sh`)」 | P0-B 에서 `scripts/gate/integration.sh` 를 만들었다. Docker 가 필요하고 Docker 가 없으면 건너뛰지 않고 실패한다. `integrationTest` 소스 세트는 `runtime/app` 에 있다 | 실제 MariaDB 없이는 Metadata DB 동작을 통과 처리할 수 없다(명세 14절) | [ADR-019](ADR/ADR-019-gate-scripts-judge-results.md) (승인됨), [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md) (제안) | CI-1 (CI 는 `gates` 작업에서만 Docker 로 `integration.sh` 를 돌린다. 첫 실행에서 확인한다) |
 | 6 | §1.2 「비밀 값…은 환경변수로 넘기고 명령행 인자에 넣지 않는다」. Boot 4.1.2 의 동작에 대한 대응은 설계에 없다 | Boot 4.1.2 의 별도 DataSource Flyway 경로를 막고 검사한 풀에 고정했다. Hikari `jdbc-url`·`password` 는 Boot 가 바인딩 뒤에 되돌리지만 프로세스 목록에 보이므로 방어적으로 거부한다 | `spring.flyway.url` 등으로 마이그레이션 연결을 돌릴 수 있었다. 비밀 값이 명령행에 보이면 안 된다(§1.2) | [ADR-012](ADR/ADR-012-flyway-connection-pin.md), [ADR-011](ADR/ADR-011-metadata-secrets-env-only.md) (승인됨) | Phase 1 (P0B-H1, P0B-R14, P0B-R15) |
 | 7 | §1.2 Desktop 은 번들된 JRE(jlink) + JAR | 외부 JDK 21(`QUERYHUB_DESKTOP_JAVA`, `JAVA_HOME`, `PATH` 순, 21 미만은 `java_too_old`)과 디버그 빌드의 저장소 JAR | 스파이크 범위. JRE·JAR 묶기는 설치본과 함께 한다 | [ADR-001](ADR/ADR-001-jvm-child-process.md) (승인됨, 일부 구현) | Phase 8 |
 | 8 | 설계에 없음 (§1.1 은 경로 분리만 말한다) | desktop 프로파일에서 관리 API 의 CORS 를 Tauri 출처 `tauri://localhost`, `http://tauri.localhost` 에만, GET 만 허용한다 | 앱 번들의 WebView 가 `http://127.0.0.1:18580` 의 관리 API 를 직접 읽어야 한다 | [ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md) (제안) | Phase 1 (관리자 토큰) |

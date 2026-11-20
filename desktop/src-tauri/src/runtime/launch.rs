@@ -74,6 +74,22 @@ fn non_empty<'a>(env: &'a Env, name: &str) -> Option<&'a str> {
     env.get(name).map(String::as_str).filter(|v| !v.is_empty())
 }
 
+/// 이름이 name 인 변수의 값. 같은 이름을 먼저 찾고, ignore_case 이면 그다음 ASCII 대소문자를 무시하고 찾는다.
+///
+/// Windows 의 환경변수 이름은 대소문자를 가리지 않고, 그곳의 셸 환경에는 보통 `PATH` 가 아니라 `Path` 가 있다(P0C-C2-4).
+/// 호출하는 쪽이 `cfg!(windows)` 로 ignore_case 를 고르므로 이 함수는 모든 플랫폼에서 컴파일되고 테스트된다.
+fn env_value<'a>(env: &'a Env, name: &str, ignore_case: bool) -> Option<&'a str> {
+    if let Some(value) = env.get(name) {
+        return Some(value.as_str());
+    }
+    if !ignore_case {
+        return None;
+    }
+    env.iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
 /// Metadata DB 접속 정보. Debug 출력은 비밀번호를 가린다.
 #[derive(Clone)]
 pub struct MetadataSettings {
@@ -132,7 +148,7 @@ pub fn settings_missing_failure(missing: Vec<&'static str>) -> Failure {
     Failure::new(
         FailureKind::MetadataSettingsMissing,
         format!(
-            "Metadata DB 설정이 없다: {}. 개발 모드에서는 deploy/.env 를 읽은 셸(set -a; . deploy/.env; set +a)에서 앱을 시작한다. 첫 실행 설정 화면과 OS 키체인 저장은 Phase 6 계획이다.",
+            "Metadata DB 설정이 없다: {}. 개발 모드에서는 docs/DEPLOYMENT.md 의 절차대로 deploy/.env 를 하위 셸에서만 읽어 앱을 시작한다: (set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev). 첫 실행 설정 화면과 OS 키체인 저장은 Phase 6 계획이다.",
             missing.join(", ")
         ),
     )
@@ -171,7 +187,8 @@ pub fn resolve_java(env: &Env) -> Result<PathBuf, Failure> {
             return Ok(candidate);
         }
     }
-    if let Some(path) = env.get("PATH") {
+    // Windows 에서는 Path 처럼 대소문자가 다른 이름도 찾는다(P0C-C2-4).
+    if let Some(path) = env_value(env, "PATH", cfg!(windows)) {
         for dir in std::env::split_paths(path) {
             if dir.as_os_str().is_empty() {
                 continue;
@@ -389,6 +406,59 @@ mod tests {
             inherited_env(&env(&pairs)),
             env(&[("Path", "C:\\Windows"), ("SystemRoot", "C:\\Windows")])
         );
+    }
+
+    /// C2-3: 안내는 DEPLOYMENT.md 와 deploy/.env 를 하위 셸에서만 읽는 명령을 가리키고, 빠진 이름만 말한다.
+    #[test]
+    fn settings_missing_failure_points_to_the_deployment_doc_and_the_scoped_command() {
+        let failure = settings_missing_failure(vec![DB_HOST_VAR, DB_PASSWORD_VAR]);
+        assert_eq!(failure.kind, FailureKind::MetadataSettingsMissing);
+        assert!(
+            failure
+                .message
+                .contains("(set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev)"),
+            "{}",
+            failure.message
+        );
+        assert!(
+            failure.message.contains("docs/DEPLOYMENT.md"),
+            "{}",
+            failure.message
+        );
+        assert!(failure.message.contains(DB_HOST_VAR));
+        assert!(failure.message.contains(DB_PASSWORD_VAR));
+        for absent in [DB_NAME_VAR, DB_USERNAME_VAR, DB_PORT_VAR] {
+            assert!(!failure.message.contains(absent), "{absent}");
+        }
+    }
+
+    /// C2-4: 대소문자 무시는 요청할 때만 하고, 같은 이름이 있으면 그것을 먼저 쓴다. 플랫폼과 관계없이 실행된다.
+    #[test]
+    fn env_value_finds_mixed_case_names_only_in_ignore_case_mode() {
+        let windows_like = env(&[("Path", "C:\\Windows"), ("HOME", "/home/qh")]);
+        assert_eq!(env_value(&windows_like, "PATH", true), Some("C:\\Windows"));
+        assert_eq!(env_value(&windows_like, "PATH", false), None);
+        assert_eq!(env_value(&windows_like, "HOME", false), Some("/home/qh"));
+        assert_eq!(env_value(&windows_like, "MISSING", true), None);
+
+        let both = env(&[("PATH", "exact"), ("Path", "other")]);
+        assert_eq!(env_value(&both, "PATH", true), Some("exact"));
+        assert_eq!(env_value(&both, "PATH", false), Some("exact"));
+    }
+
+    /// C2-4: Windows 의 셸 환경처럼 Path 만 있어도 그 안의 java.exe 를 찾는다.
+    /// 미검증: Windows 에서만 컴파일·실행된다(CI desktop 작업의 windows-2025, 아직 실행되지 않았다).
+    #[cfg(windows)]
+    #[test]
+    fn windows_resolve_java_reads_a_mixed_case_path_variable() {
+        let dir = std::env::temp_dir().join(format!("queryhub-launch-path-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let java = dir.join(JAVA_EXE);
+        std::fs::write(&java, b"").expect("java.exe");
+        let dir_text = dir.display().to_string();
+        let found = resolve_java(&env(&[("Path", dir_text.as_str())]));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found.expect("java from Path"), java);
     }
 
     #[test]

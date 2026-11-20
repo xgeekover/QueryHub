@@ -6,8 +6,14 @@
 # eslint --max-warnings 0, cargo fmt --check, cargo clippy --locked --all-targets -- -D warnings.
 # Tauri 고정 검사는 파일만 읽으므로 설치보다 먼저 한다. 설치가 먼저면 package.json 의 범위 표기(^2.11.1)는 pnpm 의 잠금 파일
 # 불일치 오류로만 보이고, 어느 항목이 고정을 어겼는지 말하지 못한다.
+# 저장소 단계(P0-D): docs-check.sh(DOC-1: 명세 원문 해시, 문서의 상대 링크)와 workflow-check.sh(.github/workflows 의 SHA 고정,
+# 권한, 금지 표현, 팩토리 명령). 둘 다 모든 범위에서 실행하고, 도구·파일·워크플로가 없으면 건너뛰지 않고 실패한다.
+# 범위(P0-D): 인자 없음은 모든 단계. '--desktop-only' 는 runtime 단계(spotlessCheck, compile)만 빼고 마지막 줄에 그 사실을
+# 적는다. 그 밖의 인자는 어떤 도구도 실행하기 전에 사용법 오류로 끝난다.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+gate_parse_scope lint "$@"
 
 check_gate_script_syntax() {
   local script status=0
@@ -87,8 +93,12 @@ EOF
 }
 
 gate_step 'gate scripts: bash -n' check_gate_script_syntax
-gate_step 'runtime: spotlessCheck compileJava compileTestJava compileIntegrationTestJava' \
-  gradle_runtime spotlessCheck compileJava compileTestJava compileIntegrationTestJava
+gate_step 'docs: docs-check.sh (명세 원문 해시, 상대 링크)' bash scripts/gate/docs-check.sh
+gate_step 'ci: workflow-check.sh (SHA 고정, 권한, 금지 표현, 팩토리 명령)' bash scripts/gate/workflow-check.sh
+if gate_runtime_in_scope; then
+  gate_step 'runtime: spotlessCheck compileJava compileTestJava compileIntegrationTestJava' \
+    gradle_runtime spotlessCheck compileJava compileTestJava compileIntegrationTestJava
+fi
 
 gate_step 'desktop: 필수 도구 (node, pnpm, cargo)' require_tool node pnpm cargo
 gate_step 'desktop: 존재 확인' require_desktop
@@ -100,4 +110,4 @@ gate_step 'desktop: cargo fmt --check' cargo fmt --manifest-path "$DESKTOP_MANIF
 gate_step 'desktop: cargo clippy --locked --all-targets -- -D warnings' \
   cargo_desktop clippy --all-targets -- -D warnings
 
-echo "GATE PASS: lint"
+gate_pass lint

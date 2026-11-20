@@ -41,8 +41,9 @@ QueryHub 의 기술 결정을 결정 하나에 파일 하나로 남긴다. 다�
 | [ADR-017](ADR-017-desktop-metadata-settings-from-env.md) | Phase 0 Desktop 은 Metadata DB 설정을 셸 환경변수에서 읽는다 | 제안 | 구현됨 (P0-C, f84c628) | 2026-11-19 |
 | [ADR-018](ADR-018-mariadb-connector-j-override.md) | MariaDB Connector/J 3.5.11 로 BOM 버전을 덮어쓴다 | 제안 | 구현됨 (P0-B, f913239) | 2026-11-18 |
 | [ADR-019](ADR-019-gate-scripts-judge-results.md) | 게이트 스크립트가 테스트 결과를 직접 판정한다 | 승인됨 | 구현됨 (P0-A, P0-B, P0-C) | 2026-11-15 |
+| [ADR-020](ADR-020-ci-runs-gate-scripts.md) | CI 는 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다 | 제안 | 일부 구현 — 정의됨 (P0-D), 실행은 미검증 | 2026-11-20 |
 
-제안 상태인 ADR-015, ADR-017, ADR-018 은 사용자가 받아들이면 승인됨으로 바꾼다.
+제안 상태인 ADR-015, ADR-017, ADR-018, ADR-020 은 사용자가 받아들이면 승인됨으로 바꾼다.
 
 ## 템플릿
 

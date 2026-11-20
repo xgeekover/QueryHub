@@ -118,4 +118,4 @@ pnpm --dir desktop tauri build --debug --bundles app --no-sign
 
 - **Desktop 설치본:** JRE 묶기(jlink), JAR 묶기(`bundle.resources`), dmg·설치 프로그램, 코드 서명과 공증. `bundle.externalBin` 사이드카는 쓰지 않는다([ADR-001](ADR/ADR-001-jvm-child-process.md)).
 - **Server:** Docker 이미지와 `Dockerfile`(설계 §3 의 `deploy/`), 운영 프로파일과 관리자 토큰·마스터 키의 시크릿 파일 입력(Phase 1 과 함께).
-- **플랫폼:** Windows·Linux 의 빌드와 실행은 **미검증**이다. P0-D CI 와 Phase 8 에서 확인한다([BACKLOG.md](BACKLOG.md) PLAT-1, P0C-C2-4).
+- **플랫폼:** Windows·Linux 의 빌드와 실행은 **미검증**이다. CI 워크플로(`.github/workflows/ci.yml`, 정의됨·미실행)의 첫 실행과 Phase 8 에서 확인한다([BACKLOG.md](BACKLOG.md) CI-1, PLAT-1). Windows 의 `Path` 대소문자 처리(P0C-C2-4)는 P0-D 에서 고쳤지만 Windows 에서 실행해 보지 않았다.

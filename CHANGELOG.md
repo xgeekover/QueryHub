@@ -6,11 +6,42 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ## [Unreleased]
 
-### Phase 0 (진행 중)
+### Phase 0 (P0-D 를 커밋하면 완료)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md)
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). Phase 0 보고(통과 기준, 사람의 결정, 미검증 항목): [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md)
 
-#### 문서 기준선 (커밋 전)
+#### P0-D CI 정의와 Phase 0 마무리 (커밋 전)
+
+##### 추가
+
+- `.github/workflows/ci.yml` (**정의됨·미실행**: 원격 저장소가 없어 한 번도 실행되지 않았다, [BACKLOG](docs/BACKLOG.md) CI-1). `gates` 작업(ubuntu-24.04)은 새 checkout 에서 root 가 아닌지 확인하고 `selftest.sh --no-skip` 과 팩토리 게이트 네 개를 인자 없이 돌린 뒤 작업 트리가 깨끗한지 본다. `desktop` 작업(macos-15, windows-2025)은 build·test·lint 를 `--desktop-only` 로 돌린다([ADR-020](docs/ADR/ADR-020-ci-runs-gate-scripts.md), 제안).
+- `scripts/gate/docs-check.sh` (DOC-1): 명세 원문 블록(689줄, SHA-256)과 `README.md`, `CHANGELOG.md`, `docs/**/*.md` 의 상대 링크를 검사한다. `lint.sh` 가 모든 범위에서 실행한다.
+- `scripts/gate/workflow-check.sh`: 워크플로의 SHA 고정, 권한, 금지 표현, checkout 의 `persist-credentials: false`, 팩토리 명령 네 줄을 검사한다. 워크플로 파일이 없으면 실패한다. `lint.sh` 가 모든 범위에서 실행한다.
+- 게이트 범위: `build.sh`, `test.sh`, `lint.sh` 의 선택 인자 `--desktop-only`. runtime(Gradle) 단계만 빼고 시작 안내와 마지막 `GATE PASS` 줄에 그 사실을 적는다. 그 밖의 인자는 어떤 도구도 실행하기 전에 exit 2 이고, `integration.sh` 는 인자를 받지 않는다. 인자 없는 실행의 단계와 출력 형식은 그대로다.
+- `selftest.sh --no-skip` (P0A-N1)과 새 시나리오 58개: 범위 파서, 가짜 docker 로 Docker 사전 점검, docs-check 와 workflow-check 의 픽스처, junit-check 의 형식이 틀린 `tests` 속성(빈 값, 숫자가 아님)과 합계 형식 거부 분기(`valid_counts`, 가짜 awk 가 틀린 합계를 찍는다, P0A-N1).
+- `desktop/src-tauri/src/runtime/launch.rs` 의 테스트 3건: 설정 없음 메시지의 두 문구, 대소문자 무시 모드에서만 `Path` 를 찾는 `env_value`(두 건 모두 모든 플랫폼), Windows 의 `Path` 에서 `java.exe` 찾기(`#[cfg(windows)]`, 미검증).
+- `docs/ADR/ADR-020-ci-runs-gate-scripts.md`(제안)와 `docs/PHASE0-REPORT.md`.
+
+##### 변경
+
+- `launch.rs`: Metadata DB 설정이 없을 때의 메시지가 `docs/DEPLOYMENT.md` 와 하위 셸 명령 `(set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev)` 를 가리킨다.
+- `docs/BACKLOG.md`: P0A-N1, P0B-R4, P0B-R7, P0C-C2-4, DOC-1 을 닫았다. P0B-R6 은 Phase 1 로 미뤘고, PLAT-1 의 목표를 「CI-1 첫 실행 / Phase 8」로 바꿨고, CI-1 을 더했다(ID 24개).
+- `docs/TEST_PLAN.md`(CI 절, 게이트 범위, lint 의 저장소 단계, 새 사본 검사, 문서 점검 절차, 테스트 수), `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`, `docs/ADR/README.md`, ADR-013, ADR-017, ADR-019, `README.md`. 문서 기준선의 「커밋 전」을 51141df (2026-11-20) 로 바꿨다.
+
+##### 수정
+
+- Windows 에서 `resolve_java` 가 `PATH` 를 대소문자 구분 없이 찾는다(`launch.rs` 의 `env_value`, 모든 플랫폼에서 컴파일하고 `cfg!(windows)` 로 고른다, P0C-C2-4). Windows 에서는 실행해 보지 않았다(미검증).
+- Docker 사전 점검(`lib.sh` 의 `docker_preflight`)이 서버 버전을 stdout 에서만 읽고 숫자로 시작하는 한 줄만 받는다. stderr 는 실패 때만 보인다(P0B-R4).
+- ADR-013 의 `java -version` 사전 점검 환경 설명을 코드(`inherited_env`)와 `docs/SECURITY.md` 에 맞췄다. 아래 P0-C 보안 항목의 가림 문구를 「출력에 그대로 나온 비밀번호」로 고쳤다.
+
+##### 보안
+
+- CI 워크플로는 비밀 값이 필요 없다. 최상위 권한은 `contents: read` 하나이고, 모든 checkout 이 `persist-credentials: false` 이며, action 은 40자 커밋 SHA 로 고정했다. `pull_request_target`, `secrets.`, `github.event.`, `github.head_ref` 를 쓰지 않는다. `workflow-check.sh` 가 lint 단계에서 이 규칙을 점검한다.
+- 게이트 범위는 명시한 인자로만 고른다. 환경변수로는 게이트의 단계를 줄일 수 없다.
+
+테스트 (macOS 로컬의 게이트 실행): runtime 단위 300, vitest 30, cargo test 32, 통합 23. 모두 통과, 건너뜀 0. selftest 93 시나리오, SKIP 0. `#[cfg(windows)]` 테스트 1건은 macOS 에서 컴파일되지 않아 미검증이다. CI 는 실행되지 않았다(CI-1).
+
+#### 문서 기준선 — 51141df (2026-11-20)
 
 ##### 추가
 
@@ -43,7 +74,7 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 ##### 보안
 
 - 자식 런타임에는 허용 목록의 환경변수만 넘긴다. 셸의 환경으로 런타임의 바인딩, 노출, 로깅, 프로파일을 바꿀 수 없다([ADR-013](docs/ADR/ADR-013-desktop-child-env-allowlist.md)).
-- Metadata DB 설정은 환경변수로만 넘기고 명령행 인자에 넣지 않는다. 출력에 나온 비밀번호는 `********` 로 가린다([ADR-017](docs/ADR/ADR-017-desktop-metadata-settings-from-env.md)).
+- Metadata DB 설정은 환경변수로만 넘기고 명령행 인자에 넣지 않는다. 출력에 그대로 나온 비밀번호는 `********` 로 가린다([ADR-017](docs/ADR/ADR-017-desktop-metadata-settings-from-env.md)).
 - 관리 API CORS 는 Tauri WebView 출처만, GET 만, 자격 증명 없이, desktop 프로파일에서만 허용한다. 출처 값이 잘못되면 기동을 멈춘다. WebView 는 엄격한 CSP 를 쓴다([ADR-015](docs/ADR/ADR-015-desktop-fixed-port-and-cors.md)).
 
 테스트: runtime 단위 300, vitest 30, cargo test 30, 통합 23. 모두 통과, 건너뜀 0.

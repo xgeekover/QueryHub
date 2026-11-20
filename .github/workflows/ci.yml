@@ -1,0 +1,181 @@
+# QueryHub CI (P0-D, ADR-020).
+#
+# 상태: 정의됨·미실행. 원격 저장소가 없어 한 번도 실행되지 않았다. 사람이 push 한 뒤 첫 실행을 확인한다(BACKLOG CI-1).
+#
+# 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
+# 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서
+# 점검한다(SHA 고정, 권한, 금지 표현, checkout 의 persist-credentials, 팩토리 명령 네 줄).
+#
+# - gates (ubuntu-24.04): 새 checkout 에서 네 게이트 전체를 인자 없이 실행하고, 끝나면 작업 트리가 깨끗한지 본다(P0B-R7).
+#   통합 테스트는 Linux 컨테이너(Docker)가 필요해 이 작업에서만 돈다. Linux desktop(WebKitGTK)의 빌드·테스트·lint 도 여기서 한다.
+# - desktop (macos-15, windows-2025): Java, Gradle, Docker 없이 build/test/lint 를 --desktop-only 로 실행한다. macOS 러너에는
+#   Docker 가 없고 Windows 러너는 Windows 컨테이너만 돌린다.
+#
+# 고정:
+# - action 은 모두 40자 커밋 SHA 와 '# 태그' 주석으로 고정한다. 2026-11-20 에 읽기 전용 git ls-remote --tags 로 찾았다.
+#   기준: 14일 이상 지난 가장 새 릴리스.
+# - 러너 레이블은 -latest 를 쓰지 않는다. -latest 레이블은 예고 없이 새 이미지(예: Ubuntu 26.04)로 옮겨 간다.
+# - Rust 는 1.97.1 이다(로컬 기준 버전). Rust 1.100 은 Cargo 의 build-dir 배치를 바꾸었고, 이 크레이트가 쓰는 tauri-build 2.6.3 은
+#   그 배치를 가정한다(NexTerm 의 같은 문제). 제3자 Rust action 대신 러너에 있는 rustup 을 쓴다.
+# - 캐시는 내려받은 것만 담는다(Gradle, pnpm store, cargo registry·git). target, node_modules, dist, build 같은 산출물은 캐시하지
+#   않으므로 매 실행이 새 빌드다.
+# - 비밀 값이 필요 없다. 권한은 최상위 contents: read 하나이고 checkout 은 자격 증명을 남기지 않는다.
+#
+# 미검증(첫 실행 전에는 알 수 없다): 러너 레이블, action 입력 이름, Git Bash 위의 Windows 단계, Linux WebKitGTK 빌드.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gates:
+    name: gates (ubuntu-24.04, 팩토리 게이트 네 개)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # P0A-N1: root 는 권한 000 인 파일도 읽으므로 selftest 의 읽기 실패 시나리오가 SKIP 된다. CI 는 root 가 아니어야 한다.
+      - name: root 가 아닌지 확인 (P0A-N1)
+        run: |
+          id -u
+          test "$(id -u)" -ne 0
+
+      # Tauri(WebKitGTK) 빌드에 필요한 패키지. NexTerm build.yml 과 같은 목록이다.
+      - name: Linux desktop 의존 패키지 (WebKitGTK)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Java 21 (Temurin, Gradle 캐시)
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: pnpm 11.9.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.9.0
+
+      - name: Node 24.16.0 (pnpm store 캐시)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Rust 1.97.1 (rustup, rustfmt, clippy)
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - name: cargo registry 캐시 (내려받은 것만)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      # 건너뛴 시나리오가 하나라도 있으면 실패한다. test.sh 와 integration.sh 는 selftest 를 인자 없이 부른다.
+      - name: selftest --no-skip
+        run: bash scripts/gate/selftest.sh --no-skip
+
+      # 아래 네 줄은 팩토리 게이트 명령과 글자 그대로 같다(인자 없음).
+      - name: build.sh
+        run: bash scripts/gate/build.sh
+      - name: test.sh
+        run: bash scripts/gate/test.sh
+      - name: lint.sh
+        run: bash scripts/gate/lint.sh
+      - name: integration.sh
+        run: bash scripts/gate/integration.sh
+
+      # P0B-R7: 게이트가 추적하지 않는 파일을 남기지 않아야 한다(산출물은 모두 .gitignore 에 걸린다).
+      - name: 작업 트리가 깨끗한지 확인
+        run: |
+          status="$(git status --porcelain --untracked-files=all)"
+          printf '%s\n' "$status"
+          test -z "$status"
+
+  desktop:
+    name: desktop (${{ matrix.os }}, --desktop-only)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: pnpm 11.9.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.9.0
+
+      - name: Node 24.16.0 (pnpm store 캐시)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Rust 1.97.1 (rustup, rustfmt, clippy)
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - name: cargo registry 캐시 (내려받은 것만)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      # runtime(Gradle) 단계만 뺀다. 마지막 줄이 'GATE PASS: <이름> (desktop-only, ...)' 로 범위를 밝힌다.
+      - name: build.sh --desktop-only
+        run: bash scripts/gate/build.sh --desktop-only
+      - name: test.sh --desktop-only
+        run: bash scripts/gate/test.sh --desktop-only
+      - name: lint.sh --desktop-only
+        run: bash scripts/gate/lint.sh --desktop-only

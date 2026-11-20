@@ -11,49 +11,58 @@
 #      --no-build-cache 가 빌드 캐시에서 결과를 가져오는(FROM-CACHE) 실행 없는 결과를 막는다.
 #   5. 모든 runtime 모듈의 결과를 --require-each --newer 표식 으로 판정한다.
 #   6. Gradle 종료 코드와 판정 결과를 합쳐 마지막에 결론을 출력한다.
+# 범위(P0-D): 인자 없음은 위의 모든 단계. '--desktop-only' 는 2, 4, 5(runtime 모듈 탐색, Gradle 테스트, runtime JUnit 판정)를
+# 빼고 마지막 줄에 'desktop-only' 와 gradle=not run, junit-check=not run 을 적는다. 그 밖의 인자는 어떤 도구도 실행하기 전에
+# 사용법 오류로 끝난다.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+gate_parse_scope test "$@"
 
 # 1. 판정기 자체 검증
 gate_step 'gate scripts: junit-check self-test' bash scripts/gate/selftest.sh
 
 # 2. 모듈 탐색: 발견된 모든 모듈에 실행된 테스트가 있어야 한다.
 #    목록을 변수로 먼저 받아 find 의 실패를 게이트 실패로 만든다(프로세스 치환은 실패를 숨긴다).
-if ! module_list="$(runtime_module_dirs)"; then
-  gate_fail "runtime 모듈 탐색(find)이 실패했다"
-fi
 result_dirs=()
-while IFS= read -r module_dir; do
-  [ -n "$module_dir" ] || continue
-  result_dirs+=("$module_dir/build/test-results/test")
-done <<EOF
+if gate_runtime_in_scope; then
+  if ! module_list="$(runtime_module_dirs)"; then
+    gate_fail "runtime 모듈 탐색(find)이 실패했다"
+  fi
+  while IFS= read -r module_dir; do
+    [ -n "$module_dir" ] || continue
+    result_dirs+=("$module_dir/build/test-results/test")
+  done <<EOF
 $module_list
 EOF
 
-if [ "${#result_dirs[@]}" -eq 0 ]; then
-  gate_fail "runtime 아래에서 Gradle 모듈(build.gradle)을 찾지 못했다"
+  if [ "${#result_dirs[@]}" -eq 0 ]; then
+    gate_fail "runtime 아래에서 Gradle 모듈(build.gradle)을 찾지 못했다"
+  fi
 fi
 
 # 3. 신선도 표식: 이 파일보다 새 결과 XML 만 이번 실행의 결과로 인정한다.
 MARKER="$(mktemp "${TMPDIR:-/tmp}/queryhub-test-marker.XXXXXX")"
 trap 'rm -f "$MARKER"' EXIT
 
-# 4. 테스트 실행. 실패해도 판정 요약을 출력하도록 종료 코드만 보관한다.
-#    --no-build-cache: 사용자 홈이나 CI 에서 빌드 캐시를 켜 두어도 Test 태스크를 캐시에서 복원하지 않고 실제로 실행한다.
-printf '\n==> [gate] %s\n' 'runtime: cleanTest test --continue --no-build-cache'
-started=$(date +%s)
-set +e
-gradle_runtime cleanTest test --continue --no-build-cache
-gradle_status=$?
-set -e
-printf '<== [gate] %s: exit %d (%ss)\n' 'runtime: cleanTest test --continue --no-build-cache' "$gradle_status" "$(($(date +%s) - started))"
+if gate_runtime_in_scope; then
+  # 4. 테스트 실행. 실패해도 판정 요약을 출력하도록 종료 코드만 보관한다.
+  #    --no-build-cache: 사용자 홈이나 CI 에서 빌드 캐시를 켜 두어도 Test 태스크를 캐시에서 복원하지 않고 실제로 실행한다.
+  printf '\n==> [gate] %s\n' 'runtime: cleanTest test --continue --no-build-cache'
+  started=$(date +%s)
+  set +e
+  gradle_runtime cleanTest test --continue --no-build-cache
+  gradle_status=$?
+  set -e
+  printf '<== [gate] %s: exit %d (%ss)\n' 'runtime: cleanTest test --continue --no-build-cache' "$gradle_status" "$(($(date +%s) - started))"
 
-# 5. 결과 판정
-printf '\n==> [gate] %s\n' 'runtime: JUnit 결과 판정'
-set +e
-bash scripts/gate/junit-check.sh --require-each --newer "$MARKER" "${result_dirs[@]}"
-check_status=$?
-set -e
+  # 5. 결과 판정
+  printf '\n==> [gate] %s\n' 'runtime: JUnit 결과 판정'
+  set +e
+  bash scripts/gate/junit-check.sh --require-each --newer "$MARKER" "${result_dirs[@]}"
+  check_status=$?
+  set -e
+fi
 
 # 6. desktop (P0-C): vitest 와 cargo test. 앞 단계가 실패해도 모든 단계를 실행하고 종료 코드는 마지막에 합친다.
 #    desktop 이 없으면 각 단계가 실패한다(건너뛰지 않는다).
@@ -114,15 +123,25 @@ desktop_stage 'desktop: cargo test --locked' run_cargo_test || cargo_status=$?
 desktop_stage 'desktop: cargo test 결과 판정 (cargo-test-check.sh --require-lib)' \
   bash scripts/gate/cargo-test-check.sh --require-lib "$CARGO_LOG" || cargo_check_status=$?
 
-# 7. 결론 (출력의 마지막 줄): 모든 종료 코드가 0 일 때만 통과한다.
-summary="gradle exit=$gradle_status, junit-check exit=$check_status"
+# 7. 결론 (출력의 마지막 줄): 실행한 모든 단계의 종료 코드가 0 일 때만 통과한다.
+#    all 범위에서는 gradle 과 junit-check 의 실제 종료 코드도 판정한다. desktop-only 범위에서는 그 둘을 실행하지 않았으므로
+#    0 으로 치지 않고 판정 목록에서 빼며, 요약에 not run 으로 적는다.
+runtime_statuses=''
+if gate_runtime_in_scope; then
+  summary="gradle exit=$gradle_status, junit-check exit=$check_status"
+  runtime_statuses="$gradle_status $check_status"
+else
+  summary="gradle=not run, junit-check=not run"
+fi
 summary="$summary, desktop tools=$tools_status, desktop present=$presence_status, pnpm install=$install_status"
 summary="$summary, vitest exit=$vitest_status, vitest junit-check exit=$vitest_check_status"
 summary="$summary, cargo test exit=$cargo_status, cargo-test-check exit=$cargo_check_status"
-for status in "$gradle_status" "$check_status" "$tools_status" "$presence_status" "$install_status" \
+# runtime_statuses 는 숫자만 담고 일부러 따옴표 없이 펼친다(desktop-only 에서는 비어 있다).
+# shellcheck disable=SC2086
+for status in $runtime_statuses "$tools_status" "$presence_status" "$install_status" \
   "$vitest_status" "$vitest_check_status" "$cargo_status" "$cargo_check_status"; do
   if [ "$status" -ne 0 ]; then
     gate_fail "test ($summary)"
   fi
 done
-echo "GATE PASS: test ($summary)"
+gate_pass test "$summary"

@@ -10,18 +10,20 @@ SQL 을 저장하고 API 엔드포인트와 연결해, 외부 시스템이 HTTP 
 
 이 README 는 입구다. 자세한 내용은 아래 [문서](#문서)의 각 파일에 있다.
 
-## 현재 상태: Phase 0 (P0-C 완료, 문서 기준선)
+## 현재 상태: Phase 0 마무리 (P0-D 커밋 전)
+
+Phase 0 의 마지막 태스크 P0-D 를 사람이 검토하고 커밋하면 Phase 0 이 끝난다. CI 워크플로는 정의만 했고 한 번도 실행되지 않았다(정의됨·미실행).
 
 | 구분 | 내용 |
 |---|---|
 | 구현됨 (P0-A) | Gradle 멀티 모듈 빌드(`runtime/`), 모듈 의존 규칙(Gradle 선언 검사 + ArchUnit), 공통 응답·오류 형식, X-Request-Id, health 엔드포인트, 런타임 상태 관리 API, 프로파일(desktop/server), 게이트 스크립트(`scripts/gate/`) |
 | 구현됨 (P0-B) | Metadata DB(MariaDB) 연결과 기동 검사, Flyway 마이그레이션 V1(`app_setting`), `AppSettingRepository` 포트와 JDBC 구현(`adapter-metadata`), ArchUnit R8, Testcontainers 통합 테스트와 통합 테스트 게이트(`integration.sh`), 개발용 compose(`deploy/compose.dev.yml`) |
 | 구현됨 (P0-C) | Tauri 2.11 데스크톱 셸(`desktop/`): 런타임 JAR 을 자식 프로세스로 자동 시작·중지·재시작, 상태 화면(React 19 + shadcn/ui), 앱 종료 시 런타임 정지, 런타임의 부모 프로세스 감시(`QUERYHUB_DESKTOP_PARENT_PID`), desktop 프로파일의 관리 API CORS, 게이트의 desktop 단계(vitest, cargo test 판정기 `cargo-test-check.sh`, Tauri 버전 고정 검사) |
-| 문서 기준선 (커밋 전) | `docs/` 의 요구사항, 아키텍처, ADR 19건, ERD, API 명세, DB 지원, 보안, 배포, 테스트 계획, 백로그와 루트의 `CHANGELOG.md` |
-| 계획 | CI(P0-D) |
+| 문서 기준선 (51141df) | `docs/` 의 요구사항, 아키텍처, ADR 19건, ERD, API 명세, DB 지원, 보안, 배포, 테스트 계획, 백로그와 루트의 `CHANGELOG.md` |
+| 구현됨 (P0-D, 커밋 전) | CI 워크플로 `.github/workflows/ci.yml`(**정의됨·미실행**: 원격 저장소가 없어 한 번도 실행되지 않았다, [ADR-020](docs/ADR/ADR-020-ci-runs-gate-scripts.md)), 게이트의 `--desktop-only`, 문서 점검 `docs-check.sh`, 워크플로 점검 `workflow-check.sh`, `selftest.sh --no-skip`, stdout 만 읽는 Docker 사전 점검, Windows `Path` 처리(미검증), ADR 은 모두 20건, [Phase 0 보고](docs/PHASE0-REPORT.md) |
 | 계획 | DB 연결과 Provider 4종·관리자 토큰·보안·비밀번호 암호화(Phase 1), SQL 저장소(Phase 2), API 관리(Phase 3), API 런타임·API Key(Phase 4), Export(Phase 5), Desktop UI·Metadata DB 접속 화면·운영 지표 화면(Phase 6), 모니터링과 운영 지표 수집(Phase 7), 배포·Dockerfile(Phase 8) |
 
-Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#phase-계획), 태스크별 변경과 테스트 수는 [CHANGELOG.md](CHANGELOG.md), 남은 문제는 [docs/BACKLOG.md](docs/BACKLOG.md)에 있다.
+Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#phase-계획), 태스크별 변경과 테스트 수는 [CHANGELOG.md](CHANGELOG.md), 남은 문제는 [docs/BACKLOG.md](docs/BACKLOG.md), Phase 0 의 결과·사람의 결정·미검증 항목은 [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md)에 있다.
 
 ## 저장소 구조
 
@@ -39,7 +41,9 @@ Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 │                          capabilities/, icons/, src/(lib.rs, commands.rs, runtime/: supervisor, launch, java, health, output)
 ├─ deploy/                 개발용 compose (compose.dev.yml), 환경변수 예시 (env.example)
 ├─ docs/                   요구사항, 아키텍처, ADR/, ERD, API 명세, DB 지원, 보안, 배포, 테스트 계획, 백로그
-├─ scripts/gate/           build · test · lint · integration 게이트 스크립트, JUnit 결과 판정기, cargo test 결과 판정기
+├─ scripts/gate/           build · test · lint · integration 게이트 스크립트, JUnit 결과 판정기, cargo test 결과 판정기,
+│                          문서 점검(docs-check.sh), 워크플로 점검(workflow-check.sh), 판정기 자체 검사(selftest.sh)
+├─ .github/workflows/      CI 워크플로 ci.yml (정의됨·미실행, 팩토리 게이트와 같은 스크립트를 부른다)
 ├─ .editorconfig  .gitattributes  .gitignore
 ├─ CHANGELOG.md
 └─ README.md
@@ -62,10 +66,12 @@ Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 bash scripts/gate/build.sh        # main·test·integrationTest 를 -Xlint:all -Werror 로 컴파일하고 실행 JAR 을 만든다
                                   # (assemble testClasses integrationTestClasses)
 bash scripts/gate/test.sh         # 단위 테스트를 실제로 실행하고 JUnit XML 로 판정한다 (Docker 불필요)
-bash scripts/gate/lint.sh         # 게이트 스크립트 문법(bash -n), Spotless 형식 검사, 컴파일
+bash scripts/gate/lint.sh         # 게이트 스크립트 문법(bash -n), 문서 점검, 워크플로 점검, Spotless 형식 검사, 컴파일
                                   # (spotlessCheck compileJava compileTestJava compileIntegrationTestJava)
 bash scripts/gate/integration.sh  # 통합 테스트(실제 MariaDB, Testcontainers)를 실행하고 JUnit XML 로 판정한다 (Docker 필요)
 ```
+
+`build.sh`, `test.sh`, `lint.sh` 에 `--desktop-only` 를 주면 runtime(Gradle) 단계를 빼고 실행한다(Java 가 없는 CI 의 macOS·Windows 작업용). 팩토리 게이트와 CI 의 `gates` 작업은 인자 없이 실행한다.
 
 개발용 DB (**메인 체크아웃에서만**, 중지와 삭제는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)):
 
@@ -98,12 +104,13 @@ pnpm --dir desktop install
 |---|---|
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | 명세 원문(2026-11-15, 그대로 보존)과 승인된 추가 요구사항(AR-0 설계 결정 D1–D4, AR-1 런타임 운영 지표) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 전체 구조, 단일 포트, Desktop 과 Runtime(셸의 감독, 상태와 버튼, 멈추는 방식), 모듈 규칙, 기술 스택, Phase 계획, 위험, 설계와 다른 구현 |
-| [docs/ADR/README.md](docs/ADR/README.md) | 아키텍처 결정 기록 ADR-001..ADR-019, 상태 규칙과 템플릿 |
+| [docs/ADR/README.md](docs/ADR/README.md) | 아키텍처 결정 기록 ADR-001..ADR-020, 상태 규칙과 템플릿 |
 | [docs/ERD.md](docs/ERD.md) | Metadata DB 테이블(`app_setting`)과 ERD 초안, 마이그레이션 규칙 |
 | [docs/API_SPECIFICATION.md](docs/API_SPECIFICATION.md) | 엔드포인트, 공통 응답 형식, 오류 코드와 HTTP 상태, X-Request-Id, 관리 API CORS, 계획된 데이터·관리 API |
 | [docs/DATABASE_SUPPORT.md](docs/DATABASE_SUPPORT.md) | Metadata DB(MariaDB 버전, JDBC URL, 드라이버, 권한)와 업무 DB 4종의 계획 |
 | [docs/SECURITY.md](docs/SECURITY.md) | 명세 9절 정책과 상태, 구현된 통제, Metadata 비밀 값 규칙, 자식 환경 허용 목록, 알려진 빈 곳 |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 준비물, Metadata DB 변수, 개발용 compose, 런타임 실행, Desktop 셸 실행과 변수, 서명 없는 번들 |
-| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | 테스트 계층, 게이트 스크립트와 거짓 통과 방어, 테스트 수, 명세 12절 기준, 문서 점검 절차 |
+| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | 테스트 계층, 게이트 스크립트와 거짓 통과 방어, 게이트 범위, CI(정의됨·미실행), 테스트 수, 명세 12절 기준, 문서 점검 절차 |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | 리뷰에서 넘어온 후속 과제와 목표 Phase |
+| [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md) | Phase 0 보고: 통과 기준과 근거, 태스크별 요약, 사람의 결정, 남은 문제, 미검증 항목, 다음 단계 |
 | [CHANGELOG.md](CHANGELOG.md) | 태스크별 변경, 테스트 수, 남은 문제 |

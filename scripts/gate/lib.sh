@@ -17,10 +17,88 @@ gradle_runtime() {
   sh runtime/gradlew -p runtime --no-daemon --console=plain "$@"
 }
 
-# 실패 메시지를 stderr 에 남기고 종료한다.
+# ---- 게이트 범위 (P0-D): build.sh, test.sh, lint.sh 의 --desktop-only ----
+#
+# 범위는 명시한 인자로만 고른다(환경변수로는 고르지 않는다). 인자가 없으면 all 이고 모든 단계를 실행한다. 팩토리 게이트 명령에는
+# 인자가 없다. desktop-only 는 runtime(Gradle) 단계만 빼고, 그 사실을 시작 안내, 실패 줄과 마지막 GATE PASS 줄에 적는다.
+# CI 의 desktop 작업(macOS, Windows)처럼 Java 가 없는 곳에서 desktop 단계만 돌릴 때 쓴다.
+GATE_SCOPE=all
+GATE_DESKTOP_ONLY_NOTE='desktop-only, runtime(Gradle) 단계는 실행하지 않았다'
+
+# gate_usage_error NAME USAGE ARGS...: 사용법 오류. 어떤 도구도 실행하기 전에 2 로 끝난다.
+gate_usage_error() {
+  local name="$1" usage="$2"
+  shift 2
+  echo "사용법: $usage" >&2
+  echo "GATE FAIL: $name: 받을 수 없는 인자 ($#개: $*). 아무 단계도 실행하지 않았다." >&2
+  exit 2
+}
+
+# gate_parse_scope NAME ARGS...: 인자 없음은 all, '--desktop-only' 하나는 desktop-only, 그 밖(모르는 인자, 둘 이상)은 사용법 오류.
+gate_parse_scope() {
+  local name="$1"
+  shift
+  GATE_SCOPE=all
+  if [ "$#" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$#" -eq 1 ] && [ "$1" = --desktop-only ]; then
+    GATE_SCOPE=desktop-only
+    echo "게이트 범위: $GATE_DESKTOP_ONLY_NOTE (runtime 단계까지 실행하려면 인자 없이 실행한다)"
+    return 0
+  fi
+  gate_usage_error "$name" "bash scripts/gate/$name.sh [--desktop-only]" "$@"
+}
+
+# gate_reject_args NAME ARGS...: 인자를 받지 않는 게이트(integration.sh). 인자가 하나라도 있으면 사용법 오류.
+gate_reject_args() {
+  local name="$1"
+  shift
+  if [ "$#" -ne 0 ]; then
+    gate_usage_error "$name" "bash scripts/gate/$name.sh (인자를 받지 않는다)" "$@"
+  fi
+}
+
+# runtime(Gradle) 단계를 실행하는 범위인가. all 일 때만 참이다.
+gate_runtime_in_scope() {
+  [ "$GATE_SCOPE" = all ]
+}
+
+# 실패 메시지를 stderr 에 남기고 종료한다. desktop-only 범위에서는 그 사실을 덧붙인다.
 gate_fail() {
-  echo "GATE FAIL: $*" >&2
+  if [ "$GATE_SCOPE" = desktop-only ]; then
+    echo "GATE FAIL: $* [$GATE_DESKTOP_ONLY_NOTE]" >&2
+  else
+    echo "GATE FAIL: $*" >&2
+  fi
   exit 1
+}
+
+# gate_pass NAME [SUMMARY]: 출력의 마지막 줄. all 범위의 형식은 P0-D 전과 같다("GATE PASS: NAME" 또는 "GATE PASS: NAME (SUMMARY)").
+# desktop-only 범위는 "GATE PASS: NAME (desktop-only, runtime(Gradle) 단계는 실행하지 않았다[; SUMMARY])" 다.
+gate_pass() {
+  local name="$1" summary="${2:-}"
+  if [ "$GATE_SCOPE" = desktop-only ]; then
+    summary="$GATE_DESKTOP_ONLY_NOTE${summary:+; $summary}"
+  fi
+  if [ -n "$summary" ]; then
+    echo "GATE PASS: $name ($summary)"
+  else
+    echo "GATE PASS: $name"
+  fi
+}
+
+# gate_sha256: 표준 입력의 SHA-256(소문자 16진수)을 출력한다. sha256sum, 없으면 shasum -a 256 을 쓴다.
+# 둘 다 없으면 건너뛰지 않고 실패한다(해시 검사를 생략해 녹색이 되는 일을 막는다).
+gate_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{ print $1 }'
+  else
+    echo "sha256sum 과 shasum 이 모두 없다: SHA-256 을 계산할 수 없다 (건너뛰지 않고 실패한다)" >&2
+    return 1
+  fi
 }
 
 # gate_step LABEL CMD...
@@ -97,6 +175,44 @@ run_with_timeout() {
   wait "$pid" || status=$?
   return "$status"
 }
+
+# ---- Docker 사전 점검 (integration.sh, P0B-R4) ----
+
+DOCKER_PREFLIGHT_TIMEOUT_SECONDS=60
+
+# docker_preflight: docker info 로 데몬이 응답하는지 본다. 제한 시간 안에 서버 버전을 돌려주지 않으면 실패한다.
+# - 버전은 표준 출력에서만 읽는다. 표준 오류(경고 등)는 mktemp 파일에 따로 담아 실패할 때만 보여 준다. 그래서 경고가 버전으로
+#   읽히지 않는다(P0B-R4: 전에는 2>&1 로 합쳐 읽었다).
+# - 표준 출력은 숫자로 시작하는 버전 모양의 한 줄이어야 한다. 비었거나, 여러 줄이거나, 'WARNING: ...' 같은 줄이면 실패한다.
+# - 본문은 하위 셸이다. 임시 파일은 그 하위 셸의 EXIT trap 이 지우고, 호출한 스크립트의 trap 은 바뀌지 않는다.
+docker_preflight() (
+  status=0
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker CLI(docker)를 찾지 못했다. 통합 테스트에는 Docker 가 필요하다." >&2
+    exit 1
+  fi
+  err_file="$(mktemp "${TMPDIR:-/tmp}/queryhub-docker-preflight.XXXXXX")"
+  trap 'rm -f "$err_file"' EXIT
+  output="$(run_with_timeout "$DOCKER_PREFLIGHT_TIMEOUT_SECONDS" docker info --format '{{.ServerVersion}}' 2>"$err_file")" ||
+    status=$?
+  problem=''
+  if [ "$status" -ne 0 ]; then
+    problem="docker info exit $status"
+  elif [ -z "$output" ]; then
+    problem="docker info 가 표준 출력에 서버 버전을 내지 않았다"
+  elif [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -ne 1 ]; then
+    problem="docker info 의 표준 출력이 한 줄이 아니다"
+  elif ! printf '%s\n' "$output" | grep -Eq '^[0-9][0-9A-Za-z.+_~-]*$'; then
+    problem="docker info 의 표준 출력이 버전 모양(숫자로 시작하는 한 줄)이 아니다"
+  fi
+  if [ -n "$problem" ]; then
+    printf '%s\n' "$output" | sed 's/^/    stdout | /' >&2
+    sed 's/^/    stderr | /' "$err_file" >&2
+    echo "Docker 데몬에 연결하지 못했다 ($problem). 통합 테스트에는 실행 중인 Docker 가 필요하다." >&2
+    exit 1
+  fi
+  echo "Docker 서버 버전: $output"
+)
 
 # ---- desktop (P0-C): pnpm 프로젝트 desktop/ 와 Tauri 크레이트 desktop/src-tauri/ ----
 
