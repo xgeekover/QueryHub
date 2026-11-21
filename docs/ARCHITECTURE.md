@@ -143,7 +143,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 
 | Phase | 범위 | 통과 기준 | 상태 |
 |---|---|---|---|
-| 0 기반 | 모듈 골격, Gradle, Flyway, 공통 오류·응답, 게이트 스크립트, CI 정의, Desktop 셸 스파이크(D4) | 새 clone 에서 build·test·lint 가 exit 0, ArchUnit 의존 규칙 통과, 런타임 기동 후 health 200, Tauri 에서 런타임 기동·중지 | P0-D 를 커밋하면 완료. CI 는 정의만 했고 실행되지 않았다(아래 표, [Phase 0 보고](PHASE0-REPORT.md)) |
+| 0 기반 | 모듈 골격, Gradle, Flyway, 공통 오류·응답, 게이트 스크립트, CI 정의, Desktop 셸 스파이크(D4) | 새 clone 에서 build·test·lint 가 exit 0, ArchUnit 의존 규칙 통과, 런타임 기동 후 health 200, Tauri 에서 런타임 기동·중지 | 완료(P0-D, d0b0f0f, 2026-11-20). CI 는 정의만 했고 실행되지 않았다(아래 표, [Phase 0 보고](PHASE0-REPORT.md)) |
 | 1 DB 연결 | Provider 4종, 연결 CRUD·테스트, 풀, 비밀번호 암호화, 관리자 토큰 | 4개 DB 실제 컨테이너에서 연결·SELECT·타입 변환·쓰기 거부 통과. 비밀번호 평문이 DB·로그·응답에 없음 | 계획 |
 | 2 SQL 저장소 | SQL CRUD, 파라미터 파서·정의, SELECT 전용 검증, 테스트 실행, 버전 이력 | 명세 12절 Parameter Test 7종 통과. 인젝션 문자열이 값으로만 바인딩됨을 4개 DB 에서 확인. DML·DDL·다중문 거부 | 계획 |
 | 3 API 관리 | API CRUD, 매핑, 라우트 레지스트리, 활성·비활성 | 중복·예약 경로 거부, 수정 즉시 라우팅 반영 | 계획 |
@@ -165,7 +165,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | P0-B | 메타데이터 기반: Flyway + MariaDB, `app_setting`, Testcontainers 통합 테스트, 개발용 compose, `integration` 게이트 | f913239 | 완료 |
 | P0-C | Desktop 셸 스파이크: Vite + React + Tailwind + shadcn 골격, Tauri 에서 런타임 기동·중지·헬스 표시, 부모 감시 | f84c628 | 완료 |
 | 문서 기준선 | `docs/`, `CHANGELOG.md`, README 정리 (T-20261119-074437-3980) | 51141df | 완료 |
-| P0-D | CI 워크플로 정의(`.github/workflows/ci.yml`, 정의됨·미실행), 게이트의 `--desktop-only`·`docs-check.sh`·`workflow-check.sh`·`selftest.sh --no-skip`, Phase 0 보고, 문서 갱신 (T-20261120-181159-c278) | 커밋 전 | 진행 중 |
+| P0-D | CI 워크플로 정의(`.github/workflows/ci.yml`, 정의됨·미실행), 게이트의 `--desktop-only`·`docs-check.sh`·`workflow-check.sh`·`selftest.sh --no-skip`, Phase 0 보고, 문서 갱신 (T-20261120-181159-c278) | d0b0f0f | 완료 |
 
 태스크 사이에는 사람의 검토와 커밋이 들어간다. 테스트 수는 [CHANGELOG.md](../CHANGELOG.md)와 [TEST_PLAN.md](TEST_PLAN.md)에 있다.
 

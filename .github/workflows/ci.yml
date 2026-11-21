@@ -4,7 +4,9 @@
 #
 # 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
 # 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서
-# 점검한다(SHA 고정, 권한, 금지 표현, checkout 의 persist-credentials, 팩토리 명령 네 줄).
+# 점검한다(SHA 고정, 권한, 금지 표현, checkout 의 persist-credentials, 팩토리 명령 네 줄). P1-01 부터는 줄 단위로 다룰 수 없는
+# YAML 문법, continue-on-error, if:, bash 가 아닌 shell, run 값 안의 표현식도 거부한다. 그러니 이 파일은 블록 형식의 평범한
+# 키와 값만 쓴다.
 #
 # - gates (ubuntu-24.04): 새 checkout 에서 네 게이트 전체를 인자 없이 실행하고, 끝나면 작업 트리가 깨끗한지 본다(P0B-R7).
 #   통합 테스트는 Linux 컨테이너(Docker)가 필요해 이 작업에서만 돈다. Linux desktop(WebKitGTK)의 빌드·테스트·lint 도 여기서 한다.
@@ -17,8 +19,10 @@
 # - 러너 레이블은 -latest 를 쓰지 않는다. -latest 레이블은 예고 없이 새 이미지(예: Ubuntu 26.04)로 옮겨 간다.
 # - Rust 는 1.97.1 이다(로컬 기준 버전). Rust 1.100 은 Cargo 의 build-dir 배치를 바꾸었고, 이 크레이트가 쓰는 tauri-build 2.6.3 은
 #   그 배치를 가정한다(NexTerm 의 같은 문제). 제3자 Rust action 대신 러너에 있는 rustup 을 쓴다.
-# - 캐시는 내려받은 것만 담는다(Gradle, pnpm store, cargo registry·git). target, node_modules, dist, build 같은 산출물은 캐시하지
-#   않으므로 매 실행이 새 빌드다.
+# - 캐시는 의존성 캐시뿐이고 빌드 산출물은 없다(Gradle, pnpm store, cargo registry·git). target, node_modules, dist, build 는
+#   캐시하지 않으므로 매 실행이 새 빌드다. 다만 setup-java 의 cache: gradle 은 ~/.gradle/caches 와 ~/.gradle/wrapper 를 담고,
+#   그 안에는 Gradle 이 만든 데이터(transforms, 컴파일된 빌드 스크립트)도 있다. 복원한 캐시는 검증하지 않는다(Gradle 의존성
+#   검증이 없다, BACKLOG CI-2).
 # - 비밀 값이 필요 없다. 권한은 최상위 contents: read 하나이고 checkout 은 자격 증명을 남기지 않는다.
 #
 # 미검증(첫 실행 전에는 알 수 없다): 러너 레이블, action 입력 이름, Git Bash 위의 Windows 단계, Linux WebKitGTK 빌드.

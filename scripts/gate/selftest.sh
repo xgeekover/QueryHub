@@ -531,6 +531,25 @@ expect_run reject '[MISSING_FILE]' '(d10) README.md 없음' bash "$DOCS_CHECK" -
 expect_run reject '[NO_SHA256_TOOL]' '(d11) sha256sum 과 shasum 이 모두 없음' docs_without_sha
 expect_run reject '[USAGE]' '(d12) 사용법 오류: 모르는 인자' bash "$DOCS_CHECK" --strict
 
+# (d13-d15) P1-01 (P0D-R5): 상대 링크는 저장소 루트 안에 갇힌다. 루트 밖의 파일이 있어도 깨진 링크다.
+docs_root escape
+printf '# 루트 밖\n' >"$DOCS_WORK/outside.md"
+printf '\n[루트 밖](../../outside.md)\n' >>"$DOCS_WORK/escape/docs/INDEX.md"
+docs_root sibling
+printf '\n[옆 픽스처](../ok/README.md)\n' >>"$DOCS_WORK/sibling/README.md"
+# 루트 안에 머무는 '..'(두 단계 깊은 파일에서), './', 'a/../b', 루트 안의 심볼릭 링크 디렉터리
+docs_root inroot
+mkdir -p "$DOCS_WORK/inroot/docs/ADR"
+printf '# X\n\n[위로](../../README.md) [점](./../INDEX.md) [돌아서](../../docs/ADR/../INDEX.md)\n' >"$DOCS_WORK/inroot/docs/ADR/X.md"
+ln -s ADR "$DOCS_WORK/inroot/docs/adr-link"
+printf '\n[점](./REQUIREMENTS.md) [a/../b](ADR/../REQUIREMENTS.md) [심볼릭 링크 디렉터리](adr-link/X.md)\n' \
+  >>"$DOCS_WORK/inroot/docs/INDEX.md"
+expect_run reject 'docs/INDEX.md:5: ../../outside.md' '(d13) 루트 밖의 있는 파일로 가는 링크 (../../outside.md)' \
+  bash "$DOCS_CHECK" --root "$DOCS_WORK/escape"
+expect_run reject 'README.md:5: ../ok/README.md' '(d14) 옆 픽스처의 있는 README.md 로 가는 링크' \
+  bash "$DOCS_CHECK" --root "$DOCS_WORK/sibling"
+expect_run pass 'docs-check: OK' "(d15) 루트 안의 '..', './', 'a/../b', 심볼릭 링크 디렉터리" bash "$DOCS_CHECK" --root "$DOCS_WORK/inroot"
+
 # (w) workflow-check.sh: 깨끗한 워크플로 픽스처와 한 군데씩 어긴 사본
 WF_CHECK="$SCRIPT_DIR/workflow-check.sh"
 WF_WORK="$WORK/workflows"
@@ -607,6 +626,659 @@ expect_run reject '[LATEST_RUNNER]' '(w14) -latest 러너 레이블' bash "$WF_C
 expect_run reject '[NO_WORKFLOWS]' '(w15) .github/workflows 에 *.yml, *.yaml 이 없음' bash "$WF_CHECK" --root "$WF_WORK/none"
 expect_run reject '[NO_WORKFLOWS]' '(w16) .github/workflows 디렉터리가 없음' bash "$WF_CHECK" --root "$WF_WORK/no-dir"
 expect_run reject '[USAGE]' '(w17) 사용법 오류: 모르는 인자' bash "$WF_CHECK" --strict
+
+# ---- P1-01 (P0D-R1-R4): 줄 단위 점검기가 다루지 않는 문법은 거부하고, 실패를 덮는 키와 run 값의 표현식을 거부한다 ----
+# wf_add NAME: 표준 입력의 줄을 픽스처 ci.yml 끝(마지막 단계 뒤)에 붙인다.
+wf_add() {
+  cat >>"$WF_WORK/$1/.github/workflows/ci.yml"
+}
+wf_check() {
+  bash "$WF_CHECK" --root "$WF_WORK/$1"
+}
+# R1: 따옴표로 감싼 키, 흐름 매핑과 그 밖의 YAML 문법
+wf_root quoted-uses
+wf_add quoted-uses <<'EOF'
+      - name: Java
+        "uses": actions/setup-java@v4
+EOF
+wf_variant quoted-perm 's/^    runs-on: ubuntu-24.04$/    runs-on: ubuntu-24.04\
+    "permissions": {"contents": "write"}/'
+wf_root single-quoted-key
+wf_add single-quoted-key <<'EOF'
+      - name: single
+        'continue-on-error': true
+EOF
+wf_root flow-item
+wf_add flow-item <<'EOF'
+      - {name: x, run: echo hi}
+EOF
+wf_variant flow-seq "s/branches: \\[main\\]/branches: [main, 'v*']/"
+wf_root anchor-alias
+wf_add anchor-alias <<'EOF'
+      - name: anchor
+        env: &shared
+          A: b
+        run: echo a
+      - name: alias
+        env: *shared
+        run: echo b
+EOF
+wf_root merge-key
+wf_add merge-key <<'EOF'
+      - name: merge
+        env:
+          <<:
+            A: b
+        run: echo a
+EOF
+wf_root tag
+wf_add tag <<'EOF'
+      - name: tag
+        run: !!str echo hi
+EOF
+wf_variant doc-marker '1i\
+---'
+wf_root key-space
+wf_add key-space <<'EOF'
+      - name: Java
+        uses : actions/setup-java@v4
+EOF
+wf_root explicit-key
+wf_add explicit-key <<'EOF'
+      - name: explicit
+        ? run
+        : echo hi
+EOF
+wf_root block-indent
+wf_add block-indent <<'EOF'
+      - name: indent digit
+        run: |2
+            echo hi
+EOF
+wf_variant quoted-write "s/^  contents: read\$/  contents: 'write'/"
+wf_variant multiline-quote 's/^          persist-credentials: false$/          ref: "main\
+          persist-credentials: false\
+          "/'
+wf_root escape-quote
+wf_add escape-quote <<'EOF'
+      - run: "echo \x24{{ github.ref_name }}"
+EOF
+wf_root tab-indent
+printf '      - name: tab\n\t  run: echo hi\n' | wf_add tab-indent
+# R2: persist-credentials 는 checkout 단계의 with: 바로 아래에서만 센다
+wf_variant persist-env 's/^        with:$/        env:/'
+wf_variant persist-block 's/^        with:$/        with: |/'
+wf_variant with-order 's/^          persist-credentials: false$/          fetch-depth: 1\
+          persist-credentials: false/'
+# R3: 실패를 덮거나 건너뛰게 하는 키, bash 가 아닌 셸, 블록 안에만 있는 팩토리 명령
+wf_variant coe-step 's#^      - run: bash scripts/gate/test.sh$#&\
+        continue-on-error: true#'
+wf_variant coe-job 's/^    runs-on: ubuntu-24.04$/&\
+    continue-on-error: true/'
+wf_variant if-step 's#^      - run: bash scripts/gate/lint.sh$#&\
+        if: false#'
+wf_variant if-job 's/^    runs-on: ubuntu-24.04$/&\
+    if: false/'
+wf_variant shell-sh 's#^      - run: bash scripts/gate/build.sh$#&\
+        shell: sh#'
+wf_variant command-in-block 's#^      - run: bash scripts/gate/build.sh$#      - run: |\
+          set +e\
+          bash scripts/gate/build.sh#'
+# R4: run 값 안의 표현식
+wf_root run-expr
+wf_add run-expr <<'EOF'
+      - run: echo "${{ github.ref_name }}"
+EOF
+wf_root run-expr-block
+wf_add run-expr-block <<'EOF'
+      - run: |
+          echo hi
+          echo "${{ github.ref_name }}"
+EOF
+wf_root run-expr-comment
+wf_add run-expr-comment <<'EOF'
+      - run: |
+          echo hi
+          # ${{ github.ref_name }}
+EOF
+# 받아야 하는 것: 따옴표로 감싼 값, 평범한 흐름 시퀀스, run 밖의 표현식, defaults 의 shell: bash, 키처럼 보이는 셸 문장이 든
+# run 블록 다음의 진짜 단계 키
+wf_root allowed
+wf_add allowed <<'EOF'
+    name: gates (${{ github.ref_name }})
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    strategy:
+      matrix:
+        os: [macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    env:
+      REF: ${{ github.ref_name }}
+  other:
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Java 21
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          java-version: "21"
+          cache: gradle
+      - name: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: shell text
+        run: |
+          "k": v
+          { x; }
+          true && echo ok
+          ls ./*
+          ---
+          if [ -n "$REF" ]; then echo "$REF"; fi
+          continue-on-error: true
+          if: false
+        shell: bash
+      - name: next step
+        run: echo done
+EOF
+mkdir -p "$WF_WORK/ci/.github/workflows"
+cp "$REPO_DIR/.github/workflows/ci.yml" "$WF_WORK/ci/.github/workflows/ci.yml"
+
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w18) 따옴표로 감싼 키 "uses":' wf_check quoted-uses
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w19) job 수준 "permissions": {"contents": "write"}' wf_check quoted-perm
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w20) 작은따옴표로 감싼 키 'continue-on-error':" wf_check single-quoted-key
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w21) 목록 항목인 흐름 매핑 - {name: x, run: echo hi}' wf_check flow-item
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w22) 평범한 값만 담지 않은 흐름 시퀀스 [main, 'v*']" wf_check flow-seq
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w23) 앵커 &shared 와 별칭 *shared' wf_check anchor-alias
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w24) 병합 키 <<:' wf_check merge-key
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w25) 태그 !!str' wf_check tag
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w26) 문서 표시 ---' wf_check doc-marker
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w27) 키와 콜론 사이의 공백 'uses :'" wf_check key-space
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w28) 명시적 키 '? ' 와 값 줄 ': '" wf_check explicit-key
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w29) 들여쓰기 숫자가 붙은 블록 스칼라 머리 '|2'" wf_check block-indent
+expect_run reject '[PERMISSIONS_WRITE]' "(w30) 따옴표로 감싼 write (contents: 'write')" wf_check quoted-write
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w31) 줄을 넘기는 따옴표 문자열 안의 persist-credentials: false' wf_check multiline-quote
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w32) 큰따옴표 안의 '\\' 이스케이프 (\\x24{{)" wf_check escape-quote
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w33) 들여쓰기의 탭' wf_check tab-indent
+expect_run reject '[CHECKOUT_PERSIST]' '(w34) checkout 의 with: 를 env: 로 바꿈' wf_check persist-env
+expect_run reject '[CHECKOUT_PERSIST]' "(w35) 'with: |' 문자열 안의 persist-credentials: false" wf_check persist-block
+expect_run pass 'workflow-check: OK' '(w36) with: 의 다른 입력(fetch-depth) 다음의 persist-credentials: false' wf_check with-order
+expect_run reject '[CONTINUE_ON_ERROR]' '(w37) 팩토리 단계의 continue-on-error: true' wf_check coe-step
+expect_run reject '[CONTINUE_ON_ERROR]' '(w38) job 수준 continue-on-error' wf_check coe-job
+expect_run reject '[IF_CONDITION]' '(w39) 팩토리 단계의 if: false' wf_check if-step
+expect_run reject '[IF_CONDITION]' '(w40) job 수준 if:' wf_check if-job
+expect_run reject '[SHELL_NOT_BASH]' '(w41) 팩토리 단계의 shell: sh' wf_check shell-sh
+expect_run reject '[FACTORY_COMMAND_MISSING]' "(w42) 'run: |' 블록 안(set +e 뒤)에만 있는 팩토리 명령" wf_check command-in-block
+expect_run reject '[RUN_EXPR]' '(w43) run: 줄의 ${{ github.ref_name }}' wf_check run-expr
+expect_run reject '[RUN_EXPR]' "(w44) 'run: |' 블록 안의 \${{ github.ref_name }}" wf_check run-expr-block
+expect_run reject '[RUN_EXPR]' "(w45) run 블록 안의 '# \${{ github.ref_name }}' 줄" wf_check run-expr-comment
+expect_run pass 'workflow-check: OK' '(w46) 받아야 하는 문법: 따옴표 값, 평범한 흐름 시퀀스, run 밖의 표현식, run 블록 안의 키 모양 셸 문장' \
+  wf_check allowed
+expect_run pass 'workflow-check: OK' '(w47) 저장소의 .github/workflows/ci.yml 바이트 사본' wf_check ci
+
+# ---- P1-01 2회차 (리뷰 R1, R2, R4): LF 가 아닌 줄바꿈과 제어 문자, 단계 밖의 run:, 대소문자가 다른 checkout ----
+# wf_bytes NAME OLD_LINE FORMAT: 깨끗한 픽스처에서 OLD_LINE 과 같은 첫 줄을 printf FORMAT 의 출력으로 바꾼다. CR, U+2028 같은
+#   바이트는 bash printf 의 이스케이프(\r, 8진 \342)로 쓴다(sed 의 \r 은 도구마다 다르다). FORMAT 에는 % 를 쓰지 않는다.
+#   바꿀 줄이 없으면 깨끗한 픽스처가 그대로 남으므로 그 거부 시나리오는 실패한다(조용히 통과하지 않는다).
+wf_bytes() {
+  local file="$WF_WORK/$1/.github/workflows/ci.yml" l replaced=0
+  wf_root "$1"
+  while IFS= read -r l; do
+    if [ "$replaced" -eq 0 ] && [ "$l" = "$2" ]; then
+      printf "$3"
+      replaced=1
+    else
+      printf '%s\n' "$l"
+    fi
+  done <"$file" >"$file.new"
+  mv "$file.new" "$file"
+}
+# R1: YAML(libyaml)은 CR, U+0085, U+2028, U+2029 에서도 줄을 나눠 그 뒤의 키를 읽지만, awk 에는 한 줄이다.
+wf_bytes cr-coe-step '      - run: bash scripts/gate/lint.sh' \
+  '      - name: lint\r        continue-on-error: true\n        run: bash scripts/gate/lint.sh\n'
+wf_bytes cr-if-job '    runs-on: ubuntu-24.04' '    runs-on: ubuntu-24.04\r    if: false\n'
+wf_bytes cr-persist '        with:' '        with: #\r        env:\n'
+wf_root cr-block
+printf '      - name: block\n        run: |\n          echo hi\r        if: false\n' | wf_add cr-block
+wf_root ls-coe-step
+printf '      - name: ls\342\200\250        continue-on-error: true\n        run: echo ls\n' | wf_add ls-coe-step
+wf_root nel-coe-step
+printf '      - name: nel\302\205        continue-on-error: true\n        run: echo nel\n' | wf_add nel-coe-step
+wf_root ps-coe-step
+printf '      - name: ps\342\200\251        continue-on-error: true\n        run: echo ps\n' | wf_add ps-coe-step
+# BWK awk 는 NUL 에서 줄을 끊으므로 NUL 뒤의 CR 은 awk 의 index() 에도 보이지 않는다(파일 단위의 NUL 검사가 잡는다).
+wf_root nul-if
+printf '      - name: nul\000\r        if: false\n        run: echo nul\n' | wf_add nul-if
+# \v(U+000B)는 YAML 에서 쓸 수 없지만 awk 의 [[:space:]] 는 공백으로 읽어 persist-credentials: false 로 센다.
+wf_bytes ctl-persist '          persist-credentials: false' '          persist-credentials:\013false\n'
+# 줄 끝의 CRLF 는 받는다.
+wf_root crlf
+LC_ALL=C awk '{ printf "%s\r\n", $0 }' "$WF_WORK/crlf/.github/workflows/ci.yml" >"$WF_WORK/crlf/ci.new"
+mv "$WF_WORK/crlf/ci.new" "$WF_WORK/crlf/.github/workflows/ci.yml"
+wf_root adjacent-key
+wf_add adjacent-key <<'EOF'
+      - name: adjacent
+        "continue-on-error":true
+        run: echo adjacent
+EOF
+# R2: run: 은 단계(jobs.<job>.steps 의 항목)의 키일 때만 실행된다. 그것만 팩토리 명령으로 세고, 다른 곳의 run: 은 거부한다.
+wf_variant env-run 's|^      - run: bash scripts/gate/build.sh$|      - name: build\
+        env:\
+          run: bash scripts/gate/build.sh\
+        run: echo build skipped|'
+wf_variant with-run 's|^      - run: bash scripts/gate/build.sh$|      - name: build\
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\
+        with:\
+          path: x\
+          key: y\
+          run: bash scripts/gate/build.sh|'
+wf_variant defaults-run-value 's|^      - run: bash scripts/gate/build.sh$|      - run: echo build skipped|
+s|^jobs:$|defaults:\
+  run: bash scripts/gate/build.sh\
+jobs:|'
+wf_variant dup-run 's|^      - run: bash scripts/gate/lint.sh$|&\
+        run: echo lint skipped|'
+# 받아야 하는 단계 모양: steps: 와 같은 열의 '- ' 항목, 키 없는 '-' 다음 줄의 run:, 워크플로와 job 의 defaults: run: shell: bash,
+# 두 번째 job, run: 앞의 env:
+mkdir -p "$WF_WORK/step-forms/.github/workflows"
+cat >"$WF_WORK/step-forms/.github/workflows/ci.yml" <<EOF
+name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Checkout
+      uses: actions/checkout@$WF_SHA # v7.0.1
+      with:
+        persist-credentials: false
+    - run: bash scripts/gate/build.sh
+    -
+      run: bash scripts/gate/test.sh
+    - name: lint
+      run: bash scripts/gate/lint.sh
+  integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: integration
+        env:
+          RUN_MODE: full
+        run: bash scripts/gate/integration.sh
+EOF
+# R4: owner/repo 의 대소문자가 달라도 checkout 이다.
+wf_variant case-checkout 's|actions/checkout@|Actions/Checkout@|; /^        with:$/d; /^          persist-credentials: false$/d'
+
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w48) CR 뒤에 숨은 단계의 continue-on-error: true' wf_check cr-coe-step
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w49) CR 뒤에 숨은 job 수준 if: false' wf_check cr-if-job
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w50) checkout 의 'with: #<CR>' 뒤의 env: (persist-credentials 가 env 아래로 간다)" wf_check cr-persist
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w51) 'run: |' 블록 안의 CR 뒤에 숨은 if: false" wf_check cr-block
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w52) U+2028 뒤에 숨은 continue-on-error: true' wf_check ls-coe-step
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w53) U+0085 뒤에 숨은 continue-on-error: true' wf_check nel-coe-step
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w54) U+2029 뒤에 숨은 continue-on-error: true' wf_check ps-coe-step
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w55) NUL 바이트와 CR 뒤에 숨은 if: false' wf_check nul-if
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w56) 제어 문자 \v 가 공백 자리에 있는 persist-credentials:<VT>false' wf_check ctl-persist
+expect_run pass 'workflow-check: OK' '(w57) 모든 줄이 CRLF 로 끝나는 깨끗한 픽스처' wf_check crlf
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w58) 콜론이 바로 붙은 따옴표 키 "continue-on-error":true' wf_check adjacent-key
+expect_run reject '[RUN_KEY]' '(w59) 단계 env: 아래의 run: (단계의 run 은 echo)' wf_check env-run
+expect_run reject '[FACTORY_COMMAND_MISSING]' '(w60) action 입력 with: run: 에만 있는 팩토리 명령' wf_check with-run
+expect_run reject '[RUN_KEY]' '(w61) defaults: 아래의 값이 있는 run: (팩토리 명령)' wf_check defaults-run-value
+expect_run reject '[RUN_KEY]' '(w62) 한 단계의 두 번째 run:' wf_check dup-run
+expect_run pass 'workflow-check: OK' "(w63) 받는 단계 모양: steps: 와 같은 열의 '- ', 키 없는 '-', 두 수준의 defaults run, run 앞의 env" \
+  wf_check step-forms
+expect_run reject '[CHECKOUT_PERSIST]' '(w64) 대소문자가 다른 Actions/Checkout (with: 없음)' wf_check case-checkout
+
+# ---- P1-01 3회차 (리뷰 C2-R1-R3, C2-R5, YAML 문법 전수 점검): 허용 목록 밖의 줄 모양, 들여쓰기 구조, 중복 키, uses 경로 조각 ----
+# 아래 픽스처의 이름은 모두 c3- 로 시작한다(앞의 픽스처와 겹치지 않는다). wf_bytes 의 FORMAT 에서 % 는 \045, ' 는 \047 로 쓴다.
+WJ='    runs-on: ubuntu-24.04'
+WB='      - run: bash scripts/gate/build.sh'
+WT='      - run: bash scripts/gate/test.sh'
+WL='      - run: bash scripts/gate/lint.sh'
+WI='      - run: bash scripts/gate/integration.sh'
+# C2-R1: YAML 은 값이 있는 키나 '- 값' 다음의 더 깊은 줄을 앞 값에 이어 붙인다(여러 줄에 걸친 평범한 스칼라). libyaml 은
+#   'shell: bash' + '-c true {0}' 을 shell 'bash -c true {0}' 으로, 팩토리 run 줄 + '2>/dev/null || true' 를 한 명령으로 읽는다.
+wf_bytes c3-cont-defaults-shell 'jobs:' 'defaults:\n  run:\n    shell: bash\n      -c true {0}\njobs:\n'
+wf_bytes c3-cont-job-defaults-shell "$WJ" "$WJ"'\n    defaults:\n      run:\n        shell: bash\n          -c true {0}\n'
+wf_bytes c3-cont-step-shell "$WB" "$WB"'\n        shell: bash\n          -c true {0}\n'
+wf_bytes c3-cont-ortrue "$WB" "$WB"'\n          2>/dev/null || true\n'
+wf_bytes c3-cont-desktop-only "$WT" "$WT"'\n          --desktop-only\n'
+wf_bytes c3-cont-dash "$WI" "$WI"'\n          - 2>/dev/null || true\n'
+wf_bytes c3-cont-dq "$WL" "$WL"'\n          "" || true\n'
+# 전수 점검에서 찾은 것: 2회차 점검기가 받았지만 YAML(libyaml)은 다르게 읽거나 오류로 보는 모양
+wf_bytes c3-cont-blank "$WB" "$WB"'\n\n          2>/dev/null || true\n'
+wf_bytes c3-cont-comment "$WB" "$WB"'\n          # c\n          2>/dev/null || true\n'
+wf_bytes c3-cont-item '    branches: [main]' '    branches:\n      - main\n        x\n'
+wf_bytes c3-cont-top 'name: CI' 'name: CI\n  x\n'
+wf_bytes c3-sq-trailing "$WJ" "$WJ"'\n    timeout-minutes: \04790\047 x\n'
+wf_bytes c3-dq-trailing "$WJ" "$WJ"'\n    timeout-minutes: "90" x\n'
+wf_bytes c3-sq-pair-after "$WJ" "$WJ"'\n    timeout-minutes: \04790\047 \047\047\n'
+wf_root c3-blk-dedent
+wf_add c3-blk-dedent <<'EOF'
+      - name: block
+        run: |
+            echo hi
+          if: false
+EOF
+wf_root c3-blk-lead-blank
+printf '      - name: block\n        run: |\n              \n          echo hi\n' | wf_add c3-blk-lead-blank
+wf_root c3-blk-comment-between
+wf_add c3-blk-comment-between <<'EOF'
+      - name: block
+        run: |
+          echo hi
+         # c
+          continue-on-error: true
+EOF
+wf_root c3-blk-comment-keycol
+wf_add c3-blk-comment-keycol <<'EOF'
+      - name: block
+        run: |
+          echo hi
+        # c
+          if: false
+EOF
+wf_bytes c3-indented-dashes "$WJ" "$WJ"'\n    ---\n'
+wf_bytes c3-indented-directive "$WJ" "$WJ"'\n    \045YAML 1.2\n'
+wf_bytes c3-bom-start 'name: CI' '\357\273\277name: CI\n'
+wf_bytes c3-bom-value "$WJ" "$WJ"'\n    timeout-minutes: \357\273\27790\n'
+wf_bytes c3-compact-nested '    branches: [main]' '    branches:\n      - - main\n'
+wf_bytes c3-bare-dash-nested '    branches: [main]' '    branches:\n      -\n        - main\n'
+wf_bytes c3-key-hash "$WJ" "$WJ"'\n    if#x: false\n'
+wf_bytes c3-value-at "$WJ" "$WJ"'\n    timeout-minutes: @90\n'
+wf_bytes c3-value-backtick "$WJ" "$WJ"'\n    timeout-minutes: `90`\n'
+wf_bytes c3-value-percent "$WJ" "$WJ"'\n    timeout-minutes: \04590\n'
+wf_bytes c3-value-comma "$WJ" "$WJ"'\n    timeout-minutes: ,90\n'
+wf_bytes c3-value-close-bracket "$WJ" "$WJ"'\n    timeout-minutes: ]90\n'
+wf_bytes c3-value-close-brace "$WJ" "$WJ"'\n    timeout-minutes: }90\n'
+wf_bytes c3-value-dash "$WJ" "$WJ"'\n    timeout-minutes: - 90\n'
+wf_bytes c3-value-qmark "$WJ" "$WJ"'\n    timeout-minutes: ? 90\n'
+wf_bytes c3-value-colon "$WJ" "$WJ"'\n    timeout-minutes: : 90\n'
+wf_bytes c3-value-dash-alone "$WJ" "$WJ"'\n    timeout-minutes: -\n'
+wf_bytes c3-key-inner-space "$WJ" "$WJ"'\n    my key: x\n'
+wf_bytes c3-key-double-colon "$WJ" "$WJ"'\n    if:: false\n'
+wf_bytes c3-key-dash-start "$WJ" "$WJ"'\n    -if: false\n'
+wf_bytes c3-tab-after-colon "$WJ" "$WJ"'\n    timeout-minutes:\t90\n'
+wf_bytes c3-tab-in-value "$WJ" "$WJ"'\n    timeout-minutes: 9\t0\n'
+wf_bytes c3-value-colon-space "$WJ" "$WJ"'\n    env:\n      A: b: c\n'
+wf_bytes c3-value-trailing-colon "$WJ" "$WJ"'\n    env:\n      A: b:\n'
+wf_root c3-value-quoted-colon
+echo '      - run: echo "a: b"' | wf_add c3-value-quoted-colon
+wf_bytes c3-keyless-plain "$WJ" "$WJ"'\n    stray\n'
+wf_bytes c3-keyless-colon "$WJ" "$WJ"'\n    if:false\n'
+wf_bytes c3-keyless-quoted "$WJ" "$WJ"'\n    "stray"\n'
+wf_root c3-misaligned
+echo '       timeout-minutes: 5' | wf_add c3-misaligned
+wf_bytes c3-seq-at-key "$WJ" "$WJ"'\n    - x\n'
+wf_root c3-key-at-seq
+echo '      timeout-minutes: 5' | wf_add c3-key-at-seq
+wf_bytes c3-root-indented 'name: CI' '  name: CI\n'
+wf_variant c3-root-seq 's/^name: CI$/- name: CI/'
+# C2-R2: 빈 경로 조각, 끝의 /, '.', '..' 조각은 checkout 을 숨길 수 있다(with: 를 지운 사본).
+wf_variant c3-co-dblslash 's|actions/checkout@|actions//checkout@|; /^        with:$/d; /^          persist-credentials: false$/d'
+wf_variant c3-co-trailslash 's|actions/checkout@|actions/checkout/@|; /^        with:$/d; /^          persist-credentials: false$/d'
+wf_variant c3-co-dot 's|actions/checkout@|actions/checkout/.@|; /^        with:$/d; /^          persist-credentials: false$/d'
+wf_variant c3-co-dotdot 's|actions/checkout@|actions/x/../checkout@|; /^        with:$/d; /^          persist-credentials: false$/d'
+# C2-R3: 같은 매핑의 같은 키. libyaml 은 뒤의 값을 쓴다(두 번째 jobs:, steps:, with:, persist-credentials:, 같은 이름의 job).
+wf_root c3-dup-jobs
+wf_add c3-dup-jobs <<'EOF'
+jobs:
+  other:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo skipped
+EOF
+wf_root c3-dup-steps
+wf_add c3-dup-steps <<'EOF'
+    steps:
+      - run: echo skipped
+EOF
+wf_variant c3-dup-with 's/^          persist-credentials: false$/&\
+        with:\
+          fetch-depth: 1/'
+wf_variant c3-dup-persist 's/^          persist-credentials: false$/&\
+          persist-credentials: true/'
+wf_root c3-dup-job
+wf_add c3-dup-job <<'EOF'
+  gates:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo skipped
+EOF
+wf_bytes c3-dup-defaults 'jobs:' 'defaults:\n  run:\n    shell: bash\ndefaults:\n  run:\n    working-directory: x\njobs:\n'
+wf_bytes c3-dup-name 'name: CI' 'name: CI\nname: CI2\n'
+wf_bytes c3-dup-case "$WJ" "$WJ"'\n    Runs-On: ubuntu-24.04\n'
+wf_root c3-dup-steps-indentless
+wf_add c3-dup-steps-indentless <<'EOF'
+  other:
+    runs-on: ubuntu-24.04
+    steps:
+    - run: echo first
+    timeout-minutes: 5
+    steps:
+    - run: echo second
+EOF
+# C2-R5: defaults.run 의 working-directory 표현식은 받는다(RUN_EXPR 는 단계의 run 값만 본다).
+wf_bytes c3-wd-defaults-expr 'jobs:' 'defaults:\n  run:\n    shell: bash\n    working-directory: ${{ github.ref_name }}\njobs:\n'
+# 받아야 하는 모양(3회차): 이 점검기가 다루는 YAML 구성이고, libyaml 도 같은 단계로 읽는다.
+wf_root c3-forms
+printf '      - name: tab comment\n        run: echo tab\t# c\n' | wf_add c3-forms
+wf_add c3-forms <<'EOF'
+      - # 주석이 붙은 맨 -
+        run: echo bare
+      -   name: wide dash
+          run: echo wide
+      - name: quoted values
+        env:
+          A: "a #b" # comment
+          B: 'it''s'
+          C: ""
+        run: echo quoted
+      - name: block forms
+        run: | # header comment
+          # first content line looks like a comment
+          echo hi
+
+         # less indented comment closes the block
+      - name: folded
+        run: >-
+          echo folded
+      - name: subpath action
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: # comment
+           path: x
+           key: y
+    timeout-minutes: 5
+  indentless:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        os:
+        - macos-15
+        - windows-2025
+    steps:
+
+    # comment between the key and its list
+    - name: indentless
+      run: echo indentless
+    -
+      run: echo second
+    timeout-minutes: 5
+EOF
+mkdir -p "$WF_WORK/c3-ci-crlf/.github/workflows"
+LC_ALL=C awk '{ printf "%s\r\n", $0 }' "$REPO_DIR/.github/workflows/ci.yml" >"$WF_WORK/c3-ci-crlf/.github/workflows/ci.yml"
+
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w65) 워크플로 defaults 의 shell: bash 다음 줄 -c true {0} (여러 줄 평범한 스칼라)' wf_check c3-cont-defaults-shell
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w66) job defaults 의 shell: bash 다음 줄 -c true {0}' wf_check c3-cont-job-defaults-shell
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w67) 단계 shell: bash 다음 줄 -c true {0}' wf_check c3-cont-step-shell
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w68) 팩토리 run 줄 다음 줄 '2>/dev/null || true'" wf_check c3-cont-ortrue
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w69) 팩토리 run 줄 다음 줄 '--desktop-only'" wf_check c3-cont-desktop-only
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w70) 팩토리 run 줄 다음 줄 '- 2>/dev/null || true'" wf_check c3-cont-dash
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w71) 팩토리 run 줄 다음 줄 '\"\" || true'" wf_check c3-cont-dq
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w72) 빈 줄 뒤에 이어지는 팩토리 run 값' wf_check c3-cont-blank
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w73) 주석 줄 뒤의 더 깊은 줄' wf_check c3-cont-comment
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w74) 목록 항목 '- main' 다음 줄의 이음 줄" wf_check c3-cont-item
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w75) 최상위 'name: CI' 다음 줄의 이음 줄" wf_check c3-cont-top
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w76) 닫는 작은따옴표 뒤의 글자 ('90' x)" wf_check c3-sq-trailing
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w77) 닫는 큰따옴표 뒤의 글자 ("90" x)' wf_check c3-dq-trailing
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w78) 닫는 작은따옴표 뒤의 '' ('90' '')" wf_check c3-sq-pair-after
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w79) 블록 스칼라 내용(12 열)보다 덜 들여 쓰고 키보다 깊은 if: false' wf_check c3-blk-dedent
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w80) 블록 스칼라 첫 내용 줄보다 공백이 많은 앞쪽 빈 줄' wf_check c3-blk-lead-blank
+expect_run reject '[CONTINUE_ON_ERROR]' '(w81) 블록 내용 열보다 덜 들여 쓴 주석 뒤의 continue-on-error: true (주석이 블록을 끝낸다)' wf_check c3-blk-comment-between
+expect_run reject '[IF_CONDITION]' '(w82) 블록 키 열의 주석 뒤의 더 깊은 if: false (주석이 블록을 끝낸다)' wf_check c3-blk-comment-keycol
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w83) 들여 쓴 --- 줄' wf_check c3-indented-dashes
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w84) 들여 쓴 %YAML 줄' wf_check c3-indented-directive
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w85) 파일 맨 앞의 BOM' wf_check c3-bom-start
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w86) 값 안의 BOM' wf_check c3-bom-value
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w87) 한 줄에 겹친 목록 '- - main'" wf_check c3-compact-nested
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w88) 맨 '-' 아래의 목록" wf_check c3-bare-dash-nested
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w89) 키 이름 if#x' wf_check c3-key-hash
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w90) @ 로 시작하는 값' wf_check c3-value-at
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w91) 백틱으로 시작하는 값' wf_check c3-value-backtick
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w92) % 로 시작하는 값' wf_check c3-value-percent
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w93) , 로 시작하는 값' wf_check c3-value-comma
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w94) ] 로 시작하는 값' wf_check c3-value-close-bracket
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w95) } 로 시작하는 값' wf_check c3-value-close-brace
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w96) 값 자리의 '- 90'" wf_check c3-value-dash
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w97) 값 자리의 '? 90'" wf_check c3-value-qmark
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w98) 값 자리의 ': 90'" wf_check c3-value-colon
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w99) 값 자리의 '-' 하나" wf_check c3-value-dash-alone
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w100) 공백이 든 키 'my key'" wf_check c3-key-inner-space
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w101) 키 'if:' ('if:: false')" wf_check c3-key-double-colon
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w102) '-' 로 시작하는 키 '-if'" wf_check c3-key-dash-start
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w103) 콜론 뒤의 탭' wf_check c3-tab-after-colon
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w104) 값 안의 탭' wf_check c3-tab-in-value
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w105) 평범한 값 안의 콜론+공백 ('A: b: c')" wf_check c3-value-colon-space
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w106) 평범한 값 끝의 콜론 ('A: b:')" wf_check c3-value-trailing-colon
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w107) 평범한 run 값 안의 콜론+공백 (echo \"a: b\")" wf_check c3-value-quoted-colon
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w108) 키가 없는 줄 'stray'" wf_check c3-keyless-plain
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w109) 키가 없는 줄 'if:false'" wf_check c3-keyless-colon
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w110) 매핑 자리의 따옴표 문자열 "stray"' wf_check c3-keyless-quoted
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w111) 열린 매핑이나 목록의 열과 맞지 않는 들여쓰기 (7 열)' wf_check c3-misaligned
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w112) 값이 있는 키 다음의 같은 열 '- x'" wf_check c3-seq-at-key
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w113) 단계 목록 열(6 열)의 매핑 키' wf_check c3-key-at-seq
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w114) 0 열이 아닌 최상위 (  name: CI)' wf_check c3-root-indented
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w115) 목록인 최상위 (- name: CI)' wf_check c3-root-seq
+expect_run reject '[USES_NOT_SHA]' '(w116) 빈 경로 조각 actions//checkout (with: 없음)' wf_check c3-co-dblslash
+expect_run reject '[USES_NOT_SHA]' '(w117) 끝의 / actions/checkout/@ (with: 없음)' wf_check c3-co-trailslash
+expect_run reject '[USES_NOT_SHA]' "(w118) '.' 조각 actions/checkout/.@ (with: 없음)" wf_check c3-co-dot
+expect_run reject '[USES_NOT_SHA]' "(w119) '..' 조각 actions/x/../checkout@ (with: 없음)" wf_check c3-co-dotdot
+expect_run reject '[DUPLICATE_KEY]' '(w120) 두 번째 최상위 jobs:' wf_check c3-dup-jobs
+expect_run reject '[DUPLICATE_KEY]' '(w121) 한 job 의 두 번째 steps:' wf_check c3-dup-steps
+expect_run reject '[DUPLICATE_KEY]' '(w122) checkout 단계의 두 번째 with: (persist-credentials 가 없는 with 가 이긴다)' wf_check c3-dup-with
+expect_run reject '[DUPLICATE_KEY]' '(w123) 두 번째 persist-credentials: true' wf_check c3-dup-persist
+expect_run reject '[DUPLICATE_KEY]' '(w124) 같은 이름의 두 번째 job gates' wf_check c3-dup-job
+expect_run reject '[DUPLICATE_KEY]' '(w125) 두 번째 최상위 defaults:' wf_check c3-dup-defaults
+expect_run reject '[DUPLICATE_KEY]' '(w126) 두 번째 최상위 name:' wf_check c3-dup-name
+expect_run reject '[DUPLICATE_KEY]' '(w127) 대소문자만 다른 키 runs-on 과 Runs-On' wf_check c3-dup-case
+expect_run reject '[DUPLICATE_KEY]' '(w128) 같은 열의 steps 목록 뒤의 두 번째 steps:' wf_check c3-dup-steps-indentless
+expect_run pass 'workflow-check: OK' '(w129) defaults.run 의 working-directory: ${{ github.ref_name }} 는 받는다' wf_check c3-wd-defaults-expr
+expect_run pass 'workflow-check: OK' "(w130) 받는 모양(3회차): 주석이 붙은 맨 -, 넓은 '-   ', 따옴표 값과 주석, '' 이스케이프, 블록 머리 주석, # 로 시작하는 첫 내용 줄, 덜 들여 쓴 주석이 끝내는 블록, >-, 하위 경로 action, 더 깊은 with: 항목, 같은 열의 목록과 그 뒤의 키, 탭 앞의 주석" \
+  wf_check c3-forms
+expect_run pass 'workflow-check: OK' '(w131) 저장소 ci.yml 의 CRLF 사본' wf_check c3-ci-crlf
+
+# ---- P1-01 4회차 (리뷰 C3-R1, C3-R3): 대문자가 든 키, 대소문자만 다른 금지 표현과 -latest, 빈 줄·주석 줄의 탭 ----
+# 아래 픽스처의 이름은 모두 c4- 로 시작한다. C3-R1: 규칙은 키를 이름으로 찾으므로 'If:', 'Continue-On-Error:' 같은 키가 규칙을
+#   피했다(3회차 점검기는 아래 거부 픽스처를 모두 받는다). 대문자가 든 키는 env 변수 이름 말고 모두 KEY_NOT_LOWERCASE 다.
+wf_bytes c4-coe-job "$WJ" "$WJ"'\n    Continue-On-Error: true\n'
+wf_bytes c4-coe-upper "$WJ" "$WJ"'\n    CONTINUE-ON-ERROR: true\n'
+wf_bytes c4-if-step "$WB" "$WB"'\n        If: false\n'
+wf_bytes c4-shell-defaults 'jobs:' 'defaults:\n  run:\n    Shell: true {0}\njobs:\n'
+wf_variant c4-uses-checkout 's#^        uses: actions/checkout@.*$#        Uses: actions/checkout@v4#; /^        with:$/d; /^          persist-credentials: false$/d'
+wf_root c4-run-step
+wf_add c4-run-step <<'EOF'
+      - Run: echo ${{ github.ref_name }}
+EOF
+wf_bytes c4-perm-job "$WJ" "$WJ"'\n    Permissions: read-all\n'
+# 이름이 env 인 job 의 키는 job 의 키다(env 변수 이름의 예외가 아니다).
+wf_root c4-env-job-id
+wf_add c4-env-job-id <<'EOF'
+  env:
+    runs-on: ubuntu-24.04
+    If: false
+    steps:
+      - run: echo env-job
+EOF
+# 이벤트 이름, 표현식 문맥, 러너 레이블은 소문자로 바꿔 비교한다(거부만 더한다).
+wf_variant c4-prt-key 's/^  push:$/  Pull_Request_Target:/'
+wf_variant c4-prt-value '/^    branches: \[main\]$/d; s/^  push:$/  - push\
+  - Pull_Request_Target/'
+wf_bytes c4-secrets "$WJ" "$WJ"'\n    env:\n      TOKEN: ${{ Secrets.TOKEN }}\n'
+wf_bytes c4-event "$WJ" "$WJ"'\n    env:\n      TITLE: ${{ GitHub.Event.pull_request.title }}\n'
+wf_bytes c4-head-ref "$WJ" "$WJ"'\n    env:\n      REF: ${{ github.HEAD_REF }}\n'
+wf_variant c4-latest 's/ubuntu-24.04/ubuntu-LATEST/'
+# C3-R3: 블록 스칼라 내용 밖의 빈 줄과 주석 줄의 들여쓰기 자리의 탭(libyaml 은 오류로 본다).
+wf_bytes c4-tab-comment "$WB" "$WB"'\n\t# tab comment\n'
+wf_bytes c4-tab-blank "$WB" "$WB"'\n  \t\n'
+# 받는 모양(4회차): 워크플로, job, 단계의 env: 바로 아래 대문자 변수 이름, 이름이 env 인 job 의 env, 블록 스칼라 내용 안의 탭
+mkdir -p "$WF_WORK/c4-env-names/.github/workflows"
+cat >"$WF_WORK/c4-env-names/.github/workflows/ci.yml" <<EOF
+name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@$WF_SHA # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash scripts/gate/build.sh
+      - run: bash scripts/gate/test.sh
+      - run: bash scripts/gate/lint.sh
+      - run: bash scripts/gate/integration.sh
+      - name: env names
+        env:
+          FOO_BAR: x
+        run: |
+          echo env-names
+  env:
+    runs-on: ubuntu-24.04
+    env:
+      JOB_NAMED_ENV: x
+    steps:
+      - run: echo env-job
+EOF
+printf '      - name: tab in block content\n        run: |\n          echo a\n          \techo tab-content\n          \t# tab then hash is content\n          \t\n          echo b\n' | wf_add c4-env-names
+
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w132) job 의 Continue-On-Error: true (대문자가 든 키)' wf_check c4-coe-job
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w133) job 의 CONTINUE-ON-ERROR: true' wf_check c4-coe-upper
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w134) build.sh 단계의 If: false' wf_check c4-if-step
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w135) 워크플로 defaults.run 의 Shell: true {0}' wf_check c4-shell-defaults
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w136) with: 없는 Uses: actions/checkout@v4' wf_check c4-uses-checkout
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w137) 단계의 Run: echo ${{ github.ref_name }}' wf_check c4-run-step
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w138) job 의 Permissions: read-all' wf_check c4-perm-job
+expect_run reject '[KEY_NOT_LOWERCASE]' '(w139) 이름이 env 인 job 의 If: false (env 변수 이름의 예외가 아니다)' wf_check c4-env-job-id
+expect_run reject '[FORBIDDEN_TRIGGER]' '(w140) on: 의 키 Pull_Request_Target' wf_check c4-prt-key
+expect_run reject '[FORBIDDEN_TRIGGER]' '(w141) on: 목록의 값 Pull_Request_Target' wf_check c4-prt-value
+expect_run reject '[FORBIDDEN_EXPR]' '(w142) job env 의 ${{ Secrets.TOKEN }}' wf_check c4-secrets
+expect_run reject '[FORBIDDEN_EXPR]' '(w143) job env 의 ${{ GitHub.Event.pull_request.title }}' wf_check c4-event
+expect_run reject '[FORBIDDEN_EXPR]' '(w144) job env 의 ${{ github.HEAD_REF }}' wf_check c4-head-ref
+expect_run reject '[LATEST_RUNNER]' '(w145) ubuntu-LATEST 러너 레이블' wf_check c4-latest
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w146) 탭으로 시작하는 주석 줄' wf_check c4-tab-comment
+expect_run reject '[UNSUPPORTED_SYNTAX]' '(w147) 공백과 탭만 있는 줄' wf_check c4-tab-blank
+expect_run pass 'workflow-check: OK' '(w148) 받는 모양(4회차): 워크플로·job·단계 env: 의 대문자 변수 이름, 이름이 env 인 job 의 env, 블록 스칼라 내용 안의 탭' \
+  wf_check c4-env-names
 
 if [ "$unmet" -ne 0 ]; then
   echo "selftest: FAIL ($unmet 개 시나리오가 기대와 다르다)"

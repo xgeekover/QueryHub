@@ -22,7 +22,8 @@
 ## 결과
 
 - 구현됨: P0-A 에서 build·test·lint 와 junit-check·selftest, P0-B 에서 integration, P0-C 에서 desktop 단계와 cargo-test-check. 단계별 방어의 자세한 내용은 [TEST_PLAN.md](../TEST_PLAN.md)에 있다.
-- P0-D (커밋 전): build·test·lint 의 `--desktop-only`, lint 의 `docs-check.sh`(DOC-1)와 `workflow-check.sh`, `selftest.sh --no-skip` 과 junit-check 의 합계 형식 거부 분기(`valid_counts`)를 다루는 시나리오(P0A-N1), stdout 만 읽는 Docker 사전 점검(P0B-R4). CI 가 같은 스크립트를 부르는 결정은 [ADR-020](ADR-020-ci-runs-gate-scripts.md)(제안)이다.
+- P0-D (d0b0f0f, 2026-11-20): build·test·lint 의 `--desktop-only`, lint 의 `docs-check.sh`(DOC-1)와 `workflow-check.sh`, `selftest.sh --no-skip` 과 junit-check 의 합계 형식 거부 분기(`valid_counts`)를 다루는 시나리오(P0A-N1), stdout 만 읽는 Docker 사전 점검(P0B-R4). CI 가 같은 스크립트를 부르는 결정은 [ADR-020](ADR-020-ci-runs-gate-scripts.md)(제안)이다.
+- P1-01 (커밋 전, P0-D 리뷰 후속): `workflow-check.sh` 는 줄 단위로 다룰 수 없는 YAML 문법과 LF 가 아닌 줄바꿈 문자를 받지 않고 거부한다(`UNSUPPORTED_SYNTAX`). 실패를 덮거나 건너뛰게 하는 키(`CONTINUE_ON_ERROR`, `IF_CONDITION`), bash 가 아닌 셸(`SHELL_NOT_BASH`), 단계 밖이나 한 단계에 두 번 있는 `run:`(`RUN_KEY`), run 값 안의 표현식(`RUN_EXPR`)도 거부한다. P1-01 리뷰 2회차부터 구조 줄을 허용 목록과 들여쓰기 구조로 보고(여러 줄에 걸친 평범한 스칼라도 `UNSUPPORTED_SYNTAX`), 같은 매핑의 같은 키(`DUPLICATE_KEY`)와 빈 조각이나 `.`·`..` 가 든 `uses:` 경로(`USES_NOT_SHA`)를 거부한다. checkout 의 `persist-credentials: false` 는 그 단계의 `with:` 바로 아래만 세고, 팩토리 명령은 단계의 한 줄짜리 run 값만 센다. `docs-check.sh` 는 저장소 루트 밖으로 나가는 링크를 깨진 링크로 센다. 판정 범위와 한계는 [TEST_PLAN.md](../TEST_PLAN.md) 「lint 의 저장소 단계」에 있다.
 - 판정 스크립트가 검사받는 저장소 안에 있으므로 스크립트 자체의 변경도 리뷰 대상이다.
 - 남은 문제([BACKLOG](../BACKLOG.md)): 심볼릭 링크 모듈이 탐색에서 빠진다(P0A-N2). P0A-N1, P0B-R4, DOC-1 은 P0-D 에서 닫았다. CI 에서의 실행은 미검증이다(CI-1).
 

@@ -464,7 +464,7 @@ fn request_terminate(child: &mut Child) {
     }
 }
 
-/// unix 가 아니면 우아한 종료 신호가 없다: 바로 종료한다(미검증, P0-D CI 에서 확인한다).
+/// unix 가 아니면 우아한 종료 신호가 없다: 바로 종료한다(미검증, 첫 CI 실행에서 확인한다. BACKLOG CI-1, PLAT-1).
 #[cfg(not(unix))]
 fn request_terminate(child: &mut Child) {
     let _ = child.kill();

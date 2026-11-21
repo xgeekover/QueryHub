@@ -6,11 +6,45 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ## [Unreleased]
 
-### Phase 0 (P0-D 를 커밋하면 완료)
+### Phase 1 (진행 중)
+
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 은 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰의 후속이다.
+
+#### P1-01 P0-D 리뷰 후속: 점검기의 실패 닫힘 (커밋 전)
+
+##### 추가
+
+- `workflow-check.sh` 의 새 코드(P0D-R1, P0D-R3, P0D-R4): `UNSUPPORTED_SYNTAX`(블록 스칼라 내용 밖의 줄에서 따옴표로 감싼 키, 흐름 매핑, 평범한 값만 담지 않은 흐름 시퀀스, 앵커·별칭·병합 키, 태그, 문서 표시·지시자, `key :`, 명시적 키, 들여쓰기 숫자가 붙은 블록 머리, 줄을 넘기는 따옴표 문자열, 큰따옴표 안의 `\` 이스케이프, 들여쓰기의 탭. 블록 내용과 주석을 포함한 모든 줄에서 LF 가 아닌 줄바꿈 문자 CR·U+0085·U+2028·U+2029, 탭이 아닌 제어 문자, NUL), `CONTINUE_ON_ERROR`, `IF_CONDITION`, `SHELL_NOT_BASH`, `RUN_KEY`(단계 밖의 `run:` 과 한 단계의 둘째 `run:`), `RUN_EXPR`(단계의 run 값 안의 `${{`).
+- P1-01 리뷰 2회차(C2-R1-R3)와 YAML 문법 전수 점검: `UNSUPPORTED_SYNTAX` 는 블록 스칼라 내용 밖의 줄을 허용 목록(`키:`, `키: 값`, `- 키:`, `- 키: 값`, `- 값`, `-`)과 들여쓰기 구조로 보고, 여러 줄에 걸친 평범한 스칼라(값이 있는 키나 `- 값` 다음의 더 깊은 줄), 맞지 않는 들여쓰기, 키가 없는 줄, 탭, `- - x`, 평범한 값을 시작할 수 없는 문자, 평범한 값 안의 `: `, 닫는 따옴표 뒤의 글자, BOM, 블록 스칼라 내용 열보다 덜 들여 쓴 줄을 거부한다. 새 코드 `DUPLICATE_KEY` 는 같은 매핑의 같은 키(대소문자 무시)를 거부한다.
+- P1-01 리뷰 3회차(C3-R1, C3-R3): 새 코드 `KEY_NOT_LOWERCASE` 는 대문자가 든 키(`If:`, `Continue-On-Error:`, `Shell:`, `Uses:`, `Run:`, `Permissions:` 등)를 거부한다. 규칙이 키를 이름으로 찾으므로 대소문자만 다른 키가 규칙을 피했다. 예외는 워크플로·job·단계 `env:` 바로 아래의 변수 이름이다. `FORBIDDEN_TRIGGER`, `FORBIDDEN_EXPR`, `LATEST_RUNNER` 는 대소문자를 가리지 않고 찾는다. `UNSUPPORTED_SYNTAX` 는 블록 스칼라 내용 밖의 빈 줄과 주석 줄의 들여쓰기 자리의 탭도 거부한다.
+- `selftest.sh` 의 새 시나리오 134개: docs-check (d13)-(d15), workflow-check (w18)-(w148). (w48)-(w64) 는 P1-01 리뷰 1회차(R1, R2, R4), (w65)-(w131) 은 2회차(C2-R1-R3, C2-R5)와 YAML 문법 전수 점검, (w132)-(w148) 은 3회차(C3-R1, C3-R3)의 재현이다. 받는 픽스처에는 저장소 `ci.yml` 의 바이트 사본(w47)과 CRLF 사본(w131), CRLF 픽스처(w57), 여러 단계 모양의 픽스처(w63, w130), `defaults.run` 의 `working-directory` 표현식(w129), `env:` 의 대문자 변수 이름(w148)이 있다. 새 거부 시나리오마다 d0b0f0f 의 점검기((w48)-(w64) 는 1회차, (w65)-(w128) 은 2회차, (w132)-(w147) 은 3회차의 점검기)나 그 규칙을 끈 사본에서는 그 시나리오가 실패한다.
+- `docs/BACKLOG.md`: CI-2(Gradle 의존성 검증 없음, 목표 Phase 1 의 DB Provider 태스크 전). P101-T1(P1-01 테스트에서 한 번 실패하고 다시 돌리자 통과한 cargo 포트 확인 테스트, 원인은 추정, 목표 Phase 1 의 별도 태스크).
+
+##### 변경
+
+- `workflow-check.sh`: `CHECKOUT_PERSIST` 는 checkout 단계의 `with:` 바로 아래 항목인 `persist-credentials: false` 만 센다(P0D-R2). `FACTORY_COMMAND_MISSING` 은 팩토리 명령을 단계(`jobs.<job>.steps` 의 항목)의 한 줄짜리 `run: bash scripts/gate/<이름>.sh` 값으로만 센다(블록 안의 줄과 `env:`·`with:` 아래의 `run:` 은 세지 않는다, P0D-R3). checkout 은 owner/repo 의 대소문자를 가리지 않고 찾는다. 팩토리 명령 확인을 grep 에서 같은 awk 로 옮겼고, 그 awk 는 `LC_ALL=C` 로 돌려 바이트로 비교한다. `uses:` 의 고정 모양은 빈 경로 조각과 끝의 `/` 를 받지 않고 `.`·`..` 조각도 거부한다(C2-R2). 블록 스칼라는 첫 내용 줄의 열을 내용 열로 보고, 그보다 덜 들여 쓴 주석 줄이 블록을 끝낸다(libyaml 과 같다). 출력 형식(`file:line: [CODE] 설명`, `workflow-check: OK|FAIL`)과 종료 코드는 그대로다.
+- 문서: P0-D 를 아직 커밋하지 않은 것으로 적던 곳을 d0b0f0f (2026-11-20) 로 바꾸고 Phase 0 을 완료로 적었다(`README.md`, ADR-019, `docs/ARCHITECTURE.md`, `docs/BACKLOG.md`, `docs/PHASE0-REPORT.md`, `docs/TEST_PLAN.md`). 두 점검기가 잡는 것과 잡지 못하는 것을 `docs/SECURITY.md`, `docs/TEST_PLAN.md`, ADR-020 에 적었다. `docs/BACKLOG.md` 에서 P0D-R1..P0D-R7 을 닫았다.
+- 캐시 설명(P0D-R7): `ci.yml` 머리 주석, ADR-020, `docs/TEST_PLAN.md` 가 캐시는 의존성 캐시뿐이고 산출물은 없으며, Gradle 캐시에는 Gradle 이 만든 데이터도 있고 복원한 캐시는 검증하지 않는다(CI-2)고 적는다.
+
+##### 수정
+
+- `launch.rs`, `supervisor.rs` 의 Windows 주석이 「P0-D CI」 대신 첫 CI 실행(CI-1, PLAT-1)을 가리킨다(P0D-R6).
+
+##### 보안
+
+- `workflow-check.sh` 는 줄 단위 점검기가 다루지 않는 YAML 문법(따옴표로 감싼 키, 흐름 매핑 등)을 `UNSUPPORTED_SYNTAX` 로 거부한다(P0D-R1). 모든 줄의 LF 가 아닌 줄바꿈 문자(CR, U+0085, U+2028, U+2029), 탭이 아닌 제어 문자와 NUL 도 거부한다. 이런 것을 받으면 그 뒤의 키가 SHA 고정·권한 규칙과 아래 규칙을 피한다. 따옴표로 감싼 `write` 도 `PERMISSIONS_WRITE` 로 거부한다.
+- `workflow-check.sh` 는 `continue-on-error:`, `if:`, bash 가 아닌 `shell:` 을 워크플로·job·단계 어디서나 거부하고(P0D-R3), 단계의 run 값 안의 `${{` 를 `RUN_EXPR` 로(P0D-R4), 단계 밖이나 한 단계에 두 번 있는 `run:` 을 `RUN_KEY` 로 거부한다. 팩토리 명령은 단계의 한 줄짜리 run 값만 센다.
+- `workflow-check.sh` 는 값이 있는 키나 `- 값` 다음의 더 깊은 줄을 `UNSUPPORTED_SYNTAX` 로 거부한다(C2-R1). YAML 은 이 줄을 앞 값에 이어 붙이므로, 받으면 `shell: bash` 다음 줄의 `-c true {0}` 이 shell 을 `bash -c true {0}` 으로 바꾸고(libyaml 기준. 게이트 스크립트가 실행되지 않는다), 팩토리 run 줄 다음 줄의 `2>/dev/null || true` 나 `--desktop-only` 가 그 명령을 바꾼다. 같은 매핑의 같은 키는 `DUPLICATE_KEY` 로 거부한다(C2-R3. libyaml 은 뒤의 값을 쓰므로 두 번째 `with:` 나 `persist-credentials: true` 가 앞의 `persist-credentials: false` 를 가린다). `actions//checkout` 처럼 checkout 찾기를 피하는 `uses:` 경로는 `USES_NOT_SHA` 로 거부한다(C2-R2).
+- 이 점검기는 YAML 파서가 아니고 `working-directory`, env 나 `PATH` 로 도구를 바꿔치기하는 것, 트리거와 브랜치 필터, action 입력 이름, 표현식의 뜻을 확인하지 않는다. 단계 명령이 무엇을 하는지도 보지 않는다: 앞 단계가 게이트 스크립트를 고쳐 쓰거나 `$GITHUB_ENV`·`$GITHUB_PATH` 에 써서(예: `BASH_ENV` 설정) 뒤 단계를 바꾸는 것, `container:` 와 `services:` 는 잡지 못한다(P1-01 리뷰 3회차 C3-R2). YAML 을 GitHub 와 같게 읽는지도 확인하지 않았다(전수 점검은 libyaml 0.2.1 과 견준 구성에서만 했다). 그래서 점검을 통과해도 이런 방법으로는 게이트 단계를 무력화할 수 있다. 한계는 [docs/SECURITY.md](docs/SECURITY.md)와 [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 「lint 의 저장소 단계」에 있다.
+- `docs-check.sh` 는 상대 링크를 저장소 루트 안에 가둔다. 루트 위로 올라가는 링크는 그 파일이 있어도 깨진 링크다(P0D-R5). 루트 밖을 가리키는 저장소 안의 심볼릭 링크는 잡지 못한다.
+
+테스트 (macOS 로컬의 게이트 실행): runtime 단위 300, vitest 30, cargo test 32, 통합 23. 모두 통과, 건너뜀 0. selftest 227 시나리오(P0-D 의 93, 새로 134), SKIP 0. 점검기의 awk 는 macOS `/usr/bin/awk` 에서만 돌렸다(mawk, gawk 는 CI-1 전까지 미검증). CI 는 실행되지 않았다(CI-1).
+
+### Phase 0 (완료, d0b0f0f)
 
 남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). Phase 0 보고(통과 기준, 사람의 결정, 미검증 항목): [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md)
 
-#### P0-D CI 정의와 Phase 0 마무리 (커밋 전)
+#### P0-D CI 정의와 Phase 0 마무리 — d0b0f0f (2026-11-20)
 
 ##### 추가
 
@@ -36,7 +70,7 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ##### 보안
 
-- CI 워크플로는 비밀 값이 필요 없다. 최상위 권한은 `contents: read` 하나이고, 모든 checkout 이 `persist-credentials: false` 이며, action 은 40자 커밋 SHA 로 고정했다. `pull_request_target`, `secrets.`, `github.event.`, `github.head_ref` 를 쓰지 않는다. `workflow-check.sh` 가 lint 단계에서 이 규칙을 점검한다.
+- CI 워크플로는 비밀 값이 필요 없다. 최상위 권한은 `contents: read` 하나이고, 모든 checkout 이 `persist-credentials: false` 이며, action 은 40자 커밋 SHA 로 고정했다. `pull_request_target`, `secrets.`, `github.event.`, `github.head_ref` 를 쓰지 않는다. `workflow-check.sh` 가 lint 단계에서 이 규칙을 점검한다. 이 줄 단위 점검기는 P1-01 전까지 따옴표로 감싼 키와 흐름 매핑을 보지 못했다(P0D-R1, 위의 P1-01).
 - 게이트 범위는 명시한 인자로만 고른다. 환경변수로는 게이트의 단계를 줄일 수 없다.
 
 테스트 (macOS 로컬의 게이트 실행): runtime 단위 300, vitest 30, cargo test 32, 통합 23. 모두 통과, 건너뜀 0. selftest 93 시나리오, SKIP 0. `#[cfg(windows)]` 테스트 1건은 macOS 에서 컴파일되지 않아 미검증이다. CI 는 실행되지 않았다(CI-1).

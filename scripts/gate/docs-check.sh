@@ -8,6 +8,11 @@
 #    기준으로 있어야 한다. 펜스 코드 블록(``` 또는 ~~~)과 인라인 코드(`...`) 안은 보지 않는다. http:, https:, mailto: 와 '#' 로
 #    시작하는 대상은 확인하지 않는다(한국어 제목의 앵커도 확인하지 않는다). 깨진 링크마다 'file:line: target' 한 줄을 출력한다.
 #    '/' 로 시작하는 대상과 빈 대상은 링크한 파일 기준으로 풀 수 없으므로 깨진 링크로 다룬다.
+#    저장소 루트 안에 가둔다(P1-01): 있는지 보기 전에 '디렉터리/대상' 을 글자 그대로 정리한다(빈 조각과 '.' 은 건너뛰고 '..' 은
+#    한 조각을 뺀다). 루트 위로 올라가는 링크는 그 파일이 있어도 깨진 링크로 세고 'file:line: target (저장소 루트 밖)' 을
+#    출력한다. 루트 안에 머무는 '..', './', 루트 안의 심볼릭 링크 디렉터리는 받는다. GitHub 이 상대 링크를 푸는 방식과 같다.
+#    한계: 인라인 링크만 본다(참조형 링크 [글][id] 는 보지 않는다). 앵커(#제목)는 확인하지 않는다. 글자 그대로 정리하므로 루트
+#    밖을 가리키는 저장소 안의 심볼릭 링크는 잡지 못한다(지금 저장소에는 심볼릭 링크가 없다).
 # 실패 닫힘: REQUIREMENTS.md, README.md, CHANGELOG.md, docs/ 가 없거나 읽을 수 없거나, sha256sum 과 shasum 이 모두 없으면 실패한다.
 # bash 3.2, POSIX 도구만 쓴다(lib.sh).
 #
@@ -109,8 +114,36 @@ extract_links() {
   ' "$@"
 }
 
+# path_within_root PATH: PATH(루트 기준 상대 경로)를 글자 그대로 정리해 루트 위로 올라가면 1 을 돌려준다. 파일 시스템은 보지 않는다.
+path_within_root() {
+  local rest="$1" seg depth=0
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      */*)
+        seg="${rest%%/*}"
+        rest="${rest#*/}"
+        ;;
+      *)
+        seg="$rest"
+        rest=
+        ;;
+    esac
+    case "$seg" in
+      '' | .) ;;
+      ..)
+        depth=$((depth - 1))
+        if [ "$depth" -lt 0 ]; then
+          return 1
+        fi
+        ;;
+      *) depth=$((depth + 1)) ;;
+    esac
+  done
+  return 0
+}
+
 check_links() {
-  local files=() file list links tab line target path dir checked=0 external=0 broken=0
+  local files=() file list links tab line target path dir suffix checked=0 external=0 broken=0
   for file in README.md CHANGELOG.md; do
     if [ -f "$file" ] && [ -r "$file" ]; then
       files+=("$file")
@@ -153,15 +186,18 @@ EOF
       */*) dir="${file%/*}" ;;
       *) dir=. ;;
     esac
+    suffix=
     case "$path" in
       '' | /*) ;;
       *)
-        if [ -e "$dir/$path" ]; then
+        if ! path_within_root "$dir/$path"; then
+          suffix=' (저장소 루트 밖)'
+        elif [ -e "$dir/$path" ]; then
           continue
         fi
         ;;
     esac
-    echo "$file:$line: $target"
+    echo "$file:$line: $target$suffix"
     broken=$((broken + 1))
   done <<EOF
 $links

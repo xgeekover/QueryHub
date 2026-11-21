@@ -40,7 +40,7 @@ pub const BOOT_JAR_COMMAND: &str = "sh runtime/gradlew -p runtime :app:bootJar";
 const INHERITED_NAMES: &[&str] = &["PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR"];
 #[cfg(not(windows))]
 const INHERITED_PREFIX: &str = "LC_";
-/// windows(미검증, P0-D CI 에서 확인한다): 이름을 대소문자 없이 비교한다.
+/// windows(미검증, 첫 CI 실행에서 확인한다. BACKLOG CI-1, PLAT-1): 이름을 대소문자 없이 비교한다.
 #[cfg(windows)]
 const INHERITED_NAMES: &[&str] = &[
     "PATH",
