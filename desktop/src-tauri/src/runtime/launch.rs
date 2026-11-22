@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -274,16 +275,150 @@ pub fn child_args(jar: &Path, port: u16) -> Vec<String> {
     ]
 }
 
-/// 포트가 비어 있는가: 127.0.0.1:<port> 에 바인딩할 수 있고(바로 놓는다), 127.0.0.1:<port> 로 연결되지 않는다.
+/// 포트가 비어 있는가. 세 단계로 본다(P101-T1, P0C-C2-1).
 ///
-/// std 의 TcpListener 는 unix 에서 SO_REUSEADDR 를 켜므로, 다른 프로세스가 0.0.0.0:<port> 에서 듣고 있어도 바인딩은
-/// 성공한다(macOS). 연결 시험이 그런 와일드카드 리스너를 찾는다.
+/// 1. 127.0.0.1:<port> 에 바인딩한다(바로 놓는다). 실패하면 사용 중이다.
+/// 2. macOS 만: 0.0.0.0:<port> 와 [::]:<port> 에 SO_REUSEADDR 를 켠 소켓을 바인딩만 하고(listen 하지 않는다) 닫는다.
+///    EADDRINUSE 면 사용 중이다. std 의 TcpListener 는 unix 에서 SO_REUSEADDR 를 켜므로 macOS 에서는 다른 프로세스가
+///    0.0.0.0:<port> 나 [::]:<port> 에서 듣고 있어도 1 단계가 성공한다. 이 단계는 연결 시간에 기대지 않고 그런 리스너를
+///    찾는다. IPv4 소켓을 준비하지 못하면 사용 중으로 보고, IPv6 의 EADDRINUSE 가 아닌 오류(IPv6 를 끈 기계 등)는 무시한다.
+/// 3. 127.0.0.1:<port> 로 연결해 본다(제한 시간 300 ms). 연결되면 사용 중이다. 예외는 자기 연결(로컬 주소와 상대 주소가
+///    같다)이다: 듣는 소켓이 없어도 TCP 동시 열기로 자기 자신에게 연결될 수 있으므로 비어 있다로 본다(P0C-C2-1). 주소를
+///    읽지 못하면 사용 중이다. 연결이 실패하면(시간 초과 포함) 비어 있다.
+///
+/// Linux 는 1 단계의 바인딩이 0.0.0.0 리스너와 이중 스택 [::] 리스너에 부딪힌다고 보고 2 단계를 두지 않는다(확인하지
+/// 않았다, CI-1). Windows 는 99040c0 과 같은 1, 3 단계에 자기 연결 예외만 더했다(확인하지 않았다, PLAT-1, CI-1). Windows 에서는
+/// 거부되는 루프백 연결이 300 ms 보다 오래 걸릴 수 있으므로 시간 초과를 사용 중으로 보지 않는다.
 pub fn port_is_free(port: u16) -> bool {
+    port_is_free_with(port, |addr| {
+        TcpStream::connect_timeout(addr, PORT_CONNECT_TIMEOUT)
+    })
+}
+
+/// port_is_free 의 본체. 3 단계의 연결을 바꿔 끼울 수 있다(시험이 연결 결과를 기계 부하와 상관없이 정한다).
+fn port_is_free_with(
+    port: u16,
+    connect: impl FnOnce(&SocketAddr) -> io::Result<TcpStream>,
+) -> bool {
     let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     if TcpListener::bind(loopback).is_err() {
         return false;
     }
-    TcpStream::connect_timeout(&loopback, PORT_CONNECT_TIMEOUT).is_err()
+    if wildcard_in_use(port) {
+        return false;
+    }
+    match connect(&loopback) {
+        Ok(stream) => match (stream.local_addr(), stream.peer_addr()) {
+            (Ok(local), Ok(peer)) => connected_port_is_free(local, peer),
+            _ => false,
+        },
+        Err(_) => true,
+    }
+}
+
+/// 연결 시험이 연결되었을 때의 판정: 자기 연결(로컬 주소 == 상대 주소)이면 듣는 소켓이 없으므로 비어 있다(P0C-C2-1).
+fn connected_port_is_free(local: SocketAddr, peer: SocketAddr) -> bool {
+    local == peer
+}
+
+/// 2 단계가 없는 플랫폼(Linux, Windows): 와일드카드 리스너를 따로 찾지 않는다.
+#[cfg(not(target_os = "macos"))]
+fn wildcard_in_use(_port: u16) -> bool {
+    false
+}
+
+/// 2 단계(macOS): 다른 소켓이 0.0.0.0:<port> 나 [::]:<port> 를 쥐고 있는가.
+#[cfg(target_os = "macos")]
+fn wildcard_in_use(port: u16) -> bool {
+    match wildcard::bind_only(libc::AF_INET, port) {
+        wildcard::Probe::NoSocket | wildcard::Probe::InUse => return true,
+        wildcard::Probe::NotInUse => {}
+    }
+    matches!(
+        wildcard::bind_only(libc::AF_INET6, port),
+        wildcard::Probe::InUse
+    )
+}
+
+/// macOS 의 바인딩만 하는 와일드카드 시험. SO_REUSEADDR 를 켜고 SO_REUSEPORT 는 켜지 않는다: BSD 는 그러면 같은
+/// 와일드카드 주소를 쥔 소켓만 EADDRINUSE 로 알리고, 127.0.0.1:<port> 의 TIME_WAIT 소켓은 막지 않는다. listen 하지 않으므로
+/// 연결을 받지 않는다.
+#[cfg(target_os = "macos")]
+mod wildcard {
+    use std::io;
+    use std::mem;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    pub(super) enum Probe {
+        /// 소켓을 만들거나 SO_REUSEADDR 를 켜지 못했다.
+        NoSocket,
+        /// bind 가 EADDRINUSE 로 실패했다.
+        InUse,
+        /// bind 가 성공했거나 EADDRINUSE 가 아닌 이유로 실패했다.
+        NotInUse,
+    }
+
+    /// family(AF_INET 이나 AF_INET6)의 와일드카드 주소 port 에 바인딩만 하고 닫는다.
+    pub(super) fn bind_only(family: libc::c_int, port: u16) -> Probe {
+        // SAFETY: socket(2) 은 정수 인자만 읽는다. 돌려준 fd 는 바로 아래에서 OwnedFd 가 맡아 닫는다.
+        let raw = unsafe { libc::socket(family, libc::SOCK_STREAM, 0) };
+        if raw < 0 {
+            return Probe::NoSocket;
+        }
+        // SAFETY: raw 는 방금 연, 아무도 맡지 않은 열린 fd 다.
+        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        let one: libc::c_int = 1;
+        // SAFETY: optval 은 살아 있는 c_int 를 가리키고 optlen 은 그 크기다.
+        let rc = unsafe {
+            libc::setsockopt(
+                fd.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_REUSEADDR,
+                (&one as *const libc::c_int).cast(),
+                mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if rc != 0 {
+            return Probe::NoSocket;
+        }
+        let rc = if family == libc::AF_INET {
+            // SAFETY: sockaddr_in 은 정수와 바이트 배열만 담은 C 구조체이므로 모두 0 인 값이 올바르다(주소 0.0.0.0).
+            let mut addr: libc::sockaddr_in = unsafe { mem::zeroed() };
+            addr.sin_len = mem::size_of::<libc::sockaddr_in>() as u8;
+            addr.sin_family = libc::AF_INET as libc::sa_family_t;
+            addr.sin_port = port.to_be();
+            // SAFETY: addr 는 살아 있는 sockaddr_in 이고 addrlen 은 그 크기다.
+            unsafe {
+                libc::bind(
+                    fd.as_raw_fd(),
+                    (&addr as *const libc::sockaddr_in).cast(),
+                    mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                )
+            }
+        } else {
+            // SAFETY: sockaddr_in6 은 정수와 바이트 배열만 담은 C 구조체이므로 모두 0 인 값이 올바르다(주소 [::]).
+            let mut addr: libc::sockaddr_in6 = unsafe { mem::zeroed() };
+            addr.sin6_len = mem::size_of::<libc::sockaddr_in6>() as u8;
+            addr.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+            addr.sin6_port = port.to_be();
+            // SAFETY: addr 는 살아 있는 sockaddr_in6 이고 addrlen 은 그 크기다.
+            unsafe {
+                libc::bind(
+                    fd.as_raw_fd(),
+                    (&addr as *const libc::sockaddr_in6).cast(),
+                    mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                )
+            }
+        };
+        if rc == 0 {
+            return Probe::NotInUse;
+        }
+        if io::Error::last_os_error().raw_os_error() == Some(libc::EADDRINUSE) {
+            Probe::InUse
+        } else {
+            Probe::NotInUse
+        }
+    }
 }
 
 /// port_in_use 실패.
@@ -472,5 +607,96 @@ mod tests {
         assert!(!port_is_free(port), "0.0.0.0:{port} 리스너를 놓쳤다");
         drop(wildcard);
         assert!(port_is_free(port), "닫은 뒤에도 {port} 이 사용 중이다");
+    }
+
+    // P101-T1: 아래 시험은 3 단계의 연결을 바꿔 끼워 연결 결과를 정한다. 기계가 바빠 연결이 300 ms 안에 끝나지 않아도
+    // (시간 초과) 리스너가 있는 포트는 1, 2 단계의 바인딩만으로 사용 중이어야 한다.
+    fn timed_out(_: &SocketAddr) -> io::Result<TcpStream> {
+        Err(io::Error::from(io::ErrorKind::TimedOut))
+    }
+
+    fn refused(_: &SocketAddr) -> io::Result<TcpStream> {
+        Err(io::Error::from(io::ErrorKind::ConnectionRefused))
+    }
+
+    // (a) 0.0.0.0 리스너: macOS 는 2 단계가, Linux 는 1 단계가 찾는다(Linux 는 확인하지 않았다, CI-1).
+    #[cfg(not(windows))]
+    #[test]
+    fn a_wildcard_ipv4_listener_is_in_use_even_when_the_connect_times_out() {
+        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("bind 0.0.0.0");
+        let port = listener.local_addr().expect("addr").port();
+        assert!(
+            !port_is_free_with(port, timed_out),
+            "0.0.0.0:{port} 리스너를 놓쳤다"
+        );
+    }
+
+    // (b) [::] 리스너(이중 스택): macOS 는 2 단계가, Linux 는 1 단계가 찾는다(Linux 는 확인하지 않았다, CI-1).
+    #[cfg(not(windows))]
+    #[test]
+    fn a_wildcard_ipv6_listener_is_in_use_even_when_the_connect_times_out() {
+        let listener = TcpListener::bind((std::net::Ipv6Addr::UNSPECIFIED, 0)).expect("bind [::]");
+        let port = listener.local_addr().expect("addr").port();
+        assert!(
+            !port_is_free_with(port, timed_out),
+            "[::]:{port} 리스너를 놓쳤다"
+        );
+    }
+
+    // (c) 127.0.0.1 리스너: 1 단계가 찾는다.
+    #[test]
+    fn a_loopback_listener_is_in_use_even_when_the_connect_times_out() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind 127.0.0.1");
+        let port = listener.local_addr().expect("addr").port();
+        assert!(
+            !port_is_free_with(port, timed_out),
+            "127.0.0.1:{port} 리스너를 놓쳤다"
+        );
+    }
+
+    // (d) 빈 포트: 연결이 시간 초과로 끝나도, 거부되어도 비어 있다(Windows 의 느린 거부를 비어 있다로 본다).
+    #[test]
+    fn a_free_port_is_free_when_the_connect_times_out_or_is_refused() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind 127.0.0.1");
+        let port = listener.local_addr().expect("addr").port();
+        drop(listener);
+        assert!(
+            port_is_free_with(port, timed_out),
+            "시간 초과인데 {port} 이 사용 중이다"
+        );
+        assert!(
+            port_is_free_with(port, refused),
+            "거부되었는데 {port} 이 사용 중이다"
+        );
+    }
+
+    // (e) 연결되었을 때: 자기 연결(로컬 주소 == 상대 주소)은 비어 있고, 다른 소켓과의 연결은 사용 중이다(P0C-C2-1).
+    #[test]
+    fn a_self_connect_is_free_and_a_connect_to_another_socket_is_in_use() {
+        let own = SocketAddr::from((Ipv4Addr::LOCALHOST, 18580));
+        let other = SocketAddr::from((Ipv4Addr::LOCALHOST, 54321));
+        assert!(connected_port_is_free(own, own));
+        assert!(!connected_port_is_free(other, own));
+        assert!(!connected_port_is_free(own, other));
+    }
+
+    // (f) 서버 쪽이 먼저 닫은 연결(127.0.0.1:<port> 의 TIME_WAIT)만 남은 포트는 비어 있다: 1, 2 단계는 SO_REUSEADDR 를 켠다.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_port_with_only_a_server_side_time_wait_is_free() {
+        use std::io::Read;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind 127.0.0.1");
+        let port = listener.local_addr().expect("addr").port();
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        let (served, _) = listener.accept().expect("accept");
+        drop(served);
+        let mut buf = [0u8; 1];
+        assert_eq!(client.read(&mut buf).expect("read eof"), 0);
+        drop(client);
+        drop(listener);
+        assert!(
+            port_is_free_with(port, refused),
+            "TIME_WAIT 만 남은 {port} 이 사용 중이다"
+        );
     }
 }

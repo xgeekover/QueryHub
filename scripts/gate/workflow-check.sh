@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GitHub Actions 워크플로 점검 (P0-D, P1-01). lint.sh 가 모든 범위에서 gate_step 으로 실행한다.
+# GitHub Actions 워크플로 점검 (P0-D, P1-01, P1-02). lint.sh 가 모든 범위에서 gate_step 으로 실행한다.
 #
 # .github/workflows/*.yml 과 *.yaml 을 본다(GitHub 은 하위 디렉터리를 읽지 않는다). 하나도 없으면 건너뛰지 않고 실패한다.
 # YAML 파서가 아니다. 줄 단위로 보고(bash 3.2, POSIX 도구만, lib.sh), 줄 단위로 다룰 수 없는 문법은 받지 않고 거부한다(실패 닫힘).
@@ -27,21 +27,44 @@
 #       열의 '- ' 목록은 값이 빈 키 바로 다음에서만 받는다. 맨 '-' 아래의 '-'(목록 안의 목록)와 0 열이 아닌 최상위도 거부한다.
 #     블록 스칼라(같은 회차): 내용 열은 첫 내용 줄의 열이다. 그보다 덜 들여 쓰고 키보다 깊은, 주석이 아닌 줄은 거부한다. 그
 #       열보다 덜 들여 쓴 주석 줄은 YAML 에서 블록을 끝내므로 여기서도 블록을 닫는다(그 뒤의 더 깊은 줄은 위 규칙이 거부한다).
-#       첫 내용 줄보다 공백이 많은 앞쪽 빈 줄도 거부한다.
+#       첫 내용 줄보다 공백이 많은 앞쪽 빈 줄도 거부한다. 내용 열을 안 뒤의 공백·탭만 있는 줄에서 내용 열보다 앞에 있는 탭도
+#       거부한다(P1-02, C5-R4. libyaml 은 들여쓰기 자리의 탭을 오류로 본다). 내용 열과 그 뒤의 탭은 문자열이라 받는다. 첫 내용
+#       줄 앞의 공백·탭만 있는 빈 줄(내용 열을 아직 모른다)에 있는 탭은 열과 상관없이 거부한다(P1-02. libyaml 은 내용 열을 정하기
+#       전의 탭을 모두 오류로 본다).
 #   DUPLICATE_KEY: 같은 매핑(워크플로, job, 단계, with:, env: 등 어디든)에 같은 키가 두 번 있다(대소문자는 가리지 않는다).
 #     libyaml 은 뒤의 값을 쓴다(다른 파서는 다를 수 있다): 두 번째 jobs:, steps:, with:, persist-credentials:, 같은 이름의 job 이
 #     앞의 것을 가린다.
 #   KEY_NOT_LOWERCASE: 키에 대문자(A-Z)가 있다(P1-01 리뷰 3회차 C3-R1). 아래 규칙은 키를 이름으로 찾는데 GitHub 이 키의
 #     대소문자를 가리는지 확인하지 않았으므로, 'If:', 'Continue-On-Error:', 'Shell:', 'Uses:' 처럼 대소문자만 다른 키는 규칙을
-#     피하지 못하게 모두 거부한다. 예외는 워크플로, job, 단계의 env: 바로 아래 키(환경 변수 이름)다. container·services 의 env,
-#     matrix, with: 아래의 키와 job id 는 소문자여야 한다.
+#     피하지 못하게 모두 거부한다. 예외는 워크플로, job, 단계의 env: 바로 아래 키(환경 변수 이름)다(그 이름은 FORBIDDEN_ENV 가
+#     본다). container·services 의 env, matrix, with: 아래의 키와 job id 는 소문자여야 한다.
+#   FORBIDDEN_ENV: 워크플로, job, 단계의 env: 바로 아래 변수 이름(대소문자 무시)이 bash 로 시작하거나(BASH_ENV, BASHOPTS,
+#     BASH_COMPAT, BASH_XTRACEFD, BASH_FUNC_* 등), LD_, DYLD_, GITHUB_, RUNNER_, ACTIONS_, MSYS 로 시작하거나, ENV, SHELLOPTS,
+#     POSIXLY_CORRECT, PS4, IFS, CDPATH, GLOBIGNORE, EXECIGNORE, PATH, PATHEXT, COMSPEC 이다(P1-02, 리뷰 C5-R1). 셸, 동적 로더,
+#     러너가 단계를 시작하고 실행하는 방식과 Windows 의 명령 찾기를 바꾸는 이름이다: bash 는 BASH_ENV 를 명령 치환까지 펼쳐
+#     스크립트보다 먼저 읽으므로 'BASH_ENV: $(...)' 한 줄이 게이트 네 단계를 실행하지 않고 exit 0 으로 끝낸다. PATH 는
+#     'run: bash scripts/gate/...' 의 bash 를 고르고, PATHEXT 와 COMSPEC 은 Windows 러너(windows-2025)에서 명령 이름에 붙일
+#     확장자와 명령 해석기를 바꾼다. ACTIONS_ALLOW_UNSECURE_COMMANDS 는
+#     set-env 명령을 되살린다. Windows 의 이름은 대소문자를 가리지 않아 소문자로 비교한다.
+#     같은 세 자리의 env: 에 한 줄 값(예: 'env: ${{ fromJSON(...) }}')을 두는 것도 거부한다: 위 검사가 보지 못하는 이름을 만든다.
+#     env: 는 '이름: 값' 줄의 블록 매핑으로만 쓴다(주석만 붙은 'env: # ...' 는 받는다).
 #   USES_NOT_SHA / USES_NO_TAG_COMMENT: 모든 uses: 는 owner/repo[/path]@<소문자 16진수 40자> 다음에 '# <태그>' 주석이 있어야 한다.
 #     경로 조각은 비지 않고 '.' 이나 '..' 가 아니다('actions//checkout', 'actions/checkout/' 처럼 checkout 을 숨기는 모양을 거부).
 #   PERMISSIONS_MISSING / PERMISSIONS_NOT_READ: 최상위 permissions 블록이 정확히 하나 있고 그 항목은 'contents: read' 하나다.
 #   PERMISSIONS_JOB_LEVEL: job 이나 단계 수준의 permissions 를 두지 않는다.
 #   PERMISSIONS_WRITE: write 권한(': write', 따옴표로 감싼 write, write-all)을 주지 않는다.
 #   FORBIDDEN_TRIGGER: pull_request_target 이 어디에도(주석 포함, 대소문자 무시) 없다.
-#   FORBIDDEN_EXPR: 'secrets.', 'github.event.', 'github.head_ref' 가 어디에도(주석 포함, 대소문자 무시) 없다.
+#   FORBIDDEN_EXPR: 'secrets.', 'github.event.', 'github.head_ref' 가 어디에도(주석 포함, 대소문자 무시) 없다. P1-02(리뷰 C5-R2)
+#     부터 색인·공백·문맥 통째 쓰기도 거부한다. 식별자 secrets(앞뒤가 [a-z0-9_-] 가 아닌 것: secrets['X'], toJSON(secrets),
+#     job 의 'secrets: inherit')는 어디에도(주석 포함, 대소문자 무시) 없다. 표현식 범위 안의 식별자 github(앞이 [a-z0-9_.-], 뒤가
+#     [a-z0-9_-] 가 아닌 것)는 바로 뒤에 '.' 과 허용 속성이 식별자 경계까지 와야 한다. 허용 속성: ref, ref_name, ref_type, sha,
+#     repository, repository_owner, run_id, run_number, run_attempt, workflow, job, event_name, server_url, api_url. 그래서
+#     github['event'], 'github . event', toJSON(github), github.*, format('{0}', github), github.token, github.actor 를 거부한다.
+#     표현식 범위: 줄(주석 포함)의 첫 '${{' 부터 줄 끝까지다(따옴표는 해석하지 않는다. 한 줄의 둘째 표현식, 따옴표 값 안의
+#     표현식, 표현식 뒤의 글자도 범위다). 블록 스칼라(|, >) 내용에서는 '${{' 가 든 내용 줄 다음의 같은 블록 내용 줄 전체가
+#     범위다(줄을 넘기는 표현식). 블록 밖에서 줄을 넘기는 값은 UNSUPPORTED_SYNTAX 다(여러 줄 평범한 스칼라, 줄을 넘기는 따옴표
+#     문자열). 범위 밖의 GitHub, https://github.com, $GITHUB_OUTPUT, .github/ 경로는 받는다. 범위 안에서는 문자열 안의 github
+#     (format('github'))와 https://github.com 도 거부한다(실패 닫힘).
 #   CHECKOUT_PERSIST: actions/checkout 을 쓰는 단계마다(owner/repo 의 대소문자는 가리지 않는다) 그 단계의 with: 블록 바로 아래
 #     항목으로 'persist-credentials: false' 가 있다(env: 아래, 더 깊은 곳, 'with: |' 문자열 안, 다른 단계에 있는 것은 세지 않는다).
 #   CONTINUE_ON_ERROR / IF_CONDITION: continue-on-error: 와 if: 키를 어디에도(워크플로, job, 단계) 두지 않는다. 값은 보지 않는다.
@@ -58,9 +81,14 @@
 #     단계의 한 줄짜리 run 값('run: bash scripts/gate/<이름>.sh', 앞의 '- ' 는 받는다)으로 워크플로 어딘가에 있다. 블록 스칼라
 #     안의 줄은 세지 않는다(set +e, '|| true', 'exit 0' 으로 무력화할 수 있다). 단계 밖의 run:(env:, with: 아래)도 세지 않는다.
 #     그 run 줄 다음의 더 깊은 줄('2>/dev/null || true', '--desktop-only')은 위의 들여쓰기 구조 규칙이 거부한다.
-# 이 점검은 action 입력 이름, 표현식의 뜻, 러너 레이블의 존재, 트리거와 브랜치 필터, working-directory, env 나 PATH 로 도구를
-# 바꿔치기하는 것을 확인하지 않는다(그것은 첫 실행에서만 알 수 있거나 범위 밖이다). 단계 명령이 무엇을 하는지도 보지 않는다:
-# 앞 단계가 게이트 스크립트를 고쳐 쓰거나 $GITHUB_ENV·$GITHUB_PATH 에 써서(예: BASH_ENV 설정) 뒤 단계를 바꾸는 것을 잡지 못하고,
+# 이 점검은 action 입력 이름, 표현식의 뜻, 러너 레이블의 존재, 트리거와 브랜치 필터, working-directory 를 확인하지 않는다(그것은
+# 첫 실행에서만 알 수 있거나 범위 밖이다). env 이름은 FORBIDDEN_ENV 의 이름만 거부한다(P1-02): HOME, TMPDIR, LANG·LC_*, 도구
+# 옵션 변수(JAVA_TOOL_OPTIONS, NODE_OPTIONS, GRADLE_OPTS, RUSTC_WRAPPER 같은 것)로 도구를 바꿔치기하는 것은 확인하지 않고,
+# container·services 의 env 도 보지 않는다. GitHub 이 GITHUB_* 같은 예약 이름과 한 줄 env:, 색인·공백 표현식을 어떻게 다루는지는
+# 확인하지 않았다(CI-1. 새 규칙은 거부만 더한다). 표현식은 secrets 와 github 문맥만 본다: inputs, vars, needs, steps(출력),
+# matrix, env, job, runner, strategy 문맥의 값은 보지 않는다. 표현식 범위는 ASCII 로 쓴 '${{' 와 github 만 본다(GitHub 의
+# 표현식 해석기는 확인하지 않았다). 단계 명령이 무엇을 하는지도 보지 않는다: 앞 단계가 게이트 스크립트를 고쳐 쓰거나
+# $GITHUB_ENV·$GITHUB_PATH·$GITHUB_OUTPUT 에 써서(예: BASH_ENV 설정) 뒤 단계를 바꾸는 것을 잡지 못하고,
 # container: 와 services: 도 보지 않는다(P1-01 리뷰 3회차 C3-R2). 줄 단위 점검기이므로 YAML 파서와 같다고
 # 보장하지 않는다: libyaml(Ruby Psych)과 비교한 구성만 확인했고, GitHub 의 파서는 확인하지 않았다. U+0085 가 아닌 C1 제어
 # 문자와 올바르지 않은 UTF-8 은 보지 않는다(줄 나눔을 바꾸지 않는다).
@@ -140,6 +168,9 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
     factory_line = "^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+bash scripts/gate/[A-Za-z0-9_-]+\\.sh[[:space:]]*$"
     ncmd = split(factory, cmd, " ")
     for (i = 1; i <= ncmd; i++) want[cmd[i]] = 1
+    # 표현식 범위 안에서 github 뒤에 올 수 있는 속성(P1-02, C5-R2). 이 밖의 속성, 색인, 공백, 문맥 통째 쓰기는 거부한다.
+    ngh = split("ref ref_name ref_type sha repository repository_owner run_id run_number run_attempt workflow job event_name server_url api_url", ghp, " ")
+    for (i = 1; i <= ngh; i++) gh_allowed[ghp[i]] = 1
     bad = 0
   }
   function report(ln, code, msg) {
@@ -164,6 +195,27 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
       return
     }
     if (v ~ /:([[:space:]]|$)/) unsupported("평범한 값 안의 콜론+공백 또는 끝의 콜론 (YAML 은 이것을 키로 읽거나 오류로 본다)")
+  }
+  # 표현식 범위 s(소문자) 안의 식별자 github 마다: 바로 뒤가 "." 과 허용 속성(식별자 경계까지)이어야 한다. 앞이
+  # [a-z0-9_.-] 이거나 뒤가 [a-z0-9_-] 인 github 는 다른 이름의 일부다(steps.github, $github_output, .github/). 첫 위반만 알린다.
+  function expr_github(s,    t, pos, p, c, prop) {
+    t = s
+    pos = 0
+    while (match(t, /github/)) {
+      p = pos + RSTART
+      t = substr(t, RSTART + 6)
+      pos = p + 5
+      c = (p > 1) ? substr(s, p - 1, 1) : ""
+      if (c != "" && c ~ /[a-z0-9_.-]/) continue
+      c = substr(s, p + 6, 1)
+      if (c != "" && c ~ /[a-z0-9_-]/) continue
+      prop = ""
+      if (c == "." && match(substr(s, p + 7), /^[a-z0-9_-]+/)) prop = substr(s, p + 7, RLENGTH)
+      if (!(prop in gh_allowed)) {
+        report(FNR, "FORBIDDEN_EXPR", "표현식 안의 github 는 github.<허용 속성> 으로만 쓴다 (허용: ref, ref_name, ref_type, sha, repository, repository_owner, run_id, run_number, run_attempt, workflow, job, event_name, server_url, api_url. 색인 github[...], 공백, toJSON(github), github.*, 그 밖의 속성은 거부한다. 지금: " substr(s, p, 24) ")")
+        return
+      }
+    }
   }
   function close_item() {
     if (item_checkout_line > 0 && !item_persist)
@@ -191,7 +243,7 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
     top_perm = 0; perm_line = 0; perm_entries = 0; perm_inline = 0; in_perm = 0
     item_indent = -1; item_checkout_line = 0; item_persist = 0
     item_key_col = -1; item_runs = 0; with_col = -1; with_child_col = -1
-    blk_col = -1; run_col = -1; blk_ind = -1; blk_lead = 0
+    blk_col = -1; run_col = -1; blk_ind = -1; blk_lead = 0; blk_expr = 0
     sd = 0
     nl = 0; pv_last = -1; pv_child = 0; pv_empty = -1; pv_bare = 0
   }
@@ -219,6 +271,10 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
     if (index(lline, "secrets.")) report(FNR, "FORBIDDEN_EXPR", "secrets. 참조를 쓰지 않는다 (이 워크플로는 비밀 값이 필요 없다. 대소문자 무시)")
     if (index(lline, "github.event.")) report(FNR, "FORBIDDEN_EXPR", "github.event. 표현식을 쓰지 않는다 (외부 입력이 셸에 들어간다. 대소문자 무시)")
     if (index(lline, "github.head_ref")) report(FNR, "FORBIDDEN_EXPR", "github.head_ref 를 쓰지 않는다 (외부 입력이 셸에 들어간다. 대소문자 무시)")
+    # 식별자 secrets 는 어떤 모양으로도(secrets[...], secrets [ ... ], toJSON(secrets), secrets.*, job 의 secrets: inherit)
+    # 어디에도(주석 포함) 없다(P1-02, C5-R2). 앞뒤가 [a-z0-9_-] 이면 다른 이름의 일부다(no-secrets, secrets_x).
+    if (lline ~ /(^|[^a-z0-9_-])secrets([^a-z0-9_-]|$)/)
+      report(FNR, "FORBIDDEN_EXPR", "식별자 secrets 를 쓰지 않는다 (색인, 공백, toJSON(secrets), secrets: inherit 도 거부한다. 주석 포함, 대소문자 무시)")
 
     match(line, /^ */)
     ind = RLENGTH
@@ -232,6 +288,13 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
     if (blk_col >= 0) {
       if (blank) {
         if (blk_ind < 0 && ind > blk_lead) blk_lead = ind
+        # 내용 열보다 앞의 탭(P1-02, C5-R4): libyaml 은 들여쓰기 자리의 탭을 오류로 본다. 내용 열의 탭과 그 뒤의 탭은
+        # 문자열이다(w148). 첫 내용 줄 앞의 빈 줄(내용 열을 아직 모른다)에서는 libyaml 이 어느 열의 탭이든 오류로 보므로
+        # 열과 상관없이 거부한다(P1-02).
+        if ((blk_ind < 0 || ind < blk_ind) && line ~ /^ *\t/) {
+          if (blk_ind < 0) unsupported("블록 스칼라의 첫 내용 줄 앞에 탭이 있는 빈 줄")
+          else unsupported("블록 스칼라 내용 열(" blk_ind " 열)보다 앞에 탭이 있는 빈 줄")
+        }
       } else if (ind <= blk_col || (blank_or_comment && blk_ind >= 0 && ind < blk_ind)) {
         blk_col = -1
       } else if (blk_ind < 0) {
@@ -241,6 +304,16 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
         unsupported("블록 스칼라 내용(" blk_ind " 열)보다 덜 들여 쓰고 그 키보다 깊은 줄")
       }
     }
+    # 표현식 범위(P1-02, C5-R2): 줄(주석 포함, 소문자)의 첫 "${{" 부터 줄 끝까지다. 따옴표는 해석하지 않는다(줄 끝까지 보므로
+    # 한 줄의 둘째 "${{" 와 따옴표 값 안의 "${{" 도 범위 안이다). 블록 스칼라(|, >) 내용에서는 "${{" 가 든 내용 줄 다음의 같은
+    # 블록 내용 줄 전체가 범위다(줄을 넘기는 표현식). 블록이 끝나거나 새 블록 머리가 오거나 새 파일이면 풀린다. 블록 밖에서는
+    # 줄을 넘기는 값(여러 줄 평범한 스칼라, 줄을 넘기는 따옴표 문자열)을 위의 규칙들이 이미 거부한다.
+    if (blk_col < 0) blk_expr = 0
+    escope = ""
+    if (blk_col >= 0 && blk_expr) escope = lline
+    else if ((ei = index(lline, "${{")) > 0) escope = substr(lline, ei)
+    if (blk_col >= 0 && index(lline, "${{")) blk_expr = 1
+    if (escope != "") expr_github(escope)
     if (!blank_or_comment && run_col >= 0 && ind <= run_col) run_col = -1
     # run 값의 표현식은 셸이 보기 전에 펼쳐진다. 주석처럼 보이는 줄도 run 값의 일부다.
     if (run_col >= 0 && ind > run_col && index(line, "${{"))
@@ -371,6 +444,7 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
       blk_col = haskey ? kcol : ind
       blk_ind = -1
       blk_lead = 0
+      blk_expr = 0
     }
 
     # 열린 키(값이 빈 키)의 쌓임 pk_col[1..sd], pk_key[1..sd]: 아래 줄들의 부모 키다. 열은 늘 깊어진다. "- " 줄은 그 "-" 열보다
@@ -385,6 +459,8 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
     # env: 바로 아래에 있는 "- " 가 아닌 키다. GitHub 은 이 키를 키워드가 아닌 변수 이름으로 읽는다. 이름이 env 인 job 의 키
     # (jobs.env 아래, sd == 2)와 container·services 의 env 는 예외가 아니다.
     env_name = (line !~ /^ *-( |$)/ && sd > 0 && pk_col[1] == 0 && ((sd == 1 && pk_key[1] == "env") || (sd == 3 && pk_key[1] == "jobs" && pk_key[3] == "env") || (sd == 4 && pk_key[1] == "jobs" && pk_key[3] == "steps" && pk_key[4] == "env")))
+    # env: 가 환경 변수 매핑인 자리(P1-02, C5-R1): 워크플로의 키(0 열), job 의 키(jobs.<job> 바로 아래), 단계의 키(step_key).
+    env_level = (step_key || (line !~ /^ *-( |$)/ && ((sd == 0 && kcol == 0) || (sd == 2 && pk_col[1] == 0 && pk_key[1] == "jobs"))))
 
     if (body ~ /^continue-on-error:([[:space:]]|$)/)
       report(FNR, "CONTINUE_ON_ERROR", "continue-on-error 를 두지 않는다 (실패한 단계나 job 이 실행을 실패시키지 않는다)")
@@ -445,6 +521,20 @@ LC_ALL=C awk -v sq="'" -v factory="$FACTORY_COMMANDS" -v wfdir="$WORKFLOW_DIR" '
     # 키가 이 검사를 지난다. 예외는 env_name(워크플로, job, 단계의 env: 바로 아래 변수 이름)이다.
     if (akey && key ~ /[A-Z]/ && !env_name)
       report(FNR, "KEY_NOT_LOWERCASE", "키 " key " 에 대문자가 있다 (키는 소문자로 쓴다. 대문자는 워크플로, job, 단계의 env: 바로 아래 변수 이름에만 받는다)")
+    # 셸, 동적 로더, 러너가 단계를 시작하거나 실행하는 방식을 바꾸는 환경 변수 이름(P1-02, C5-R1). bash 는 BASH_ENV 를 명령
+    # 치환까지 펼쳐 스크립트보다 먼저 읽으므로 한 줄로 모든 bash 단계(게이트 네 단계 포함)를 무력화한다. Windows 의 환경 변수
+    # 이름은 대소문자를 가리지 않으므로 소문자로 바꿔 비교한다. bash* 와 ld_, dyld_, github_, runner_, actions_, msys 로
+    # 시작하는 이름, 그리고 env, shellopts, posixly_correct, ps4, ifs, cdpath, globignore, execignore, path 를 거부한다.
+    # pathext 와 comspec 은 Windows 러너(windows-2025)의 명령 찾기(확장자)와 명령 해석기를 바꾼다(P1-02).
+    if (akey && env_name) {
+      lk = tolower(key)
+      if (lk ~ /^(bash|ld_|dyld_|github_|runner_|actions_|msys)/ || lk ~ /^(env|shellopts|posixly_correct|ps4|ifs|cdpath|globignore|execignore|path|pathext|comspec)$/)
+        report(FNR, "FORBIDDEN_ENV", "환경 변수 " key " 를 두지 않는다 (bash 시작·옵션 변수, LD_*·DYLD_* 로더 변수, GITHUB_*·RUNNER_*·ACTIONS_* 러너 변수, MSYS*, PATH, PATHEXT, COMSPEC 은 단계의 셸과 명령을 바꾼다. 대소문자 무시)")
+    }
+    # 워크플로, job, 단계의 env: 는 블록 매핑이어야 한다(P1-02, C5-R1): 한 줄 값(예: env: ${{ fromJSON(...) }})은 위 이름
+    # 검사가 보지 못하는 이름을 만든다.
+    if (akey && key == "env" && value != "" && env_level)
+      report(FNR, "FORBIDDEN_ENV", "env: 에 한 줄 값을 두지 않는다 (지금: " value ". 워크플로, job, 단계의 env: 는 이름: 값 줄의 블록 매핑으로만 쓴다)")
     if (akey && value != "") plain_check(value)
     else if (isdash && !akey && body != "") plain_check(body)
     # 닫는 따옴표 뒤에는 공백과 주석만 온다(작은따옴표 안의 두 작은따옴표는 따옴표 하나다).
@@ -550,4 +640,4 @@ if [ "$problems" -ne 0 ]; then
   echo "workflow-check: FAIL (파일 ${#files[@]} 개: ${files[*]})"
   exit 1
 fi
-echo "workflow-check: OK (파일 ${#files[@]} 개: ${files[*]}. SHA 고정, 최상위 contents: read, 금지 표현 없음, checkout persist-credentials: false, 모델 밖 문법·LF 가 아닌 줄바꿈·제어 문자 없음, 허용 목록 밖의 줄 모양·여러 줄 평범한 스칼라·맞지 않는 들여쓰기 없음, 중복 키 없음, 키는 소문자(env 변수 이름 말고), continue-on-error·if: 없음, shell: bash, run: 은 단계마다 하나, 단계 run 값에 \${{ 없음, 단계의 한 줄 run 인 팩토리 명령 네 줄)"
+echo "workflow-check: OK (파일 ${#files[@]} 개: ${files[*]}. SHA 고정, 최상위 contents: read, 금지 표현(식별자 secrets, 허용 속성 밖의 github 표현식 포함) 없음, 셸·로더·러너 시작과 Windows 명령 찾기 env 이름, 한 줄 env: 없음, checkout persist-credentials: false, 모델 밖 문법·LF 가 아닌 줄바꿈·제어 문자 없음, 허용 목록 밖의 줄 모양·여러 줄 평범한 스칼라·맞지 않는 들여쓰기 없음, 중복 키 없음, 키는 소문자(env 변수 이름 말고), continue-on-error·if: 없음, shell: bash, run: 은 단계마다 하나, 단계 run 값에 \${{ 없음, 단계의 한 줄 run 인 팩토리 명령 네 줄)"

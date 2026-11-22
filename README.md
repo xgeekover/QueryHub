@@ -12,7 +12,7 @@ SQL 을 저장하고 API 엔드포인트와 연결해, 외부 시스템이 HTTP 
 
 ## 현재 상태: Phase 0 완료, Phase 1 진행 중
 
-Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완료됐다. Phase 1 의 첫 태스크 P1-01(P0-D 리뷰 후속, 커밋 전)은 게이트의 두 점검기가 다루지 못하는 입력을 거부하게 한다. CI 워크플로는 정의만 했고 한 번도 실행되지 않았다(정의됨·미실행).
+Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완료됐다. Phase 1 의 첫 태스크 P1-01(P0-D 리뷰 후속, 99040c0, 2026-11-21)은 게이트의 두 점검기가 다루지 못하는 입력을 거부하게 했다. 둘째 태스크 P1-02(P1-01 리뷰 5회차 후속, 커밋 전)는 워크플로 점검이 셸 시작 env 이름과 더 많은 표현식 모양을 거부하게 하고, 데스크톱 셸의 포트 확인이 macOS 에서 연결 시간에 기대지 않게 했다(P101-T1). CI 워크플로는 정의만 했고 한 번도 실행되지 않았다(정의됨·미실행).
 
 | 구분 | 내용 |
 |---|---|
@@ -21,7 +21,8 @@ Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완�
 | 구현됨 (P0-C) | Tauri 2.11 데스크톱 셸(`desktop/`): 런타임 JAR 을 자식 프로세스로 자동 시작·중지·재시작, 상태 화면(React 19 + shadcn/ui), 앱 종료 시 런타임 정지, 런타임의 부모 프로세스 감시(`QUERYHUB_DESKTOP_PARENT_PID`), desktop 프로파일의 관리 API CORS, 게이트의 desktop 단계(vitest, cargo test 판정기 `cargo-test-check.sh`, Tauri 버전 고정 검사) |
 | 문서 기준선 (51141df) | `docs/` 의 요구사항, 아키텍처, ADR 19건, ERD, API 명세, DB 지원, 보안, 배포, 테스트 계획, 백로그와 루트의 `CHANGELOG.md` |
 | 구현됨 (P0-D, d0b0f0f) | CI 워크플로 `.github/workflows/ci.yml`(**정의됨·미실행**: 원격 저장소가 없어 한 번도 실행되지 않았다, [ADR-020](docs/ADR/ADR-020-ci-runs-gate-scripts.md)), 게이트의 `--desktop-only`, 문서 점검 `docs-check.sh`, 워크플로 점검 `workflow-check.sh`, `selftest.sh --no-skip`, stdout 만 읽는 Docker 사전 점검, Windows `Path` 처리(미검증), ADR 은 모두 20건, [Phase 0 보고](docs/PHASE0-REPORT.md) |
-| 구현됨 (P1-01, 커밋 전) | P0-D 리뷰 후속 R1–R7. `workflow-check.sh` 는 YAML 파서가 아니므로 줄 단위로 다룰 수 없는 문법, 허용 목록 밖의 줄 모양, 여러 줄에 걸친 평범한 스칼라와 LF 가 아닌 줄바꿈 문자를 거부하고(`[UNSUPPORTED_SYNTAX]`), 같은 매핑의 같은 키(`[DUPLICATE_KEY]`), 대문자가 든 키(`[KEY_NOT_LOWERCASE]`, `env:` 변수 이름 말고), `continue-on-error`, `if:`, bash 가 아닌 `shell:`, 단계 밖의 `run:`(`[RUN_KEY]`), run 값 안의 `${{ }}` 를 거부하며, checkout 의 `persist-credentials: false` 는 그 단계의 `with:` 바로 아래만 센다. `docs-check.sh` 는 저장소 루트 밖으로 나가는 상대 링크를 깨진 링크로 센다. 두 점검기가 잡는 것과 잡지 못하는 것은 [SECURITY.md](docs/SECURITY.md)와 [TEST_PLAN.md](docs/TEST_PLAN.md)에 있다 |
+| 구현됨 (P1-01, 99040c0) | P0-D 리뷰 후속 R1–R7. `workflow-check.sh` 는 YAML 파서가 아니므로 줄 단위로 다룰 수 없는 문법, 허용 목록 밖의 줄 모양, 여러 줄에 걸친 평범한 스칼라와 LF 가 아닌 줄바꿈 문자를 거부하고(`[UNSUPPORTED_SYNTAX]`), 같은 매핑의 같은 키(`[DUPLICATE_KEY]`), 대문자가 든 키(`[KEY_NOT_LOWERCASE]`, `env:` 변수 이름 말고), `continue-on-error`, `if:`, bash 가 아닌 `shell:`, 단계 밖의 `run:`(`[RUN_KEY]`), run 값 안의 `${{ }}` 를 거부하며, checkout 의 `persist-credentials: false` 는 그 단계의 `with:` 바로 아래만 센다. `docs-check.sh` 는 저장소 루트 밖으로 나가는 상대 링크를 깨진 링크로 센다. 두 점검기가 잡는 것과 잡지 못하는 것은 [SECURITY.md](docs/SECURITY.md)와 [TEST_PLAN.md](docs/TEST_PLAN.md)에 있다 |
+| 구현됨 (P1-02, 커밋 전) | P1-01 리뷰 5회차 후속 C5-R1–R4 와 P101-T1, P0C-C2-1. `workflow-check.sh` 는 워크플로·job·단계 `env:` 의 셸·로더·러너 시작 변수 이름과 Windows 명령 찾기 변수(`BASH_ENV`, `PATH`, `PATHEXT`, `COMSPEC` 등)와 한 줄 `env:` 값(`[FORBIDDEN_ENV]`), 식별자 `secrets` 와 허용 속성 밖의 `github` 표현식(`[FORBIDDEN_EXPR]`), 블록 스칼라 안 빈 줄의 내용 열 앞 탭(`[UNSUPPORTED_SYNTAX]`)을 거부한다. 데스크톱 셸의 포트 확인(`launch::port_is_free`)은 macOS 에서 0.0.0.0·[::] 리스너를 바인딩만 하는 시험으로 찾고, TCP 자기 연결은 비어 있다로 본다(Windows 는 자기 연결 예외만 바뀌었고 미검증이다, PLAT-1). 남은 한계는 [SECURITY.md](docs/SECURITY.md)와 [TEST_PLAN.md](docs/TEST_PLAN.md)에 있다 |
 | 계획 | DB 연결과 Provider 4종·관리자 토큰·보안·비밀번호 암호화(Phase 1), SQL 저장소(Phase 2), API 관리(Phase 3), API 런타임·API Key(Phase 4), Export(Phase 5), Desktop UI·Metadata DB 접속 화면·운영 지표 화면(Phase 6), 모니터링과 운영 지표 수집(Phase 7), 배포·Dockerfile(Phase 8) |
 
 Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#phase-계획), 태스크별 변경과 테스트 수는 [CHANGELOG.md](CHANGELOG.md), 남은 문제는 [docs/BACKLOG.md](docs/BACKLOG.md), Phase 0 의 결과·사람의 결정·미검증 항목은 [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md)에 있다.

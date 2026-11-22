@@ -8,9 +8,36 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 은 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰의 후속이다.
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다.
 
-#### P1-01 P0-D 리뷰 후속: 점검기의 실패 닫힘 (커밋 전)
+#### P1-02 P1-01 리뷰 5회차 후속과 포트 확인 (커밋 전)
+
+##### 추가
+
+- `workflow-check.sh` 의 새 코드 `FORBIDDEN_ENV`(P1-01 리뷰 5회차 C5-R1): 워크플로·job·단계 `env:` 바로 아래 변수 이름(대소문자 무시) 가운데 bash 로 시작하는 이름(`BASH_ENV`, `BASHOPTS`, `BASH_FUNC_*` 등), `LD_`·`DYLD_`·`GITHUB_`·`RUNNER_`·`ACTIONS_`·`MSYS` 로 시작하는 이름, `ENV`, `SHELLOPTS`, `POSIXLY_CORRECT`, `PS4`, `IFS`, `CDPATH`, `GLOBIGNORE`, `EXECIGNORE`, `PATH`, `PATHEXT`, `COMSPEC` 를 거부한다. 같은 세 자리의 한 줄 `env:` 값(`env: ${{ fromJSON(...) }}`)도 거부한다. `env:` 는 `이름: 값` 줄의 블록 매핑으로만 쓴다.
+- `selftest.sh` 의 새 시나리오 52개 (w149)-(w200): `FORBIDDEN_ENV` 거부 28개, `FORBIDDEN_EXPR` 거부 16개, `UNSUPPORTED_SYNTAX` 거부 5개, 받는 픽스처 3개(w173, w190, w200). 99040c0 의 점검기는 새 거부 픽스처 49개를 모두 받는다(exit 0). `PATHEXT`·`COMSPEC` 과 첫 내용 줄 앞 빈 줄의 탭 규칙을 더하기 전의 점검기는 (w193)-(w199) 7개를 받는다.
+- `launch.rs` 의 단위 테스트 6건(P101-T1, P0C-C2-1): 연결을 시간 초과로 바꿔 끼워도 0.0.0.0 리스너(a), [::] 리스너(b), 127.0.0.1 리스너(c)가 있는 포트는 사용 중이고, 빈 포트는 시간 초과와 거부 모두에서 비어 있으며(d), 자기 연결은 비어 있고 다른 소켓과의 연결은 사용 중이고(e), 서버 쪽 TIME_WAIT 만 남은 포트는 비어 있다(f). (a), (b), (f) 는 `#[cfg(not(windows))]` 다.
+
+##### 변경
+
+- `workflow-check.sh` 의 `FORBIDDEN_EXPR`(C5-R2): 원래의 세 부분 문자열 검사(`secrets.`, `github.event.`, `github.head_ref`)는 그대로 두고, 식별자 `secrets`(`secrets['X']`, `toJSON(secrets)`, job 의 `secrets: inherit`)를 주석을 포함한 어디서나 거부한다. 표현식 범위(줄의 첫 `${{` 부터 줄 끝까지. 블록 스칼라에서는 `${{` 가 든 내용 줄 다음의 같은 블록 내용 줄 전체) 안의 식별자 `github` 는 바로 뒤에 `.` 과 허용 속성(`ref`, `ref_name`, `ref_type`, `sha`, `repository`, `repository_owner`, `run_id`, `run_number`, `run_attempt`, `workflow`, `job`, `event_name`, `server_url`, `api_url`)이 와야 한다. 그래서 `github['event']`, `github . event`, `toJSON(github)`, `github.*`, `format('{0}', github)`, `github.token`, `github.actor` 를 거부한다. 범위 밖의 GitHub, `https://github.com`, `$GITHUB_OUTPUT`, `.github/` 경로는 받는다.
+- `launch::port_is_free`(P101-T1): 127.0.0.1 바인딩(그대로) 다음에, macOS 에서만 0.0.0.0 과 [::] 에 SO_REUSEADDR 를 켠 libc 소켓을 바인딩만 하고(listen 하지 않는다) 닫으며 EADDRINUSE 면 사용 중으로 본다. 그 다음의 300 ms 연결 시험은 그대로이고 연결 실패(시간 초과 포함)는 비어 있다. Linux 는 2 단계를 두지 않았고 Windows 는 자기 연결 예외만 바뀌었다(둘 다 미검증, CI-1, PLAT-1).
+- 문서: P1-01 을 아직 커밋하지 않은 것으로 적던 곳을 99040c0 (2026-11-21) 로 바꿨다(`CHANGELOG.md`, `README.md`, `docs/BACKLOG.md`, `docs/TEST_PLAN.md`, ADR-019). ADR-019 의 P1-01 항목에 리뷰 3회차의 규칙(`KEY_NOT_LOWERCASE`, 대소문자를 가리지 않는 `FORBIDDEN_TRIGGER`·`FORBIDDEN_EXPR`·`LATEST_RUNNER`, 빈 줄·주석 줄의 탭)을 더했다(C5-R3). `docs/BACKLOG.md` 에서 P101-T1 과 P0C-C2-1 을 닫았다. `docs/SECURITY.md`, `docs/TEST_PLAN.md`, ADR-019, ADR-020 에 새 규칙과 남은 한계를 적었다.
+
+##### 수정
+
+- macOS 에서 다른 프로세스의 0.0.0.0·[::] 리스너를 찾는 것이 루프백 연결 시간에 기댔다(P101-T1). 이제 바인딩만 하는 시험이 연결 시간과 상관없이 찾는다. 그 시험을 false 로 바꾼 임시 사본에서 (a), (b) 가 실패하는 것을 확인했다(macOS 로컬). 원래 실패의 원인(부하 아래의 연결 시간 초과)은 여전히 추정이다.
+- 포트 확인의 연결 시험이 TCP 자기 연결(로컬 주소와 상대 주소가 같다)을 사용 중으로 읽을 수 있었다(P0C-C2-1). 이제 자기 연결은 비어 있다로 본다.
+- `workflow-check.sh` 는 블록 스칼라 안의 공백·탭만 있는 줄에서 내용 열보다 앞의 탭을 받았다(C5-R4). 이제 `UNSUPPORTED_SYNTAX` 다. 첫 내용 줄 앞의 빈 줄(내용 열을 아직 모른다)에 있는 탭은 열과 상관없이 거부한다(libyaml 0.2.1 이 거부하는 것을 Ruby Psych 로 확인했다).
+
+##### 보안
+
+- bash 는 `BASH_ENV` 를 명령 치환까지 펼쳐 스크립트보다 먼저 읽으므로, 워크플로 `env:` 의 `BASH_ENV: $(...)` 한 줄이 게이트 네 단계를 실행하지 않고 exit 0 으로 끝낼 수 있었다(리뷰어가 로컬 bash 로 재현). `FORBIDDEN_ENV` 는 이런 셸·로더·러너 시작 변수, `PATH`(`run: bash scripts/gate/...` 의 bash 를 고른다), Windows 러너(windows-2025)의 명령 찾기를 바꾸는 `PATHEXT`·`COMSPEC`, 이름을 만들어 내는 한 줄 `env:` 를 거부한다.
+- 남은 한계: `FORBIDDEN_ENV` 밖의 env 이름(`HOME`, `TMPDIR`, `LANG`·`LC_*`, `JAVA_TOOL_OPTIONS`·`NODE_OPTIONS`·`GRADLE_OPTS`·`RUSTC_WRAPPER` 같은 도구 옵션 변수)으로 도구를 바꿔치기하는 것과 `container:`·`services:` 의 env 는 확인하지 않는다. 앞 단계가 `$GITHUB_ENV`·`$GITHUB_PATH`·`$GITHUB_OUTPUT` 에 써서 뒤 단계를 바꾸는 것도 잡지 못한다. 표현식은 `secrets` 와 `github` 문맥만 본다: `inputs`, `vars`, `needs`, `steps`, `matrix`, `env`, `job`, `runner`, `strategy` 문맥의 값은 보지 않는다. GitHub 이 색인·공백 표현식, 한 줄 `env:`, `GITHUB_*` 같은 예약 이름을 어떻게 다루는지는 확인하지 않았다(CI-1. 새 규칙은 거부만 더한다). 한계는 [docs/SECURITY.md](docs/SECURITY.md)와 [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 「lint 의 저장소 단계」에 있다.
+
+테스트 (macOS 로컬의 게이트 실행): runtime 단위 300, vitest 30, cargo test 38, 통합 23. 모두 통과, 건너뜀 0. selftest 279 시나리오(P1-01 의 227, 새로 52), SKIP 0. cargo test 의 새 테스트 6건은 macOS 에서 돌았고, Linux 와 Windows 에서는 실행하지 않았다(Windows 에서는 (a), (b), (f) 가 컴파일되지 않는다). 점검기의 awk 는 macOS `/usr/bin/awk` 에서만 돌렸다(mawk, gawk 는 CI-1 전까지 미검증). CI 는 실행되지 않았다(CI-1).
+
+#### P1-01 P0-D 리뷰 후속: 점검기의 실패 닫힘 — 99040c0 (2026-11-21)
 
 ##### 추가
 

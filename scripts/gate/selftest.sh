@@ -1280,6 +1280,162 @@ expect_run reject '[UNSUPPORTED_SYNTAX]' '(w147) 공백과 탭만 있는 줄' wf
 expect_run pass 'workflow-check: OK' '(w148) 받는 모양(4회차): 워크플로·job·단계 env: 의 대문자 변수 이름, 이름이 env 인 job 의 env, 블록 스칼라 내용 안의 탭' \
   wf_check c4-env-names
 
+# ---- P1-02 (리뷰 C5-R1, C5-R2, C5-R4): 시작 env 이름과 한 줄 env:, 색인·공백·문맥 통째·여러 줄 표현식, 블록 안의 내용 열 앞 탭 ----
+# 아래 픽스처의 이름은 모두 c5- 로 시작한다. 99040c0 의 점검기는 아래 거부 픽스처를 모두 받는다(exit 0).
+# C5-R1: bash 는 BASH_ENV 를 명령 치환까지 펼쳐 스크립트보다 먼저 읽는다(리뷰어 재현: exit 3 인 단계가 실행되지 않고 exit 0).
+#   셸·로더·러너 시작 변수 이름은 워크플로, job, 단계의 env: 어디서나 FORBIDDEN_ENV 다(대소문자 무시).
+wf_bytes c5-env-top-bashenv 'jobs:' 'env:\n  BASH_ENV: $(printf \045s "exit 0" > "$RUNNER_TEMP/n.sh"; echo "$RUNNER_TEMP/n.sh")\njobs:\n'
+wf_bytes c5-env-job-bashenv "$WJ" "$WJ"'\n    env:\n      BASH_ENV: scripts/gate/lib.sh\n'
+wf_bytes c5-env-step-bashenv "$WB" "$WB"'\n        env:\n          BASH_ENV: scripts/gate/lib.sh\n'
+wf_bytes c5-env-step-lower "$WB" "$WB"'\n        env:\n          bash_env: scripts/gate/lib.sh\n'
+c5_env_names="ENV SHELLOPTS POSIXLY_CORRECT PS4 IFS CDPATH GLOBIGNORE EXECIGNORE PATH BASHOPTS LD_PRELOAD DYLD_INSERT_LIBRARIES GITHUB_ENV RUNNER_TEMP ACTIONS_ALLOW_UNSECURE_COMMANDS MSYS"
+for c5_name in $c5_env_names; do
+  wf_bytes "c5-env-name-$c5_name" "$WB" "$WB"'\n        env:\n          '"$c5_name"': x\n'
+done
+# Windows 의 대소문자가 섞인 Path (디렉터리 이름은 대소문자를 가리지 않는 파일 시스템에서 PATH 와 겹치지 않게 따로 짓는다)
+wf_bytes c5-env-mixed-path "$WB" "$WB"'\n        env:\n          Path: x\n'
+# 한 줄 env: 값은 이름 검사가 보지 못하는 이름을 만든다(워크플로, job, 단계).
+wf_bytes c5-env-inline-top 'jobs:' 'env: ${{ fromJSON(\047{"BASH_ENV":"x"}\047) }}\njobs:\n'
+wf_bytes c5-env-inline-job "$WJ" "$WJ"'\n    env: ${{ fromJSON(\047{"BASH_ENV":"x"}\047) }}\n'
+wf_bytes c5-env-inline-step "$WB" "$WB"'\n        env: ${{ fromJSON(\047{"BASH_ENV":"x"}\047) }}\n'
+# 받는 모양: 금지 이름을 품기만 한 이름과 주석만 붙은 env:
+mkdir -p "$WF_WORK/c5-env-names-ok/.github/workflows"
+cat >"$WF_WORK/c5-env-names-ok/.github/workflows/ci.yml" <<EOF
+name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+env:
+  NOT_BASH_ENV: x
+  MY_LD_PRELOAD: x
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    env: # job env
+      ENVIRONMENT: x
+      XPATH: x
+    steps:
+      - name: Checkout
+        uses: actions/checkout@$WF_SHA # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash scripts/gate/build.sh
+      - run: bash scripts/gate/test.sh
+      - run: bash scripts/gate/lint.sh
+      - run: bash scripts/gate/integration.sh
+      - name: reserved words inside longer names
+        env:
+          XBASH: x
+          MY_GITHUB_X: x
+          PATH_X: x
+          ENV_X: x
+          IFS2: x
+        run: echo ok
+EOF
+# C5-R2: job env 값의 색인, 공백, 문맥 통째 쓰기, 허용 목록 밖의 속성, 줄을 넘기는 표현식(99040c0 은 점 표기만 찾았다)
+wf_bytes c5-expr-secrets-index "$WJ" "$WJ"'\n    env:\n      T: ${{ secrets[\047GITHUB_TOKEN\047] }}\n'
+wf_bytes c5-expr-event-index "$WJ" "$WJ"'\n    env:\n      T: ${{ github[\047event\047][\047pull_request\047][\047title\047] }}\n'
+wf_bytes c5-expr-event-spaces "$WJ" "$WJ"'\n    env:\n      T: ${{ github . event . pull_request . title }}\n'
+wf_bytes c5-expr-tojson-github "$WJ" "$WJ"'\n    env:\n      T: ${{ toJSON(github) }}\n'
+wf_bytes c5-expr-headref-index "$WJ" "$WJ"'\n    env:\n      T: ${{ github[\047head_ref\047] }}\n'
+wf_bytes c5-expr-tojson-secrets "$WJ" "$WJ"'\n    env:\n      T: ${{ toJSON(secrets) }}\n'
+wf_root c5-expr-secrets-inherit
+wf_add c5-expr-secrets-inherit <<EOF
+  reusable:
+    uses: octo-org/octo-repo/.github/workflows/reusable.yml@$WF_SHA # v1.0.0
+    secrets: inherit
+EOF
+wf_bytes c5-expr-github-star "$WJ" "$WJ"'\n    env:\n      T: ${{ toJSON(github.*) }}\n'
+wf_bytes c5-expr-token "$WJ" "$WJ"'\n    env:\n      T: ${{ github.token }}\n'
+wf_bytes c5-expr-tojson-event "$WJ" "$WJ"'\n    env:\n      T: ${{ toJSON(github.event) }}\n'
+wf_bytes c5-expr-format-github "$WJ" "$WJ"'\n    env:\n      T: ${{ format(\047{0}\047, github) }}\n'
+wf_bytes c5-expr-actor "$WJ" "$WJ"'\n    env:\n      T: ${{ github.actor }}\n'
+wf_bytes c5-expr-two-line "$WJ" "$WJ"'\n    env:\n      T: |\n        ${{ toJSON(\n        github) }}\n'
+# 범위는 첫 "${{" 부터 줄 끝까지다: 한 줄의 둘째 표현식, 따옴표 값 안의 표현식. 접는 블록(>-)은 빈 줄을 지나서도 범위다.
+wf_bytes c5-expr-second "$WJ" "$WJ"'\n    env:\n      T: ${{ github.sha }}-${{ github.actor }}\n'
+wf_bytes c5-expr-quoted "$WJ" "$WJ"'\n    env:\n      T: "x ${{ github.actor }}"\n'
+wf_bytes c5-expr-folded "$WJ" "$WJ"'\n    env:\n      T: >-\n        ${{ toJSON(\n\n        github.event) }}\n'
+# 받는 모양: 허용 속성, format 의 인자, 표현식 밖의 GitHub·https://github.com·$GITHUB_OUTPUT·.github/ 경로, 새 블록에서 풀리는 범위
+wf_bytes c5-expr-ok "$WJ" "$WJ"'\n    # GitHub: https://github.com\n    env:\n      SHA: ${{ github.sha }}\n      TAG: ${{ format(\047{0}-{1}\047, github.ref_name, runner.os) }}\n      EVENT: ${{ github.event_name }}\n      LIST: |\n        ${{ github.repository }}\n        ${{ github.run_id }}\n      NOTE: |\n        GitHub https://github.com .github/workflows\n'
+wf_add c5-expr-ok <<'EOF'
+      - name: github words outside expressions
+        run: |
+          # GitHub: https://github.com
+          echo "https://github.com/owner/repo" >>"$GITHUB_OUTPUT"
+          ls .github/workflows
+EOF
+# C5-R4: 'run: |' 블록(내용 열 10) 안의 공백·탭만 있는 줄에서 내용 열보다 앞의 탭(libyaml 은 오류로 본다)
+wf_root c5-tab-col0-in-block
+printf '      - name: tab only line\n        run: |\n          echo a\n\t\n          echo b\n' | wf_add c5-tab-col0-in-block
+wf_root c5-tab-col4-in-block
+printf '      - name: tab after four spaces\n        run: |\n          echo a\n    \t\n          echo b\n' | wf_add c5-tab-col4-in-block
+
+expect_run reject '[FORBIDDEN_ENV]' "(w149) 워크플로 env: 의 BASH_ENV: \$(printf ... > \$RUNNER_TEMP/n.sh; echo ...) (리뷰어 재현)" wf_check c5-env-top-bashenv
+expect_run reject '[FORBIDDEN_ENV]' '(w150) job env: 의 BASH_ENV' wf_check c5-env-job-bashenv
+expect_run reject '[FORBIDDEN_ENV]' '(w151) build.sh 단계 env: 의 BASH_ENV' wf_check c5-env-step-bashenv
+expect_run reject '[FORBIDDEN_ENV]' '(w152) 단계 env: 의 소문자 bash_env' wf_check c5-env-step-lower
+c5_n=153
+for c5_name in $c5_env_names; do
+  expect_run reject '[FORBIDDEN_ENV]' "(w$c5_n) 단계 env: 의 $c5_name" wf_check "c5-env-name-$c5_name"
+  c5_n=$((c5_n + 1))
+done
+expect_run reject '[FORBIDDEN_ENV]' '(w169) 단계 env: 의 대소문자가 섞인 Path' wf_check c5-env-mixed-path
+expect_run reject '[FORBIDDEN_ENV]' "(w170) 워크플로의 한 줄 env: \${{ fromJSON(...) }}" wf_check c5-env-inline-top
+expect_run reject '[FORBIDDEN_ENV]' "(w171) job 의 한 줄 env: \${{ fromJSON(...) }}" wf_check c5-env-inline-job
+expect_run reject '[FORBIDDEN_ENV]' "(w172) 단계의 한 줄 env: \${{ fromJSON(...) }}" wf_check c5-env-inline-step
+expect_run pass 'workflow-check: OK' '(w173) 받는 env 이름: NOT_BASH_ENV, MY_LD_PRELOAD, ENVIRONMENT, XPATH, XBASH, MY_GITHUB_X, PATH_X, ENV_X, IFS2 와 주석만 붙은 env:' \
+  wf_check c5-env-names-ok
+expect_run reject '[FORBIDDEN_EXPR]' "(w174) job env 의 \${{ secrets['GITHUB_TOKEN'] }}" wf_check c5-expr-secrets-index
+expect_run reject '[FORBIDDEN_EXPR]' "(w175) job env 의 \${{ github['event']['pull_request']['title'] }}" wf_check c5-expr-event-index
+expect_run reject '[FORBIDDEN_EXPR]' "(w176) job env 의 \${{ github . event . pull_request . title }}" wf_check c5-expr-event-spaces
+expect_run reject '[FORBIDDEN_EXPR]' "(w177) job env 의 \${{ toJSON(github) }}" wf_check c5-expr-tojson-github
+expect_run reject '[FORBIDDEN_EXPR]' "(w178) job env 의 \${{ github['head_ref'] }}" wf_check c5-expr-headref-index
+expect_run reject '[FORBIDDEN_EXPR]' "(w179) job env 의 \${{ toJSON(secrets) }}" wf_check c5-expr-tojson-secrets
+expect_run reject '[FORBIDDEN_EXPR]' '(w180) 재사용 워크플로 job 의 secrets: inherit' wf_check c5-expr-secrets-inherit
+expect_run reject '[FORBIDDEN_EXPR]' "(w181) job env 의 \${{ toJSON(github.*) }}" wf_check c5-expr-github-star
+expect_run reject '[FORBIDDEN_EXPR]' "(w182) job env 의 \${{ github.token }}" wf_check c5-expr-token
+expect_run reject '[FORBIDDEN_EXPR]' "(w183) job env 의 \${{ toJSON(github.event) }}" wf_check c5-expr-tojson-event
+expect_run reject '[FORBIDDEN_EXPR]' "(w184) job env 의 \${{ format('{0}', github) }}" wf_check c5-expr-format-github
+expect_run reject '[FORBIDDEN_EXPR]' "(w185) job env 의 \${{ github.actor }} (허용 목록 밖의 속성)" wf_check c5-expr-actor
+expect_run reject '[FORBIDDEN_EXPR]' "(w186) env 블록 스칼라에서 두 줄에 걸친 \${{ toJSON( / github) }}" wf_check c5-expr-two-line
+expect_run reject '[FORBIDDEN_EXPR]' "(w187) 한 줄의 둘째 표현식 \${{ github.sha }}-\${{ github.actor }}" wf_check c5-expr-second
+expect_run reject '[FORBIDDEN_EXPR]' "(w188) 큰따옴표 값 안의 \${{ github.actor }}" wf_check c5-expr-quoted
+expect_run reject '[FORBIDDEN_EXPR]' "(w189) 접는 블록(>-)에서 빈 줄을 사이에 둔 \${{ toJSON( / github.event) }}" wf_check c5-expr-folded
+expect_run pass 'workflow-check: OK' "(w190) 받는 표현식과 낱말: github.sha, format('{0}-{1}', github.ref_name, runner.os), github.event_name, 블록의 github.repository·run_id, 표현식 밖의 GitHub·https://github.com·\$GITHUB_OUTPUT·.github/" \
+  wf_check c5-expr-ok
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w191) 'run: |' 블록(내용 열 10) 안의 0 열 탭만 있는 줄" wf_check c5-tab-col0-in-block
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w192) 'run: |' 블록(내용 열 10) 안의 공백 네 개와 탭만 있는 줄" wf_check c5-tab-col4-in-block
+
+# ---- P1-02 실행 B (Queen 결정): Windows 명령 찾기 env 이름과 블록 스칼라의 첫 내용 줄 앞 빈 줄의 탭 ----
+# 99040c0 와 실행 A 의 점검기는 아래 거부 픽스처를 모두 받는다(exit 0).
+# PATHEXT 와 COMSPEC 은 Windows 러너(windows-2025)의 명령 찾기(확장자)와 명령 해석기를 바꾼다. Windows 는 ComSpec 으로 쓴다.
+wf_bytes c5-env-name-PATHEXT "$WB" "$WB"'\n        env:\n          PATHEXT: .JS;.EXE\n'
+wf_bytes c5-env-name-COMSPEC "$WB" "$WB"'\n        env:\n          COMSPEC: x\n'
+wf_bytes c5-env-job-comspec "$WJ" "$WJ"'\n    env:\n      ComSpec: x\n'
+wf_bytes c5-env-top-pathext 'jobs:' 'env:\n  PathExt: .JS\njobs:\n'
+# 첫 내용 줄 앞(내용 열을 아직 모른다)의 빈 줄에 있는 탭: libyaml 은 열과 상관없이 오류로 본다.
+wf_root c5-tab-lead-col0
+printf '      - name: tab before the first content line\n        run: |\n\t\n          echo a\n' | wf_add c5-tab-lead-col0
+wf_root c5-tab-lead-col4
+printf '      - name: four spaces and a tab before the first content line\n        run: |\n    \t\n          echo a\n' | wf_add c5-tab-lead-col4
+wf_root c5-tab-lead-col10
+printf '      - name: tab at the later content column before the first content line\n        run: |\n          \t\n          echo a\n' | wf_add c5-tab-lead-col10
+# 받는 모양: 금지 이름을 품기만 한 이름, 공백만 있는 앞쪽 빈 줄, 내용 열을 안 뒤 내용 열의 탭
+wf_bytes c5-runb-ok "$WB" "$WB"'\n        env:\n          PATHEXT_X: x\n          MY_COMSPEC: x\n          COMSPECS: x\n'
+printf '      - name: blank lines\n        run: |\n    \n          echo a\n          \t\n          echo b\n' | wf_add c5-runb-ok
+
+expect_run reject '[FORBIDDEN_ENV]' '(w193) 단계 env: 의 PATHEXT' wf_check c5-env-name-PATHEXT
+expect_run reject '[FORBIDDEN_ENV]' '(w194) 단계 env: 의 COMSPEC' wf_check c5-env-name-COMSPEC
+expect_run reject '[FORBIDDEN_ENV]' '(w195) job env: 의 ComSpec (Windows 의 표기)' wf_check c5-env-job-comspec
+expect_run reject '[FORBIDDEN_ENV]' '(w196) 워크플로 env: 의 PathExt' wf_check c5-env-top-pathext
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w197) 'run: |' 블록의 첫 내용 줄 앞에 0 열 탭만 있는 빈 줄" wf_check c5-tab-lead-col0
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w198) 'run: |' 블록의 첫 내용 줄 앞에 공백 네 개와 탭만 있는 빈 줄" wf_check c5-tab-lead-col4
+expect_run reject '[UNSUPPORTED_SYNTAX]' "(w199) 'run: |' 블록의 첫 내용 줄 앞에 공백 열 개(뒤의 내용 열)와 탭만 있는 빈 줄" wf_check c5-tab-lead-col10
+expect_run pass 'workflow-check: OK' '(w200) 받는 모양(실행 B): PATHEXT_X, MY_COMSPEC, COMSPECS, 공백만 있는 앞쪽 빈 줄, 내용 열을 안 뒤 내용 열의 탭' \
+  wf_check c5-runb-ok
+
 if [ "$unmet" -ne 0 ]; then
   echo "selftest: FAIL ($unmet 개 시나리오가 기대와 다르다)"
   exit 1
