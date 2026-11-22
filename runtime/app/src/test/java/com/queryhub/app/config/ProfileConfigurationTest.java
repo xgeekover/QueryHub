@@ -2,6 +2,8 @@ package com.queryhub.app.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.queryhub.adapter.web.admin.security.AdminAccessPolicy;
+import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.WithoutMetadataDatabase;
 import com.queryhub.application.runtime.GetRuntimeInfoUseCase;
 import com.queryhub.domain.runtime.RuntimeMode;
@@ -22,13 +24,16 @@ import org.springframework.test.context.ActiveProfiles;
 class ProfileConfigurationTest {
 
   @Nested
-  @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+  @SpringBootTest(
+      webEnvironment = SpringBootTest.WebEnvironment.NONE,
+      properties = TestAdminToken.PROPERTY)
   @ActiveProfiles("desktop")
   @WithoutMetadataDatabase
   class DesktopProfile {
 
     @Autowired private Environment environment;
     @Autowired private GetRuntimeInfoUseCase runtimeInfo;
+    @Autowired private AdminAccessPolicy policy;
 
     @Test
     void bindsLoopbackOnDesktopPort() {
@@ -36,16 +41,29 @@ class ProfileConfigurationTest {
       assertThat(environment.getProperty("server.port")).isEqualTo("18580");
       assertThat(runtimeInfo.getRuntimeInfo().mode()).isEqualTo(RuntimeMode.DESKTOP);
     }
+
+    @Test
+    void adminAcceptsLoopbackOnlyAndChecksTheHost() {
+      // P1-03 AC6: desktop 의 기본값.
+      assertThat(environment.getProperty("queryhub.admin.allow-remote")).isEqualTo("false");
+      assertThat(environment.getProperty("server.forward-headers-strategy")).isEqualTo("none");
+      assertThat(policy.allowRemote()).isFalse();
+      assertThat(policy.hostCheck()).isTrue();
+      assertThat(policy.hosts().allowedNames()).containsExactly("localhost", "127.0.0.1", "[::1]");
+    }
   }
 
   @Nested
-  @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+  @SpringBootTest(
+      webEnvironment = SpringBootTest.WebEnvironment.NONE,
+      properties = TestAdminToken.PROPERTY)
   @ActiveProfiles("server")
   @WithoutMetadataDatabase
   class ServerProfile {
 
     @Autowired private Environment environment;
     @Autowired private GetRuntimeInfoUseCase runtimeInfo;
+    @Autowired private AdminAccessPolicy policy;
 
     @Test
     void bindsAllInterfacesOnServerPort() {
@@ -53,15 +71,27 @@ class ProfileConfigurationTest {
       assertThat(environment.getProperty("server.port")).isEqualTo("8080");
       assertThat(runtimeInfo.getRuntimeInfo().mode()).isEqualTo(RuntimeMode.SERVER);
     }
+
+    @Test
+    void adminAllowsRemoteAndSkipsTheHostCheckByDefault() {
+      // P1-03 AC6, AC7: server 의 기본값. 토큰은 그대로 필요하다.
+      assertThat(environment.getProperty("queryhub.admin.allow-remote")).isEqualTo("true");
+      assertThat(environment.getProperty("server.forward-headers-strategy")).isEqualTo("none");
+      assertThat(policy.allowRemote()).isTrue();
+      assertThat(policy.hostCheck()).isFalse();
+    }
   }
 
   @Nested
-  @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+  @SpringBootTest(
+      webEnvironment = SpringBootTest.WebEnvironment.NONE,
+      properties = TestAdminToken.PROPERTY)
   @WithoutMetadataDatabase
   class NoActiveProfile {
 
     @Autowired private Environment environment;
     @Autowired private GetRuntimeInfoUseCase runtimeInfo;
+    @Autowired private AdminAccessPolicy policy;
 
     @Test
     void fallsBackToDesktopValues() {
@@ -77,6 +107,8 @@ class ProfileConfigurationTest {
       assertThat(environment.getProperty("spring.application.name")).isEqualTo("queryhub-runtime");
       assertThat(environment.getProperty("management.endpoints.web.exposure.include"))
           .isEqualTo("health");
+      assertThat(environment.getProperty("management.endpoints.web.discovery.enabled"))
+          .isEqualTo("false");
       assertThat(environment.getProperty("management.endpoint.health.show-details"))
           .isEqualTo("never");
       assertThat(environment.getProperty("management.endpoint.health.probes.enabled"))

@@ -1,5 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // IPC 는 흉내 낸다. 커맨드마다 테스트가 직접 끝내는 약속을 돌려주어 응답이 도착하는 순서를 정한다.
 vi.mock("@tauri-apps/api/core", () => ({
@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { invoke } from "@tauri-apps/api/core";
 
 import type { FailureKind, RuntimeState, RuntimeStatus } from "./types";
-import { useRuntimeStatus } from "./useRuntimeStatus";
+import { useAdminToken, useRuntimeInfo, useRuntimeStatus } from "./useRuntimeStatus";
 
 const invokeMock = vi.mocked(invoke);
 
@@ -131,5 +131,79 @@ describe("useRuntimeStatus response order", () => {
 
     await settle(() => polls[1].resolve(status("failed", "port_in_use")));
     expect(result.current.error).toBe("셸 호출이 실패했다: ipc closed");
+  });
+});
+
+// 시험용 고정 가짜 토큰(셸이 만드는 형식과 같은 64 자 16진수). 실제 토큰이 아니다.
+const TOKEN = "a".repeat(64);
+
+describe("useAdminToken", () => {
+  it("Tauri 안에서 admin_token 을 한 번만 부르고, 다시 그려도 다시 부르지 않는다", async () => {
+    invokeMock.mockImplementation((async (command: string) =>
+      command === "admin_token" ? TOKEN : status("running")) as unknown as typeof invoke);
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+
+    const { result, rerender } = renderHook(() => useAdminToken(true));
+    await waitFor(() => expect(result.current.token).toBe(TOKEN));
+    rerender();
+    rerender();
+    await settle();
+
+    expect(invokeMock.mock.calls).toEqual([["admin_token"]]);
+    expect(result.current.error).toBeNull();
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("Tauri 밖(enabled=false)에서는 부르지 않는다", async () => {
+    const { result } = renderHook(() => useAdminToken(false));
+    await settle();
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(result.current).toEqual({ token: null, error: null });
+  });
+
+  it("셸 호출이 실패하면 토큰은 null 이고 오류 문장을 돌려준다", async () => {
+    invokeMock.mockImplementation((async () => {
+      throw new Error("not allowed");
+    }) as unknown as typeof invoke);
+
+    const { result } = renderHook(() => useAdminToken(true));
+    await waitFor(() => expect(result.current.error).toBe("관리 토큰을 셸에서 받지 못했다: not allowed"));
+    expect(result.current.token).toBeNull();
+  });
+});
+
+describe("useRuntimeInfo", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: false, error: { code: "X" } })));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("토큰이 아직 없으면 running 이어도 요청하지 않고, 토큰이 오면 Bearer 헤더로 요청한다", async () => {
+    const { result, rerender } = renderHook(
+      ({ token }: { token: string | null }) => useRuntimeInfo("http://127.0.0.1:18580", true, token),
+      { initialProps: { token: null as string | null } },
+    );
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current).toBeNull();
+
+    rerender({ token: TOKEN });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:18580/admin/api/v1/runtime");
+    expect(init.headers).toEqual({ Authorization: `Bearer ${TOKEN}` });
+  });
+
+  it("running 이 아니면 토큰이 있어도 요청하지 않는다", async () => {
+    renderHook(() => useRuntimeInfo("http://127.0.0.1:18580", false, TOKEN));
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

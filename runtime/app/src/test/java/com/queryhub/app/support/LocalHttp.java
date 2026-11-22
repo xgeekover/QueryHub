@@ -51,6 +51,21 @@ public final class LocalHttp {
     return send(request(path).header(RequestIds.HEADER, requestId).GET().build());
   }
 
+  /** 테스트 관리자 토큰을 Authorization: Bearer 로 붙인 요청. */
+  public HttpRequest.Builder adminRequest(String path) {
+    return request(path).header("Authorization", TestAdminToken.AUTHORIZATION);
+  }
+
+  /** 테스트 관리자 토큰을 붙인 GET. */
+  public HttpResponse<String> adminGet(String path) {
+    return send(adminRequest(path).GET().build());
+  }
+
+  /** 테스트 관리자 토큰과 X-Request-Id 를 붙인 GET. */
+  public HttpResponse<String> adminGet(String path, String requestId) {
+    return send(adminRequest(path).header(RequestIds.HEADER, requestId).GET().build());
+  }
+
   public HttpResponse<String> send(HttpRequest request) {
     try {
       return CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

@@ -43,19 +43,49 @@ class ErrorFormatTest {
   @ValueSource(
       strings = {"/does-not-exist", "/admin/api/v1/does-not-exist", "/api/v1/does-not-exist"})
   void unknownPathsReturnNotFound(String path) {
-    JsonNode error = LocalHttp.assertErrorEnvelope(http.get(path), 404, ErrorCode.NOT_FOUND);
+    // 유효한 관리자 토큰을 보내면(관리 경로가 아니어도 무해하다) P1-03 전과 같은 404 다.
+    JsonNode error = LocalHttp.assertErrorEnvelope(http.adminGet(path), 404, ErrorCode.NOT_FOUND);
 
     assertThat(error.path("message").stringValue()).isEqualTo(ErrorCode.NOT_FOUND.defaultMessage());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/does-not-exist", "/api/v1/does-not-exist"})
+  void unknownPathsOutsideTheAdminChainReturnNotFoundWithoutToken(String path) {
+    HttpResponse<String> response = http.get(path);
+
+    LocalHttp.assertErrorEnvelope(response, 404, ErrorCode.NOT_FOUND);
+    assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
+  }
+
+  @Test
+  void unknownAdminPathWithoutTokenIsUnauthorized() {
+    // P1-03: 없는 관리 경로도 관리 체인이 맡는다. 토큰이 없으면 경로가 있는지 알려 주지 않고 401 이다.
+    HttpResponse<String> response = http.get("/admin/api/v1/does-not-exist");
+
+    JsonNode error = LocalHttp.assertErrorEnvelope(response, 401, ErrorCode.UNAUTHORIZED);
+    assertThat(error.path("message").stringValue())
+        .isEqualTo(ErrorCode.UNAUTHORIZED.defaultMessage());
+    assertThat(response.headers().allValues("WWW-Authenticate")).containsExactly("Bearer");
   }
 
   @Test
   void unsupportedMethodReturnsMethodNotAllowedWithAllowHeader() {
     HttpResponse<String> response =
-        http.send(http.request("/admin/api/v1/runtime").DELETE().build());
+        http.send(http.adminRequest("/admin/api/v1/runtime").DELETE().build());
 
     LocalHttp.assertErrorEnvelope(response, 405, ErrorCode.METHOD_NOT_ALLOWED);
     assertThat(response.headers().allValues("Allow"))
         .anySatisfy(v -> assertThat(v).contains("GET"));
+  }
+
+  @Test
+  void unsupportedMethodWithoutTokenIsUnauthorized() {
+    HttpResponse<String> response =
+        http.send(http.request("/admin/api/v1/runtime").DELETE().build());
+
+    LocalHttp.assertErrorEnvelope(response, 401, ErrorCode.UNAUTHORIZED);
+    assertThat(response.headers().firstValue("Allow")).isEmpty();
   }
 
   @Test

@@ -24,7 +24,10 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
     // 개발 전용: 관리 API 를 런타임으로 넘긴다. Origin 헤더를 지워 런타임이 개발 출처(http://localhost:1420)를 CORS 로 허용할
-    // 필요가 없게 한다. 운영 빌드의 UI 는 http://127.0.0.1:18580 으로 직접 요청한다(런타임 CORS 가 tauri://localhost 를 허용).
+    // 필요가 없게 한다. Authorization: Bearer 헤더는 그대로 넘어간다. changeOrigin 이 false 이므로 Host 는 localhost:1420 으로
+    // 남고, 런타임의 Host 허용 목록(localhost, 포트는 비교하지 않는다)과 루프백 검사(프록시가 127.0.0.1 에서 연결한다)를
+    // 통과한다(ADR-021, ADR-022). 운영 빌드의 UI 는 http://127.0.0.1:18580 으로 직접 요청한다(런타임 CORS 가 tauri://localhost 를
+    // 허용하고 Authorization 의 사전 요청에 답한다).
     proxy: {
       "/admin/api": {
         target: RUNTIME_ORIGIN,

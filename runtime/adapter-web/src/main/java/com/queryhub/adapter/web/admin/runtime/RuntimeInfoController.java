@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 관리 API: 런타임 상태 조회. 유스케이스에 위임하고 응답 형식으로 바꾸기만 한다.
  *
- * <p>Phase 0 에서는 민감하지 않은 상태만 돌려주므로 인증이 없다. 관리자 토큰은 Phase 1 의 첫 태스크에서 도입한다.
+ * <p>P1-03 부터 관리 SecurityFilterChain(adapter.web.admin.security)이 이 경로를 지킨다. 루프백·Host 가드를 통과하고
+ * {@code Authorization: Bearer <관리자 토큰>} 이 맞는 요청만 여기에 닿는다. 토큰이 없거나 틀리면 401, 가드가 거부하면 403 이다.
  */
 @RestController
 @RequestMapping("/admin/api/v1/runtime")

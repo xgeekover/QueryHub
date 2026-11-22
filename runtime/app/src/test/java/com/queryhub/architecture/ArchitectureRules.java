@@ -5,12 +5,18 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.CompositeArchRule;
+import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.Objects;
+import java.util.Set;
 
 /**
- * 아키텍처 규칙 R1~R8 (P0-A FR-04, P0-B 가 R8 을 더했다).
+ * 아키텍처 규칙 R1~R9 (P0-A FR-04, P0-B 가 R8 을, P1-03 이 R9 를 더했다).
  *
  * <p>루트 패키지를 받는다. 운영 코드에는 {@code com.queryhub} 를, 자기 검사(ArchitectureRulesSelfTest)에는 고의 위반 클래스가 있는
  * {@code com.queryhub.archfixture} 를 넣어 같은 규칙을 적용한다. 그래서 규칙이 실제로 실패할 수 있음을 증명할 수 있다.
@@ -153,6 +159,53 @@ public final class ArchitectureRules {
             "org.springframework.jdbc..", "org.flywaydb..", "javax.sql..", "com.zaxxer.hikari..")
         .because("R8: 저장 기술(JDBC, Flyway, 커넥션 풀)은 메타데이터 저장소, DB Provider, app 조립에만 둔다");
   }
+
+  /**
+   * R9 관리자 토큰 비교기(root.adapter.web.admin.security.. 의 이름이 TokenVerifier 로 끝나는 클래스)는 {@code
+   * MessageDigest.isEqual(byte[], byte[])} 를 부르고, 내용에 따라 일찍 끝나는 비교(String.equals, equalsIgnoreCase,
+   * contentEquals, compareTo, compareToIgnoreCase, regionMatches, Objects.equals,
+   * Arrays.equals/compare/mismatch)는 부르지 않는다.
+   *
+   * <p>상수 시간은 단위 테스트로 잴 수 없으므로 구조로 증명한다. 대상 클래스가 하나도 없으면 ArchUnit 이 실패한다(빈 should 금지).
+   */
+  public ArchRule r9TokenVerifierComparesInConstantTime() {
+    DescribedPredicate<JavaClass> verifier =
+        DescribedPredicate.describe(
+            "admin token verifiers",
+            javaClass ->
+                javaClass.getPackageName().startsWith(root + ".adapter.web.admin.security")
+                    && javaClass.getSimpleName().endsWith("TokenVerifier"));
+    DescribedPredicate<JavaMethodCall> earlyExitComparison =
+        DescribedPredicate.describe(
+            "an early-exit comparison (String, Objects or Arrays)",
+            call -> {
+              String owner = call.getTargetOwner().getName();
+              String name = call.getName();
+              return (owner.equals(String.class.getName()) && STRING_COMPARISONS.contains(name))
+                  || (owner.equals(Objects.class.getName()) && name.equals("equals"))
+                  || (owner.equals(Arrays.class.getName()) && ARRAY_COMPARISONS.contains(name));
+            });
+    ArchRule callsIsEqual =
+        classes()
+            .that(verifier)
+            .should()
+            .callMethod(MessageDigest.class, "isEqual", byte[].class, byte[].class);
+    ArchRule noEarlyExit = noClasses().that(verifier).should().callMethodWhere(earlyExitComparison);
+    return CompositeArchRule.of(callsIsEqual)
+        .and(noEarlyExit)
+        .because("R9: 관리자 토큰은 상수 시간(SHA-256 다이제스트와 MessageDigest.isEqual)으로만 비교한다");
+  }
+
+  private static final Set<String> STRING_COMPARISONS =
+      Set.of(
+          "equals",
+          "equalsIgnoreCase",
+          "contentEquals",
+          "compareTo",
+          "compareToIgnoreCase",
+          "regionMatches");
+
+  private static final Set<String> ARRAY_COMPARISONS = Set.of("equals", "compare", "mismatch");
 
   /** R7 루트 아래의 모든 클래스는 domain, application, adapter, app 중 한 곳에 있다. */
   public ArchRule r7EveryClassResidesInAKnownLayer() {

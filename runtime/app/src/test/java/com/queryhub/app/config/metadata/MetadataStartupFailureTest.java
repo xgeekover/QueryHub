@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import com.queryhub.app.QueryHubApplication;
+import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -501,6 +502,8 @@ class MetadataStartupFailureTest {
             .lazyInitialization(lazy)
             .profiles("desktop")
             .properties(defaultProperties)
+            // 관리자 토큰 검사가 아니라 Metadata DB 검사가 기동을 멈추는지 본다.
+            .properties(TestAdminToken.PROPERTY)
             .initializers(TestComponentScanExclusion::register)
             .listeners(webServerListener)
             .build();

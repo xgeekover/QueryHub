@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { runtimeBaseUrl } from "@/runtime/baseUrl";
 import { insideTauri } from "@/runtime/shell";
 import type { RuntimeHealth, RuntimeInfoResult, RuntimeState, RuntimeStatus } from "@/runtime/types";
-import { useRuntimeInfo, useRuntimeStatus } from "@/runtime/useRuntimeStatus";
+import { useAdminToken, useRuntimeInfo, useRuntimeStatus } from "@/runtime/useRuntimeStatus";
 
 const STATE_LABELS: Record<RuntimeState, string> = {
   stopped: "중지됨",
@@ -37,7 +37,10 @@ export function RuntimePanel({ inTauri = insideTauri(), dev = import.meta.env.DE
   const runtime = useRuntimeStatus(inTauri);
   const status = runtime.status;
   const running = status?.state === "running";
-  const info = useRuntimeInfo(status ? runtimeBaseUrl(status.baseUrl, dev) : null, running);
+  // 관리 토큰은 Tauri 안에서 한 번 받아 메모리에만 두고 런타임 정보 요청에만 넘긴다(화면에 그리지 않는다).
+  const admin = useAdminToken(inTauri);
+  const fetched = useRuntimeInfo(status ? runtimeBaseUrl(status.baseUrl, dev) : null, running, admin.token);
+  const info: RuntimeInfoResult | null = running && admin.error !== null ? { ok: false, error: admin.error } : fetched;
 
   if (!inTauri) {
     return (

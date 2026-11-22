@@ -11,6 +11,8 @@ dependencies {
     implementation project(':application')
     implementation libs.spring.boot.starter.webmvc
     implementation libs.spring.boot.starter.actuator
+    // 관리자 토큰(P1-03): 보안 자동 구성과 UserDetailsServiceAutoConfiguration 제외는 QueryHubApplication 에 있다.
+    implementation libs.spring.boot.starter.security
     // Metadata DB 조립: JdbcConnectionDetails, JdbcClient (starter-jdbc), 기동 검사가 강제하는 FlywayMigrationInitializer (starter-flyway).
     implementation libs.spring.boot.starter.jdbc
     implementation libs.spring.boot.starter.flyway

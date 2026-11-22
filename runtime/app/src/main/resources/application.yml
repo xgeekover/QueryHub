@@ -5,6 +5,9 @@ server:
   # 공통 기본 바인딩 주소는 루프백이다. 모든 인터페이스로 넓히는 것은 server 프로파일(application-server.yml)뿐이다.
   # 그래서 desktop 프로파일 파일이 적용되지 않는 경우(예: 다른 프로파일만 켠 경우)에도 외부 인터페이스에 열리지 않는다.
   address: 127.0.0.1
+  # 관리 API 의 루프백 검사는 소켓의 원격 주소로 한다. X-Forwarded-For·Forwarded 로 원격 주소를 바꾸지 않도록 none 으로 고정한다.
+  # queryhub.admin.allow-remote=false 인데 이 값이 none 이 아니면 기동을 거부한다 (AdminAccessConfiguration).
+  forward-headers-strategy: none
 
 spring:
   application:
@@ -38,11 +41,21 @@ management:
   endpoints:
     web:
       exposure:
-        # health 만 공개한다. 나머지 actuator 엔드포인트는 404 다.
+        # health 만 공개한다. 나머지 actuator 엔드포인트는 404 다 (P1-03 부터 health 세 경로 밖은 토큰이 없으면 401).
         include: health
+      # 엔드포인트 목록(/actuator)도 내지 않는다. 토큰이 있어도 404 다.
+      discovery:
+        enabled: false
   endpoint:
     health:
       show-details: never
       probes:
         # /actuator/health/liveness, /actuator/health/readiness
         enabled: true
+
+# 관리자 인증 (P1-03, ADR-021). 토큰은 이 파일에 두지 않는다: QUERYHUB_ADMIN_TOKEN 또는 QUERYHUB_ADMIN_TOKEN_FILE 로만 받고,
+# 둘 다 없으면 기동을 거부한다. 명령행 인자, -D, spring.application.json 으로 넘긴 토큰도 거부한다.
+queryhub:
+  admin:
+    # false: 관리 요청은 소켓 원격 주소가 루프백일 때만 받는다. server 프로파일만 true 로 넓힌다.
+    allow-remote: false

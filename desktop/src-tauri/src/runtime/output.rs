@@ -1,4 +1,4 @@
-//! 자식 프로세스 출력: 줄 단위로 끊어 비밀번호를 가리고, 길이를 자르고, 링 버퍼에 마지막 줄들만 남긴다.
+//! 자식 프로세스 출력: 줄 단위로 끊어 비밀 값(Metadata DB 비밀번호와 관리 토큰)을 가리고, 길이를 자르고, 링 버퍼에 마지막 줄들만 남긴다.
 //!
 //! 셸은 출력을 파일로 쓰지 않는다. 버퍼는 메모리에만 있고 상태 조회(outputTail)와 디버그 stderr 출력에만 쓰인다.
 
@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::sync::Mutex;
 
-/// 비밀번호 자리에 넣는 고정 문자열. 길이로 비밀번호 길이를 알 수 없다.
+/// 비밀 값 자리에 넣는 고정 문자열. 길이로 비밀 값의 길이를 알 수 없다.
 pub const MASK: &str = "********";
 
 /// 링 버퍼. reset 마다 세대(epoch)가 바뀌고, 이전 세대의 읽기 스레드가 늦게 넣는 줄은 버린다.
@@ -63,17 +63,26 @@ impl OutputBuffer {
     }
 }
 
-/// bytes 안의 secret 을 모두 MASK 로 바꾼다. secret 이 비어 있으면 그대로 돌려준다.
-pub fn mask_secret(bytes: &[u8], secret: &[u8]) -> Vec<u8> {
-    if secret.is_empty() {
-        return bytes.to_vec();
-    }
+/// 가릴 비밀 값들(Metadata DB 비밀번호와 관리 토큰). 빈 값은 무시한다.
+pub type Secrets = [Vec<u8>];
+
+/// bytes 의 위치 i 에서 시작하는 가장 긴 비밀 값의 길이.
+fn secret_at(bytes: &[u8], secrets: &Secrets) -> Option<usize> {
+    secrets
+        .iter()
+        .filter(|s| !s.is_empty() && bytes.starts_with(s))
+        .map(Vec::len)
+        .max()
+}
+
+/// bytes 안의 비밀 값을 모두 MASK 로 바꾼다. 같은 위치에서 여러 값이 맞으면 가장 긴 것을 가린다.
+pub fn mask_secrets(bytes: &[u8], secrets: &Secrets) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i..].starts_with(secret) {
+        if let Some(len) = secret_at(&bytes[i..], secrets) {
             out.extend_from_slice(MASK.as_bytes());
-            i += secret.len();
+            i += len;
         } else {
             out.push(bytes[i]);
             i += 1;
@@ -82,18 +91,29 @@ pub fn mask_secret(bytes: &[u8], secret: &[u8]) -> Vec<u8> {
     out
 }
 
+/// 가장 긴 비밀 값의 길이.
+fn longest(secrets: &Secrets) -> usize {
+    secrets.iter().map(Vec::len).max().unwrap_or(0)
+}
+
 /// 한 줄을 화면에 보일 문자열로 만든다.
 ///
-/// raw 는 읽은 줄의 앞부분이다. cut 이면 줄이 더 길었고 뒷부분은 버려졌다. 그때 raw 의 끝에 비밀번호의 앞부분만 걸려 있을 수
-/// 있으므로(나머지는 잘림) 가린 뒤에 끝에 남은 비밀번호 접두사를 지운다. 마지막으로 max_bytes 바이트 이하로 자른다(문자 경계).
-pub fn sanitize_line(raw: &[u8], cut: bool, secret: &[u8], max_bytes: usize) -> String {
-    let mut masked = mask_secret(raw, secret);
-    if cut && secret.len() > 1 {
-        for k in (1..secret.len()).rev() {
-            if masked.ends_with(&secret[..k]) {
-                masked.truncate(masked.len() - k);
-                break;
-            }
+/// raw 는 읽은 줄의 앞부분이다. cut 이면 줄이 더 길었고 뒷부분은 버려졌다. 그때 raw 의 끝에 비밀 값의 앞부분만 걸려 있을 수
+/// 있으므로(나머지는 잘림) 가린 뒤에 끝에 남은 비밀 값 접두사 중 가장 긴 것을 지운다. 마지막으로 max_bytes 바이트 이하로
+/// 자른다(문자 경계).
+pub fn sanitize_line(raw: &[u8], cut: bool, secrets: &Secrets, max_bytes: usize) -> String {
+    let mut masked = mask_secrets(raw, secrets);
+    if cut {
+        let prefix = secrets
+            .iter()
+            .filter_map(|secret| {
+                (1..secret.len())
+                    .rev()
+                    .find(|k| masked.ends_with(&secret[..*k]))
+            })
+            .max();
+        if let Some(k) = prefix {
+            masked.truncate(masked.len() - k);
         }
     }
     let mut text = String::from_utf8_lossy(&masked).into_owned();
@@ -109,9 +129,15 @@ pub fn sanitize_line(raw: &[u8], cut: bool, secret: &[u8], max_bytes: usize) -> 
 
 /// reader 를 끝(EOF)까지 읽어 줄마다 sink 를 부른다. 줄은 sanitize_line 을 거친다.
 ///
-/// 한 줄에서 기억하는 바이트는 max_bytes * 2 + 비밀번호 길이까지다. 줄바꿈 없는 큰 출력도 메모리를 늘리지 않는다.
-pub fn drain<R: Read>(reader: R, secret: &[u8], max_bytes: usize, mut sink: impl FnMut(String)) {
-    let keep = max_bytes.saturating_mul(2).saturating_add(secret.len());
+/// 줄 전체를 모은 뒤에 가리므로 비밀 값이 여러 번의 읽기에 걸쳐 나뉘어 와도 가려진다. 한 줄에서 기억하는 바이트는
+/// max_bytes * 2 + 가장 긴 비밀 값의 길이까지다. 줄바꿈 없는 큰 출력도 메모리를 늘리지 않는다.
+pub fn drain<R: Read>(
+    reader: R,
+    secrets: &Secrets,
+    max_bytes: usize,
+    mut sink: impl FnMut(String),
+) {
+    let keep = max_bytes.saturating_mul(2).saturating_add(longest(secrets));
     let mut reader = BufReader::new(reader);
     let mut line: Vec<u8> = Vec::new();
     let mut cut = false;
@@ -138,25 +164,25 @@ pub fn drain<R: Read>(reader: R, secret: &[u8], max_bytes: usize, mut sink: impl
         };
         reader.consume(consumed);
         if complete {
-            emit(&mut line, &mut cut, secret, max_bytes, &mut sink);
+            emit(&mut line, &mut cut, secrets, max_bytes, &mut sink);
         }
     }
     if !line.is_empty() || cut {
-        emit(&mut line, &mut cut, secret, max_bytes, &mut sink);
+        emit(&mut line, &mut cut, secrets, max_bytes, &mut sink);
     }
 }
 
 fn emit(
     line: &mut Vec<u8>,
     cut: &mut bool,
-    secret: &[u8],
+    secrets: &Secrets,
     max_bytes: usize,
     sink: &mut impl FnMut(String),
 ) {
     if !*cut && line.last() == Some(&b'\r') {
         line.pop();
     }
-    sink(sanitize_line(line, *cut, secret, max_bytes));
+    sink(sanitize_line(line, *cut, secrets, max_bytes));
     line.clear();
     *cut = false;
 }
@@ -165,9 +191,13 @@ fn emit(
 mod tests {
     use super::*;
 
+    fn secrets(values: &[&str]) -> Vec<Vec<u8>> {
+        values.iter().map(|v| v.as_bytes().to_vec()).collect()
+    }
+
     fn collect(input: &[u8], secret: &str, max: usize) -> Vec<String> {
         let mut lines = Vec::new();
-        drain(input, secret.as_bytes(), max, |l| lines.push(l));
+        drain(input, &secrets(&[secret]), max, |l| lines.push(l));
         lines
     }
 
@@ -222,12 +252,12 @@ mod tests {
         // 잘린 줄 끝의 비밀번호 접두사는 지운다.
         let raw = format!("{}abcd", "y".repeat(10));
         assert_eq!(
-            sanitize_line(raw.as_bytes(), true, secret.as_bytes(), 100),
+            sanitize_line(raw.as_bytes(), true, &secrets(&[secret]), 100),
             "y".repeat(10)
         );
         // 잘리지 않은 줄은 그대로 둔다(abcd 는 비밀번호가 아니다).
         assert_eq!(
-            sanitize_line(raw.as_bytes(), false, secret.as_bytes(), 100),
+            sanitize_line(raw.as_bytes(), false, &secrets(&[secret]), 100),
             raw
         );
     }
@@ -237,5 +267,76 @@ mod tests {
         let lines = collect("가나다라마\n끝".as_bytes(), "", 7);
         // "가나" 는 6 바이트다. 7 바이트로 자르면 세 번째 글자 중간이므로 6 바이트에서 끊는다.
         assert_eq!(lines, vec!["가나".to_string(), "끝".to_string()]);
+    }
+
+    /// 한 번에 한 바이트씩 돌려주는 reader: 비밀 값이 여러 번의 읽기에 걸쳐 나뉘어 온다.
+    struct Trickle<'a>(&'a [u8]);
+
+    impl Read for Trickle<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match (self.0.split_first(), buf.first_mut()) {
+                (Some((byte, rest)), Some(slot)) => {
+                    *slot = *byte;
+                    self.0 = rest;
+                    Ok(1)
+                }
+                _ => Ok(0),
+            }
+        }
+    }
+
+    const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn masks_both_the_password_and_the_token_even_when_split_across_reads() {
+        let input = format!("password=s3cret-pw token={TOKEN}\n{TOKEN}s3cret-pw\nplain\n");
+        let both = secrets(&["s3cret-pw", TOKEN]);
+        let expected = vec![
+            format!("password={MASK} token={MASK}"),
+            format!("{MASK}{MASK}"),
+            "plain".to_string(),
+        ];
+        // 한 번에 읽어도, 한 바이트씩(BufReader 용량보다 작게) 나뉘어 와도 같다.
+        let mut whole = Vec::new();
+        drain(input.as_bytes(), &both, 2048, |l| whole.push(l));
+        let mut trickled = Vec::new();
+        drain(Trickle(input.as_bytes()), &both, 2048, |l| trickled.push(l));
+        assert_eq!(whole, expected);
+        assert_eq!(trickled, expected);
+        for line in whole.iter().chain(&trickled) {
+            assert!(
+                !line.contains("s3cret") && !line.contains("0123456789abcdef"),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_longest_secret_wins_and_empty_secrets_are_ignored() {
+        let list = secrets(&["", "abc", "abcdef"]);
+        assert_eq!(
+            mask_secrets(b"xabcdefx abc", &list),
+            format!("x{MASK}x {MASK}").into_bytes()
+        );
+        assert_eq!(
+            mask_secrets(b"no secret", &secrets(&[""])),
+            b"no secret".to_vec()
+        );
+        assert_eq!(mask_secrets(b"no secret", &[]), b"no secret".to_vec());
+    }
+
+    #[test]
+    fn a_cut_line_drops_a_trailing_prefix_of_either_secret() {
+        let list = secrets(&["pw-123456", TOKEN]);
+        let raw = format!("{}{}", "y".repeat(10), &TOKEN[..20]);
+        assert_eq!(
+            sanitize_line(raw.as_bytes(), true, &list, 100),
+            "y".repeat(10)
+        );
+        let raw = format!("{}pw-12", "z".repeat(10));
+        assert_eq!(
+            sanitize_line(raw.as_bytes(), true, &list, 100),
+            "z".repeat(10)
+        );
     }
 }

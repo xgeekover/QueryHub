@@ -8,9 +8,40 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다.
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰)다.
 
-#### P1-02 P1-01 리뷰 5회차 후속과 포트 확인 (커밋 전)
+#### P1-03 관리자 토큰 (커밋 전)
+
+Phase 1 범위의 첫 태스크다. 결정은 [ADR-021](docs/ADR/ADR-021-admin-token-bearer.md)(승인됨)과 [ADR-022](docs/ADR/ADR-022-admin-token-implementation.md)(제안)에 있다. [BACKLOG](docs/BACKLOG.md) P0A-I1 과 P0C-C2-2 를 닫는다.
+
+##### 추가
+
+- runtime: Spring Security(`spring-boot-starter-security`, BOM 관리)의 관리 보안 체인 하나(`com.queryhub.adapter.web.admin.security`). `/admin/**`(대소문자 무관)와 health 세 경로 밖의 `/actuator/**` 는 `Authorization: Bearer <토큰>` 을 요구한다. 비교는 SHA-256 다이제스트의 `MessageDigest.isEqual` 이고 ArchUnit R9 가 지킨다. 토큰 실패는 401 `UNAUTHORIZED`(`WWW-Authenticate: Bearer`), 네트워크 검사 실패는 403 `FORBIDDEN` 이고 둘 다 공통 오류 형식과 `X-Request-Id` 를 쓴다.
+- runtime: 토큰 출처 `QUERYHUB_ADMIN_TOKEN` 또는 `QUERYHUB_ADMIN_TOKEN_FILE`(4 KiB 이하, 끝의 LF·CRLF 하나를 지운다). 32-512 자 RFC 6750 b64token. 없거나, 둘 다 있거나, 파일·형식이 틀리거나, 명령행·`-D`·그 두 곳의 `spring.application.json` 에서 오면 포트를 열기 전에 기동을 거부한다. ADR-011 의 프로세스 출처 검사는 공용 `ProcessVisibleSources` 로 옮겼다(Metadata DB 메시지는 그대로).
+- runtime: desktop 의 관리 요청은 소켓 원격 주소가 루프백일 때만 받는다(`queryhub.admin.allow-remote`, server 는 true). allow-remote=false 이면 소켓 원격 주소를 바꾸는 설정을 기동에서 거부한다: `server.forward-headers-strategy` 가 none 이 아닌 값, 값이 있는 `server.tomcat.remoteip.*` 속성(접두사 전체), 만들어진 Tomcat 파이프라인의 RemoteIpValve 나 허용 목록 밖의 valve(`TomcatRemoteAddressGuard`, 포트를 열기 전의 `SmartLifecycle`). 그래서 이 조건에서 `X-Forwarded-For`·`Forwarded` 는 루프백 판정에 쓰이지 않는다(리뷰 1회차 R1 이 1회차 JAR 에서 `remote-ip-header`·`protocol-header` 만으로 판정이 바뀌는 것을 재현했다). Host 허용 목록(desktop 은 늘, server 는 `queryhub.admin.allowed-hosts` 를 설정할 때만).
+- runtime: 두 프로파일 모두 `management.endpoints.web.base-path` 가 `/actuator` 가 아니거나, `management.server.port` 로 actuator 를 다른 포트에 열거나, `spring.mvc.servlet.path` 가 `/` 가 아니면 기동을 거부한다. 관리 체인은 그 경로와 포트를 보호하지 않는다(리뷰 1회차 R4. 2회차에 1회차 JAR 이 `spring.mvc.servlet.path=/qh` 에서 `/qh/admin/api/v1/runtime` 을 토큰 없이 200 으로 답하는 것을 확인했다).
+- runtime (리뷰 2회차 후속): 관리 체인을 끄거나 핸들러를 체인 밖으로 옮기는 설정을 세 겹으로 막는다. 두 프로파일 모두 `spring.security.filter.dispatcher-types` 가 Boot 기본 다섯 가지를 다 갖지 않을 때, `management.endpoints.web.path-mapping.*` 에 값이 있을 때, health 추가 경로(`management.endpoint.health.probes.add-additional-paths=true`, `management.endpoint.health.group.*.additional-path`)가 있을 때, `server.tomcat.accesslog.pattern` 에 `Authorization` 이 들어가거나 `spring.mvc.log-request-details=true` 일 때 기동을 거부한다. 포트를 열기 전에 Spring Security 필터의 Tomcat 매핑(`/*`, dispatcher 다섯 가지, 앞의 필터는 허용 목록)을 검사한다(`TomcatSecurityFilterGuard`). 포트를 연 직후 readiness 전에 토큰 없는 요청으로 자기 점검을 하고, 관리 경로가 체인의 401·403 이 아니거나 열린 health 경로가 health 문서·404 가 아니면 멈춘다(`AdminChainSelfProbe`). 내장 TLS(`server.ssl.*`)는 점검할 수 없어 기동을 거부한다.
+- desktop 셸: `runtime/token.rs` 의 `AdminToken`. 셸 프로세스마다 한 번 `getrandom`(0.3.4, Cargo.lock 에 이미 있던 버전을 직접 의존으로 더했다. 잠금 파일은 의존 한 줄만 바뀌었다)으로 32 바이트를 받아 소문자 16진수 64 자로 만든다. Debug·Display 는 값을 보이지 않고, 만들지 못하면 setup 이 실패한다. 자식 환경에 `QUERYHUB_ADMIN_TOKEN` 을 더하고(인자에는 넣지 않는다), Tauri 커맨드 `admin_token` 과 권한 `allow-admin-token`(main 창, 로컬 출처)을 더했다.
+- UI: `shell.ts` 의 `adminToken()`, `useAdminToken` 훅(한 번, 메모리에만). `fetchRuntimeInfo(baseUrl, token, timeout)` 는 `Authorization: Bearer <토큰>` 헤더 하나만 더하고(`credentials: "omit"` 을 명시한다) 토큰이 없으면 요청하지 않는다. 401 과 403 은 서로 다른 고정 한국어 문장이다.
+- 문서: ADR-021, ADR-022, `docs/SECURITY.md` 「관리자 토큰」, `docs/API_SPECIFICATION.md` 「관리자 토큰 인증」, `docs/DEPLOYMENT.md` 「관리자 토큰」, `deploy/env.example` 의 주석 자리표시자 줄(값 없음).
+
+##### 변경
+
+- CORS 는 `WebMvcConfigurer` 매핑 대신 관리 체인의 `CorsConfigurationSource` 다. 허용 요청 헤더는 `Authorization` 하나이고, 사전 요청은 토큰 없이 답하며 요청한 헤더가 모두 허용될 때만 통과한다. 허용 출처의 401 에도 `Access-Control-Allow-Origin` 이 한 번 붙는다([ADR-015](docs/ADR/ADR-015-desktop-fixed-port-and-cors.md)). 거부된 CORS 요청은 여전히 Spring 의 403 본문이다.
+- StrictHttpFirewall 이 `;`, `//`, `/./` 같은 경로를 400 `INVALID_REQUEST` 로 거부한다. 관리 체인 경로의 퍼센트 인코딩은 모두 400 이다(`AdminPathFirewall`). 일부 깨진 요청 대상(`/admin%2Fapi/v1/runtime`, `/admin/api/v1/runtime%00`, 절대 형식 등)과 깨진 Host(대괄호 없는 IPv6, zone id, userinfo, 숫자가 아닌 포트, Host 둘, HTTP/1.1 의 Host 없음)는 Tomcat 이 애플리케이션보다 먼저 평문 400 으로 거부한다(공통 오류 형식과 `X-Request-Id` 없음, BACKLOG P103-4).
+- `/actuator` 탐색(`management.endpoints.web.discovery.enabled: false`)과 health 의 하위 경로는 더는 제공하지 않는다(토큰이 있으면 404 `NOT_FOUND`, 없으면 401).
+- desktop 셸의 출력 가림은 비밀 값 목록(Metadata DB 비밀번호와 관리자 토큰)을 가린다(`output.rs` 의 `mask_secrets`).
+- desktop 셸의 감독 시험 `free_port()` 는 OS 임시 포트 범위 밖(20000-31999)에서 테스트마다 다른 포트를 고른다. 놓은 임시 포트를 다른 테스트 스레드의 나가는 연결이 로컬 포트로 받아 `port_in_use` 로 실패하던 경쟁(P1-02 리뷰 R4, P1-03 실행 중 한 번 관찰)을 없애려는 것이다.
+- `README.md`, `docs/ARCHITECTURE.md`, `docs/TEST_PLAN.md`, `docs/BACKLOG.md`, ADR-013, ADR-015, ADR-019, `docs/ADR/README.md`. P1-02 의 커밋 표시를 9fc70db (2026-11-22) 로 채웠다. 게이트 스크립트는 바꾸지 않았다.
+
+##### 보안
+
+- 리뷰 3회차 후속(4회차): 관리 체인 자기 점검이 실패하면 이유(경로와 상태)를 먼저 ERROR 로그에 남기고, 컨텍스트 정리가 멈춰도(메타데이터 DB 가 멈춘 경우) 15 초 뒤 종료 코드 1 로 끝난다. health 경로가 5 초 안에 답하지 않으면 시간 초과로 따로 말한다. 응답 본문은 JSON 으로 읽어 `spring.jackson.serialization.indent-output=true` 에서도 기동한다. 내장 TLS(`server.ssl.*`)는 포트를 열기 전에 거부한다(사용자 결정 2026-11-22 「받아들임 (권장)」, TLS 는 앞단 리버스 프록시에서 끝낸다, 런타임 자체 HTTPS 는 P103-7). 필터 매핑 검사는 보안 필터가 DelegatingFilterProxy 인지도 보고, 점검 소켓은 프록시를 거치지 않는다. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)에 「기동 거부 설정」을 더했다.
+- 남은 것: 바인딩 가드(P103-1), WebView 탐색 경화(P103-2), desktop 의 allow-remote 설정(P103-3), 컨테이너의 평문 400(P103-4), 비동기 관리 핸들러의 재디스패치 시험(P103-5). 토큰은 런타임 자식의 환경에 있으므로 같은 사용자의 프로세스가 읽을 수 있다(설계 §1.2 와 ADR-011 이 받아들인 경로). Windows·Linux 의 셸은 미검증이다(PLAT-1). CI 는 정의됨·미실행이다(CI-1).
+
+테스트(macOS 로컬의 게이트 실행): runtime 단위 703, 통합 24, vitest 42, cargo test 50, 모두 통과, 건너뜀 0. `selftest.sh` 는 279 시나리오다. 수동 확인(AC16)의 GUI 부분은 사람이 한다([docs/TEST_PLAN.md](docs/TEST_PLAN.md)).
+
+#### P1-02 P1-01 리뷰 5회차 후속과 포트 확인 — 9fc70db (2026-11-22)
 
 ##### 추가
 

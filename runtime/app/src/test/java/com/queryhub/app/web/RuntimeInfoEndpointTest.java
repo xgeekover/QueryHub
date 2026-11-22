@@ -30,7 +30,7 @@ class RuntimeInfoEndpointTest {
   @Test
   void returnsRuntimeInfoInSuccessEnvelope() {
     Instant before = Instant.now();
-    HttpResponse<String> response = http.get(RUNTIME_PATH);
+    HttpResponse<String> response = http.adminGet(RUNTIME_PATH);
 
     assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(200);
     LocalHttp.assertJsonContentType(response);
@@ -60,7 +60,7 @@ class RuntimeInfoEndpointTest {
 
   @Test
   void metaRequestIdEchoesValidIncomingRequestId() {
-    HttpResponse<String> response = http.get(RUNTIME_PATH, "runtime-check-1");
+    HttpResponse<String> response = http.adminGet(RUNTIME_PATH, "runtime-check-1");
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(LocalHttp.requestIdHeader(response)).isEqualTo("runtime-check-1");

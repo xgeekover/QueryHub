@@ -55,9 +55,12 @@ function status(state: RuntimeState, extra: Partial<RuntimeStatus> = {}): Runtim
   };
 }
 
-// runtime_status 는 current 를, 그 밖의 커맨드는 after 에 정한 상태(없으면 current)를 돌려준다.
+// 시험용 고정 가짜 토큰(셸이 만드는 형식과 같은 64 자 16진수). 실제 토큰이 아니다.
+const TOKEN = "0123456789abcdef".repeat(4);
+
+// admin_token 은 TOKEN 을, runtime_status 는 current 를, 그 밖의 커맨드는 after 에 정한 상태(없으면 current)를 돌려준다.
 function mockShell(current: RuntimeStatus, after: Partial<Record<string, RuntimeStatus>> = {}) {
-  const impl = async (command: string) => after[command] ?? current;
+  const impl = async (command: string) => (command === "admin_token" ? TOKEN : (after[command] ?? current));
   invokeMock.mockImplementation(impl as unknown as typeof invoke);
 }
 
@@ -128,7 +131,7 @@ describe("RuntimePanel", () => {
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("runtime_restart"));
 
     const commands = invokeMock.mock.calls.map((call) => call[0]);
-    expect(new Set(commands)).toEqual(new Set(["runtime_status", "runtime_stop", "runtime_restart"]));
+    expect(new Set(commands)).toEqual(new Set(["runtime_status", "runtime_stop", "runtime_restart", "admin_token"]));
   });
 
   it("running 이면 관리 API 에서 런타임 정보를 읽어 보여 준다", async () => {
@@ -142,8 +145,55 @@ describe("RuntimePanel", () => {
     expect(card).toHaveTextContent("42초");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:18580/admin/api/v1/runtime",
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ method: "GET", headers: { Authorization: `Bearer ${TOKEN}` } }),
     );
+  });
+
+  it("관리 토큰은 한 번만 받고, 화면과 웹 저장소에 남기지 않는다", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const localSet = vi.spyOn(window.localStorage, "setItem");
+    const sessionSet = vi.spyOn(window.sessionStorage, "setItem");
+    mockShell(status("running"));
+    render(<RuntimePanel dev={false} />);
+
+    const card = await screen.findByTestId("runtime-info");
+    await waitFor(() => expect(card).toHaveTextContent("queryhub-runtime"));
+    const tokenCalls = invokeMock.mock.calls.filter((call) => call[0] === "admin_token");
+    expect(tokenCalls).toEqual([["admin_token"]]);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(localSet).not.toHaveBeenCalled();
+    expect(sessionSet).not.toHaveBeenCalled();
+    expect(document.body.innerHTML).not.toContain(TOKEN);
+  });
+
+  it("관리 토큰을 받지 못하면 런타임 정보를 요청하지 않고 오류 문장을 보여 준다", async () => {
+    const impl = async (command: string) => {
+      if (command === "admin_token") {
+        throw new Error("not allowed");
+      }
+      return status("running");
+    };
+    invokeMock.mockImplementation(impl as unknown as typeof invoke);
+    render(<RuntimePanel dev={false} />);
+
+    const card = await screen.findByTestId("runtime-info");
+    await waitFor(() => expect(card).toHaveTextContent("관리 토큰을 셸에서 받지 못했다: not allowed"));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, "HTTP 401"],
+    [403, "HTTP 403"],
+  ] as const)("관리 API 의 %s 는 고정 문장으로 보이고 토큰은 화면에 없다", async (code, text) => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({ success: false, error: { code: "X", message: "m", requestId: "r" } }, { status: code }),
+    );
+    mockShell(status("running"));
+    render(<RuntimePanel dev={false} />);
+
+    const card = await screen.findByTestId("runtime-info");
+    await waitFor(() => expect(card).toHaveTextContent(text));
+    expect(document.body.innerHTML).not.toContain(TOKEN);
   });
 
   it("개발 서버에서는 같은 출처(프록시)로 요청한다", async () => {
@@ -151,7 +201,10 @@ describe("RuntimePanel", () => {
     render(<RuntimePanel dev={true} />);
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/admin/api/v1/runtime", expect.objectContaining({ method: "GET" })),
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/admin/api/v1/runtime",
+        expect.objectContaining({ method: "GET", headers: { Authorization: `Bearer ${TOKEN}` } }),
+      ),
     );
   });
 

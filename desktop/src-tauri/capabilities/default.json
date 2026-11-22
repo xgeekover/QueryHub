@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "main 창: 런타임 수명 주기 커맨드 네 개(runtime_status, runtime_start, runtime_stop, runtime_restart)만 허용한다. core 권한과 플러그인 권한은 주지 않는다. 런타임 정보는 UI 가 HTTP 로 관리 API 에서 읽는다(IPC 가 아니다).",
+  "description": "main 창(로컬 출처만, remote 없음): 런타임 수명 주기 커맨드 네 개(runtime_status, runtime_start, runtime_stop, runtime_restart)와 관리 토큰 커맨드 admin_token 만 허용한다. core 권한과 플러그인 권한은 주지 않는다. 런타임 정보는 UI 가 HTTP 로 관리 API 에서 읽고, admin_token 으로 받은 토큰을 Authorization: Bearer 헤더로 보낸다.",
   "windows": ["main"],
   "permissions": [
     "allow-runtime-status",
     "allow-runtime-start",
     "allow-runtime-stop",
-    "allow-runtime-restart"
+    "allow-runtime-restart",
+    "allow-admin-token"
   ]
 }

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use super::launch::{self, Env};
 use super::output::{self, OutputBuffer};
+use super::token::AdminToken;
 use super::{health, java, Failure, FailureKind, Health, RuntimeState, RuntimeStatus};
 
 /// desktop 프로파일의 고정 포트(runtime/app/src/main/resources/application-desktop.yml). 운영 CSP 의 connect-src 와 같다.
@@ -107,6 +108,8 @@ pub struct SupervisorHandle {
 struct Inner {
     config: SupervisorConfig,
     env: Env,
+    /// 셸 프로세스의 관리 토큰. 재시작해도 같은 값이다(셸 프로세스마다 한 번 만든다).
+    token: AdminToken,
     shared: Mutex<Shared>,
     lifecycle: Mutex<()>,
     output: Arc<OutputBuffer>,
@@ -128,7 +131,8 @@ struct LaunchPlan {
     java: PathBuf,
     args: Vec<String>,
     env: Env,
-    secret: Vec<u8>,
+    /// 자식 출력에서 가릴 값: Metadata DB 비밀번호와 관리 토큰.
+    secrets: Arc<[Vec<u8>]>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -136,14 +140,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Supervisor {
-    /// env 는 셸의 환경이다(운영: launch::process_env()).
-    pub fn new(config: SupervisorConfig, env: Env) -> Self {
+    /// env 는 셸의 환경이다(운영: launch::process_env()). token 은 셸 프로세스의 관리 토큰이다(lib.rs 의 setup 이 만든다).
+    pub fn new(config: SupervisorConfig, env: Env, token: AdminToken) -> Self {
         let output = Arc::new(OutputBuffer::new(config.output_lines));
         Supervisor {
             handle: SupervisorHandle {
                 inner: Arc::new(Inner {
                     config,
                     env,
+                    token,
                     shared: Mutex::new(Shared {
                         state: RuntimeState::Stopped,
                         health: Health::Unknown,
@@ -181,6 +186,11 @@ impl Drop for Supervisor {
 }
 
 impl SupervisorHandle {
+    /// 관리 토큰(admin_token 커맨드와 시험만 쓴다).
+    pub fn admin_token(&self) -> &AdminToken {
+        &self.inner.token
+    }
+
     /// 현재 상태. 수명 주기 작업을 기다리지 않는다.
     pub fn status(&self) -> RuntimeStatus {
         let config = &self.inner.config;
@@ -290,10 +300,10 @@ impl SupervisorHandle {
         };
         let pid = child.id();
         if let Some(stdout) = child.stdout.take() {
-            self.spawn_reader("stdout", stdout, epoch, plan.secret.clone());
+            self.spawn_reader("stdout", stdout, epoch, Arc::clone(&plan.secrets));
         }
         if let Some(stderr) = child.stderr.take() {
-            self.spawn_reader("stderr", stderr, epoch, plan.secret.clone());
+            self.spawn_reader("stderr", stderr, epoch, Arc::clone(&plan.secrets));
         }
         let generation = {
             let mut shared = lock(&inner.shared);
@@ -346,8 +356,11 @@ impl SupervisorHandle {
         }
         Ok(LaunchPlan {
             args: launch::child_args(&jar, config.port),
-            env: launch::child_env(env, &settings, std::process::id()),
-            secret: settings.password().as_bytes().to_vec(),
+            env: launch::child_env(env, &settings, &inner.token, std::process::id()),
+            secrets: Arc::from(vec![
+                settings.password().as_bytes().to_vec(),
+                inner.token.expose().as_bytes().to_vec(),
+            ]),
             java,
         })
     }
@@ -360,7 +373,7 @@ impl SupervisorHandle {
             .transition(&mut shared, RuntimeState::Failed, Some(failure));
     }
 
-    fn spawn_reader<R>(&self, stream: &'static str, reader: R, epoch: u64, secret: Vec<u8>)
+    fn spawn_reader<R>(&self, stream: &'static str, reader: R, epoch: u64, secrets: Arc<[Vec<u8>]>)
     where
         R: std::io::Read + Send + 'static,
     {
@@ -371,7 +384,7 @@ impl SupervisorHandle {
         let _ = thread::Builder::new()
             .name(format!("queryhub-runtime-{stream}"))
             .spawn(move || {
-                output::drain(reader, &secret, max_bytes, |line| {
+                output::drain(reader, &secrets, max_bytes, |line| {
                     if echo {
                         eprintln!("[runtime {stream}] {line}");
                     }

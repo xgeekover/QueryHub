@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.queryhub.app.QueryHubApplication;
+import com.queryhub.app.it.support.IntegrationHttp;
 import com.queryhub.app.it.support.MetadataMariaDb;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -45,6 +46,7 @@ class MetadataStartupFailureIntegrationTest {
         };
     SpringApplication application =
         new SpringApplicationBuilder(QueryHubApplication.class)
+            .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY)
             .web(WebApplicationType.SERVLET)
             .lazyInitialization(lazy)
             .profiles("desktop")

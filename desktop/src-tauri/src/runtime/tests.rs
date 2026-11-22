@@ -3,6 +3,9 @@
 //! - 가짜 자식은 sh 스크립트다. 스크립트와 JAR 경로에 표식 queryhub-fake-runtime 이 들어 있어 남은 프로세스를
 //!   `pgrep -fl queryhub-fake-runtime` 으로 찾을 수 있다.
 //! - HTTP 는 테스트 안의 작은 서버가 임시 포트에서 답한다. 포트 18580 과 std::env::set_var 는 쓰지 않는다.
+//! - 실제 포트 확인(launch::port_is_free)을 거치는 테스트의 포트는 free_port() 가 OS 의 임시 포트 범위 밖에서 고른다
+//!   (아래 설명).
+//! - 관리 토큰은 테스트마다 AdminToken::generate() 로 만든다(고정 값을 쓰지 않는다).
 //! - 모든 테스트는 끝날 때 자식을 정지하거나(Drop) 자식이 끝났음을 확인한다.
 
 use std::collections::BTreeMap;
@@ -18,7 +21,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::launch::{self, Env};
 use super::output::MASK;
-use super::{FailureKind, Health, RuntimeState, RuntimeStatus, Supervisor, SupervisorConfig};
+use super::{
+    AdminToken, FailureKind, Health, RuntimeState, RuntimeStatus, Supervisor, SupervisorConfig,
+};
 
 const MARKER: &str = "queryhub-fake-runtime";
 const PASSWORD: &str = "pw-secret-marker-7f3a";
@@ -29,9 +34,9 @@ const DB_USER: &str = "qh-user-marker";
 const SLEEP_LOOP: &str = "while :; do [ -f exit-now ] && exit 7; sleep 0.1; done";
 /// TERM 을 무시한다(정지 유예 뒤 KILL 되어야 한다).
 const TERM_IGNORING: &str = "trap '' TERM\ntouch trapped\nwhile :; do sleep 0.1; done";
-/// 비밀번호를 stderr 에 찍고 3 으로 끝난다.
+/// 비밀번호와 관리 토큰을 stderr 에 찍고 3 으로 끝난다(토큰 줄은 stdout 과 stderr 둘 다).
 const EXIT_WITH_PASSWORD: &str =
-    "echo \"metadata login failed for qh-user-marker password=$QUERYHUB_METADATA_DB_PASSWORD\" >&2\nexit 3";
+    "echo \"admin token=$QUERYHUB_ADMIN_TOKEN\"\necho \"metadata login failed for qh-user-marker password=$QUERYHUB_METADATA_DB_PASSWORD\" >&2\necho \"admin token=$QUERYHUB_ADMIN_TOKEN\" >&2\nexit 3";
 /// 환경과 인자를 파일로 남기고 기다린다.
 const DUMP_ENV_AND_ARGS: &str = "env > child-env.tmp && mv child-env.tmp child-env.txt\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > child-argv.tmp && mv child-argv.tmp child-argv.txt\nwhile :; do sleep 0.1; done";
 
@@ -153,10 +158,33 @@ fn always_free(_: u16) -> bool {
     true
 }
 
-/// 아무도 듣지 않는 임시 포트.
+/// free_port 가 고르는 범위의 시작과 크기: 20000-31999. macOS(49152-65535)와 Linux(32768-60999)의 임시 포트 범위 밖이다.
+const PORT_RANGE_FIRST: u16 = 20000;
+const PORT_RANGE_SIZE: u16 = 12000;
+
+/// 이 테스트 바이너리 안에서 겹치지 않는, 아무도 듣지 않는 포트. 실제 포트 확인(launch::port_is_free)으로 고른다.
+///
+/// 예전에는 127.0.0.1:0 에 바인딩했다가 놓은 임시 포트를 썼다. 그 포트는 놓은 순간부터 다른 테스트 스레드의 나가는 연결
+/// (FakeServer 로 가는 readiness·health 확인 등)이 로컬 포트로 받을 수 있고, 그러면 감독의 port_is_free 가 사용 중으로 보아
+/// PortInUse 로 실패했다(P1-02 리뷰 R4, P1-03 실행 A 의 한 번 실패: 포트 60435). 나가는 연결과 포트 0 바인딩은 임시 포트
+/// 범위에서만 포트를 받으므로 그 범위 밖의 포트는 그렇게 빼앗기지 않는다. 테스트끼리는 원자 카운터로 서로 다른 포트를
+/// 받는다. 시작점은 PID 로 흩는다(동시에 도는 다른 테스트 프로세스와 겹칠 가능성을 줄인다).
 fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    listener.local_addr().expect("addr").port()
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    let offset = (std::process::id() % u32::from(PORT_RANGE_SIZE)) as u16;
+    for _ in 0..PORT_RANGE_SIZE {
+        let n = NEXT.fetch_add(1, Ordering::SeqCst) % PORT_RANGE_SIZE;
+        let port = PORT_RANGE_FIRST + (offset + n) % PORT_RANGE_SIZE;
+        if launch::port_is_free(port) {
+            return port;
+        }
+    }
+    panic!("{PORT_RANGE_FIRST} 부터 {PORT_RANGE_SIZE} 개 중 빈 포트가 없다");
+}
+
+/// 테스트마다 새 관리 토큰.
+fn token() -> AdminToken {
+    AdminToken::generate().expect("token")
 }
 
 fn alive(pid: u32) -> bool {
@@ -286,7 +314,11 @@ fn starting_becomes_running_once_readiness_answers_200() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let server = FakeServer::start(200, 200);
-    let supervisor = Supervisor::new(sandbox.config(server.port, always_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
 
     let first = supervisor.start();
     assert!(
@@ -317,7 +349,7 @@ fn readiness_that_never_answers_200_ends_in_startup_timeout_and_kills_the_child(
     let server = FakeServer::start(503, 503);
     let mut config = sandbox.config(server.port, always_free);
     config.startup_timeout = Duration::from_secs(1);
-    let supervisor = Supervisor::new(config, sandbox.env());
+    let supervisor = Supervisor::new(config, sandbox.env(), token());
 
     let pid = supervisor.start().pid.expect("pid");
     let failed = wait_for(&supervisor, WAIT, "startup_timeout", |s| {
@@ -339,6 +371,7 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
+        token(),
     );
 
     supervisor.start();
@@ -360,11 +393,32 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
         line,
         &format!("metadata login failed for qh-user-marker password={MASK}")
     );
+    // 관리 토큰도 가려진다(stdout 과 stderr 의 줄 모두).
+    let token = supervisor.admin_token().expose().to_string();
+    let token_lines: Vec<&String> = failure
+        .output_tail
+        .iter()
+        .filter(|l| l.starts_with("admin token="))
+        .collect();
+    assert!(!token_lines.is_empty(), "{:?}", failure.output_tail);
+    for line in token_lines {
+        assert_eq!(line, &format!("admin token={MASK}"));
+    }
 
     let json = serde_json::to_string(&failed).expect("json");
     assert!(
         !json.contains(PASSWORD),
         "비밀번호가 상태 JSON 에 있다: {json}"
+    );
+    assert!(!json.contains(&token), "토큰이 상태 JSON 에 있다");
+    let failure_json = serde_json::to_string(failure).expect("failure json");
+    assert!(
+        !failure_json.contains(&token),
+        "토큰이 Failure JSON 에 있다"
+    );
+    assert!(
+        !format!("{failed:?}").contains(&token),
+        "토큰이 Debug 에 있다"
     );
     for expected in [
         "\"state\":\"failed\"",
@@ -387,6 +441,7 @@ fn stop_sends_sigterm_and_gives_stopped() {
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
+        token(),
     );
     let pid = supervisor.start().pid.expect("pid");
     wait_file(&sandbox.work().join("spawned"), WAIT);
@@ -411,7 +466,7 @@ fn stop_kills_a_child_that_ignores_sigterm_after_the_grace_period() {
     sandbox.fake_java("21.0.11", TERM_IGNORING);
     let mut config = sandbox.config(free_port(), launch::port_is_free);
     config.stop_grace = Duration::from_secs(1);
-    let supervisor = Supervisor::new(config, sandbox.env());
+    let supervisor = Supervisor::new(config, sandbox.env(), token());
     let pid = supervisor.start().pid.expect("pid");
     wait_file(&sandbox.work().join("trapped"), WAIT);
 
@@ -436,7 +491,11 @@ fn restart_gives_running_with_a_different_pid() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let server = FakeServer::start(200, 200);
-    let supervisor = Supervisor::new(sandbox.config(server.port, always_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
     supervisor.start();
     let first = wait_for(&supervisor, WAIT, "running", |s| {
         s.state == RuntimeState::Running
@@ -476,12 +535,19 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         ("DEBUG", "true"),
         ("SPRING_APPLICATION_JSON", "{}"),
         ("FOO_BAR", "baz"),
+        // 셸 자신의 환경에 있는 토큰 변수는 넘어가지 않는다(자식의 토큰은 셸이 만든 값이다).
+        (launch::ADMIN_TOKEN_FILE_VAR, "/x"),
     ];
     let mut injected = sandbox.env();
     for (name, value) in allowed.iter().chain(denied.iter()) {
         injected.insert(name.to_string(), value.to_string());
     }
-    let supervisor = Supervisor::new(sandbox.config(port, launch::port_is_free), injected);
+    injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
+    let supervisor = Supervisor::new(
+        sandbox.config(port, launch::port_is_free),
+        injected,
+        token(),
+    );
     supervisor.start();
     wait_file(&sandbox.work().join("child-env.txt"), WAIT);
     wait_file(&sandbox.work().join("child-argv.txt"), WAIT);
@@ -498,6 +564,12 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
     assert_eq!(env.get(launch::DB_PASSWORD_VAR), Some(&PASSWORD));
     let parent_pid = std::process::id().to_string();
     assert_eq!(env.get(launch::PARENT_PID_VAR), Some(&parent_pid.as_str()));
+    let token = supervisor.admin_token().expose().to_string();
+    assert_eq!(env.get(launch::ADMIN_TOKEN_VAR), Some(&token.as_str()));
+    assert!(
+        env.values().all(|v| *v != "inherited"),
+        "셸의 토큰 값이 넘어갔다"
+    );
     assert_eq!(env.get("PATH"), Some(&"/usr/bin:/bin"));
     for (name, value) in allowed {
         assert_eq!(env.get(name), Some(&value), "{name}");
@@ -525,7 +597,7 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         .copied()
         .filter(|k| k.starts_with("QUERYHUB_"))
         .collect();
-    assert_eq!(queryhub.len(), 6, "{queryhub:?}");
+    assert_eq!(queryhub.len(), 7, "{queryhub:?}");
 
     let argv_text = fs::read_to_string(sandbox.work().join("child-argv.txt")).expect("argv");
     let argv: Vec<&str> = argv_text.lines().collect();
@@ -541,6 +613,51 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         ]
     );
     assert!(argv.iter().all(|a| !a.contains(PASSWORD)));
+    assert!(
+        argv.iter().all(|a| !a.contains(&token)),
+        "토큰이 argv 에 있다"
+    );
+}
+
+// (6) java -version 사전 확인의 환경에는 토큰도 Metadata DB 설정도 없다(허용 목록의 셸 환경뿐이다).
+#[test]
+fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings() {
+    let sandbox = Sandbox::new();
+    let version_env = sandbox.root.join("version-env.txt");
+    let script = format!(
+        "#!/bin/sh\n# {MARKER}\nif [ \"$1\" = \"-version\" ]; then\n  env > '{}'\n  echo 'openjdk version \"21.0.11\" 2026-04-21 LTS' >&2\n  exit 0\nfi\ntouch spawned\n{SLEEP_LOOP}\n",
+        version_env.display()
+    );
+    fs::write(sandbox.java(), script).expect("script");
+    fs::set_permissions(sandbox.java(), fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut injected = sandbox.env();
+    injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
+    let supervisor = Supervisor::new(
+        sandbox.config(free_port(), launch::port_is_free),
+        injected,
+        token(),
+    );
+    let pid = supervisor.start().pid.expect("pid");
+    let token = supervisor.admin_token().expose().to_string();
+
+    let text = fs::read_to_string(&version_env).expect("version env");
+    let names: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(k, _)| k))
+        .collect();
+    assert!(!text.contains(&token), "토큰이 java -version 환경에 있다");
+    assert!(!text.contains("inherited"));
+    assert!(!text.contains(PASSWORD));
+    for absent in [
+        launch::ADMIN_TOKEN_VAR,
+        launch::ADMIN_TOKEN_FILE_VAR,
+        launch::DB_PASSWORD_VAR,
+        launch::PARENT_PID_VAR,
+    ] {
+        assert!(!names.contains(&absent), "{absent} 가 있다: {names:?}");
+    }
+    assert_eq!(supervisor.stop().state, RuntimeState::Stopped);
+    assert!(!alive(pid));
 }
 
 // (7)
@@ -551,7 +668,11 @@ fn missing_metadata_settings_list_only_their_names_and_spawn_nothing() {
     let mut env = sandbox.env();
     env.remove(launch::DB_NAME_VAR);
     env.insert(launch::DB_PASSWORD_VAR.to_string(), String::new());
-    let supervisor = Supervisor::new(sandbox.config(free_port(), launch::port_is_free), env);
+    let supervisor = Supervisor::new(
+        sandbox.config(free_port(), launch::port_is_free),
+        env,
+        token(),
+    );
 
     let status = supervisor.start();
     let failure = status.failure.as_ref().expect("failure");
@@ -585,7 +706,11 @@ fn a_bound_port_gives_port_in_use_without_spawning() {
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let occupied = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = occupied.local_addr().expect("addr").port();
-    let supervisor = Supervisor::new(sandbox.config(port, launch::port_is_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(port, launch::port_is_free),
+        sandbox.env(),
+        token(),
+    );
 
     let status = supervisor.start();
     assert_eq!(failure_kind(&status), Some(FailureKind::PortInUse));
@@ -605,7 +730,11 @@ fn a_wildcard_listener_gives_port_in_use_without_spawning() {
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let occupied = TcpListener::bind("0.0.0.0:0").expect("bind");
     let port = occupied.local_addr().expect("addr").port();
-    let supervisor = Supervisor::new(sandbox.config(port, launch::port_is_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(port, launch::port_is_free),
+        sandbox.env(),
+        token(),
+    );
 
     let status = supervisor.start();
     assert_eq!(
@@ -672,6 +801,7 @@ fn java_17_gives_java_too_old_naming_the_version_and_path() {
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
+        token(),
     );
 
     let status = supervisor.start();
@@ -693,7 +823,11 @@ fn a_missing_java_gives_java_not_found() {
     let mut env = sandbox.env();
     let missing = sandbox.root.join("nowhere").join("java");
     env.insert(launch::JAVA_VAR.into(), missing.display().to_string());
-    let supervisor = Supervisor::new(sandbox.config(free_port(), launch::port_is_free), env);
+    let supervisor = Supervisor::new(
+        sandbox.config(free_port(), launch::port_is_free),
+        env,
+        token(),
+    );
 
     let status = supervisor.start();
     assert_eq!(failure_kind(&status), Some(FailureKind::JavaNotFound));
@@ -714,7 +848,11 @@ fn a_missing_jar_gives_jar_not_found_naming_the_path() {
     let mut env = sandbox.env();
     let missing = sandbox.root.join("missing").join("queryhub-runtime.jar");
     env.insert(launch::JAR_VAR.into(), missing.display().to_string());
-    let supervisor = Supervisor::new(sandbox.config(free_port(), launch::port_is_free), env);
+    let supervisor = Supervisor::new(
+        sandbox.config(free_port(), launch::port_is_free),
+        env,
+        token(),
+    );
 
     let status = supervisor.start();
     let failure = status.failure.as_ref().expect("failure");
@@ -726,7 +864,11 @@ fn a_missing_jar_gives_jar_not_found_naming_the_path() {
     // 변수도 기본 경로도 없으면(릴리스 빌드) Phase 8 계획을 말한다.
     let mut env = sandbox.env();
     env.remove(launch::JAR_VAR);
-    let supervisor = Supervisor::new(sandbox.config(free_port(), launch::port_is_free), env);
+    let supervisor = Supervisor::new(
+        sandbox.config(free_port(), launch::port_is_free),
+        env,
+        token(),
+    );
     let status = supervisor.start();
     let failure = status.failure.as_ref().expect("failure");
     assert_eq!(failure.kind, FailureKind::JarNotFound);
@@ -739,7 +881,11 @@ fn dropping_the_supervisor_kills_a_running_child() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let server = FakeServer::start(200, 200);
-    let supervisor = Supervisor::new(sandbox.config(server.port, always_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
     supervisor.start();
     let pid = wait_for(&supervisor, WAIT, "running", |s| {
         s.state == RuntimeState::Running
@@ -759,6 +905,7 @@ fn shutdown_kills_the_child_and_blocks_later_starts() {
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
+        token(),
     );
     let pid = supervisor.start().pid.expect("pid");
 
@@ -779,6 +926,7 @@ fn shutdown_during_preflight_spawns_nothing_and_blocks_later_starts() {
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
+        token(),
     );
 
     // 띄우자마자 정지되면 spawned 표식이 생기기 전에 끝날 수 있으므로, 상태에 자식이 한 번이라도 보였는지도 기록한다.
@@ -835,7 +983,11 @@ fn health_503_keeps_running_with_health_down_and_a_later_exit_gives_failed_exite
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let server = FakeServer::start(200, 503);
-    let supervisor = Supervisor::new(sandbox.config(server.port, always_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
     supervisor.start();
 
     let down = wait_for(&supervisor, WAIT, "running + down", |s| {
@@ -863,7 +1015,11 @@ fn start_while_running_and_stop_while_stopped_are_no_ops() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let server = FakeServer::start(200, 200);
-    let supervisor = Supervisor::new(sandbox.config(server.port, always_free), sandbox.env());
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
 
     let never_started = supervisor.stop();
     assert_eq!(never_started.state, RuntimeState::Stopped);

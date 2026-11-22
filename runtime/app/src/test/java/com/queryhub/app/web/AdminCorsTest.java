@@ -7,8 +7,10 @@ import com.queryhub.adapter.web.admin.cors.AdminCorsProperties;
 import com.queryhub.app.QueryHubApplication;
 import com.queryhub.app.support.LocalHttp;
 import com.queryhub.app.support.QueryHubWebTest;
+import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
 import com.queryhub.app.support.WithoutMetadataDatabase;
+import com.queryhub.domain.error.ErrorCode;
 import java.io.IOException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -77,7 +79,7 @@ class AdminCorsTest {
     @ParameterizedTest
     @ValueSource(strings = {TAURI_ORIGIN, WINDOWS_ORIGIN})
     void webViewOriginReadsTheRuntimeInfo(String origin) {
-      HttpResponse<String> response = get(http, RUNTIME_PATH, origin);
+      HttpResponse<String> response = adminGet(http, RUNTIME_PATH, origin);
 
       assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(200);
       assertThat(response.headers().firstValue(ACAO)).hasValue(origin);
@@ -90,7 +92,8 @@ class AdminCorsTest {
     @ParameterizedTest
     @ValueSource(strings = {"http://localhost:1420", "https://evil.example"})
     void otherOriginsAreRejected(String origin) {
-      HttpResponse<String> response = get(http, RUNTIME_PATH, origin);
+      // 유효한 토큰이 있어도 CORS 가 거부한다 (P1-03 전과 같은 의미).
+      HttpResponse<String> response = adminGet(http, RUNTIME_PATH, origin);
 
       assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(403);
       assertThat(response.headers().firstValue(ACAO)).isEmpty();
@@ -134,9 +137,52 @@ class AdminCorsTest {
       assertThat(response.headers().firstValue(ACAO)).isEmpty();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {TAURI_ORIGIN, WINDOWS_ORIGIN})
+    void preflightAllowingTheAuthorizationHeaderNeedsNoToken(String origin) {
+      // P1-03 AC10: preflight 는 토큰 없이 답한다. 허용 요청 헤더는 authorization 하나뿐이다.
+      HttpResponse<String> response = preflight(http, origin, "GET", "authorization");
+
+      assertThat(response.statusCode()).as("body=%s", response.body()).isBetween(200, 299);
+      assertThat(response.headers().allValues(ACAO)).containsExactly(origin);
+      assertThat(headerValues(response, "Access-Control-Allow-Headers"))
+          .extracting(value -> value.toLowerCase(java.util.Locale.ROOT))
+          .containsExactly("authorization");
+      assertThat(headerValues(response, ACAM)).containsExactly("GET");
+      assertThat(response.headers().firstValue(ACAC)).isEmpty();
+      assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"x-foo", "authorization, x-foo"})
+    void preflightAskingForOtherHeadersIsRejected(String requestHeaders) {
+      HttpResponse<String> response = preflight(http, TAURI_ORIGIN, "GET", requestHeaders);
+
+      assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(403);
+      assertThat(response.headers().firstValue(ACAO)).isEmpty();
+    }
+
+    @Test
+    void preflightForPostWithAuthorizationIsRejected() {
+      HttpResponse<String> response = preflight(http, TAURI_ORIGIN, "POST", "authorization");
+
+      assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(403);
+      assertThat(response.headers().firstValue(ACAO)).isEmpty();
+    }
+
+    @Test
+    void tokenlessGetFromTheWebViewGetsUnauthorizedWithCorsHeadersOnce() {
+      // 401 에도 CORS 헤더가 붙어야 UI 가 네트워크 오류가 아닌 401 을 본다. MVC 매핑이 없으므로 한 번만 붙는다.
+      HttpResponse<String> response = get(http, RUNTIME_PATH, TAURI_ORIGIN);
+
+      LocalHttp.assertErrorEnvelope(response, 401, ErrorCode.UNAUTHORIZED);
+      assertThat(response.headers().allValues(ACAO)).containsExactly(TAURI_ORIGIN);
+      assertThat(response.headers().allValues("WWW-Authenticate")).containsExactly("Bearer");
+    }
+
     @Test
     void requestWithoutOriginIsUnchanged() {
-      HttpResponse<String> response = http.get(RUNTIME_PATH);
+      HttpResponse<String> response = http.adminGet(RUNTIME_PATH);
 
       assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(200);
       assertThat(response.headers().firstValue(ACAO)).isEmpty();
@@ -164,7 +210,7 @@ class AdminCorsTest {
         int port = ((WebServerApplicationContext) context).getWebServer().getPort();
         LocalHttp http = new LocalHttp(port);
 
-        HttpResponse<String> get = get(http, RUNTIME_PATH, TAURI_ORIGIN);
+        HttpResponse<String> get = adminGet(http, RUNTIME_PATH, TAURI_ORIGIN);
         assertThat(get.statusCode()).as("body=%s", get.body()).isEqualTo(200);
         assertThat(get.headers().firstValue(ACAO)).isEmpty();
         assertThat(LocalHttp.json(get).path("data").path("mode").stringValue()).isEqualTo("server");
@@ -172,6 +218,11 @@ class AdminCorsTest {
         HttpResponse<String> preflight = preflight(http, TAURI_ORIGIN, "GET", null);
         assertThat(preflight.headers().firstValue(ACAO)).isEmpty();
         assertThat(preflight.headers().firstValue(ACAM)).isEmpty();
+        assertNoCorsHeaders(get);
+        assertNoCorsHeaders(preflight);
+        HttpResponse<String> tokenless = get(http, RUNTIME_PATH, TAURI_ORIGIN);
+        assertThat(tokenless.statusCode()).isEqualTo(401);
+        assertNoCorsHeaders(tokenless);
       }
     }
 
@@ -188,7 +239,7 @@ class AdminCorsTest {
       return new SpringApplicationBuilder(QueryHubApplication.class)
           .web(WebApplicationType.SERVLET)
           .profiles("server")
-          .properties(WithoutMetadataDatabase.PROPERTY)
+          .properties(WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY)
           .initializers(TestComponentScanExclusion::register)
           .run("--server.address=127.0.0.1", "--server.port=0");
     }
@@ -231,7 +282,7 @@ class AdminCorsTest {
               .web(WebApplicationType.SERVLET)
               .lazyInitialization(lazy)
               .profiles("desktop")
-              .properties(WithoutMetadataDatabase.PROPERTY)
+              .properties(WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY)
               .initializers(TestComponentScanExclusion::register)
               .listeners(webServerListener)
               .build();
@@ -255,6 +306,15 @@ class AdminCorsTest {
 
   private static HttpResponse<String> get(LocalHttp http, String path, String origin) {
     return http.send(http.request(path).header("Origin", origin).GET().build());
+  }
+
+  private static HttpResponse<String> adminGet(LocalHttp http, String path, String origin) {
+    return http.send(http.adminRequest(path).header("Origin", origin).GET().build());
+  }
+
+  private static void assertNoCorsHeaders(HttpResponse<String> response) {
+    assertThat(response.headers().map().keySet())
+        .noneMatch(name -> name.toLowerCase(java.util.Locale.ROOT).startsWith("access-control-"));
   }
 
   private static HttpResponse<String> preflight(

@@ -1,4 +1,4 @@
-// 셸(Tauri IPC) 호출은 이 파일에만 있다. 수명 주기만 IPC 로 다루고, 런타임 정보는 adminApi.ts 가 HTTP 로 읽는다.
+// 셸(Tauri IPC) 호출은 이 파일에만 있다. 수명 주기와 관리 토큰만 IPC 로 다루고, 런타임 정보는 adminApi.ts 가 HTTP 로 읽는다.
 // 커맨드 이름은 Rust 의 generate_handler!(desktop/src-tauri/src/lib.rs)와 같다. 커맨드는 인자를 받지 않는다.
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
@@ -30,4 +30,10 @@ export function runtimeStop(): Promise<RuntimeStatus> {
 
 export function runtimeRestart(): Promise<RuntimeStatus> {
   return call("runtime_restart");
+}
+
+// 관리 API 의 Bearer 토큰(ADR-021). 셸 프로세스마다 한 번 만든 값이다. 부르는 쪽은 메모리에만 두고 Authorization 헤더로만
+// 보낸다(localStorage, sessionStorage, 화면, 로그에 남기지 않는다).
+export function adminToken(): Promise<string> {
+  return invoke("admin_token");
 }

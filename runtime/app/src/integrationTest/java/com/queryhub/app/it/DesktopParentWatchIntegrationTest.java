@@ -101,6 +101,7 @@ class DesktopParentWatchIntegrationTest {
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/admin/api/v1/runtime"))
                 .timeout(Duration.ofSeconds(10))
                 .header("Origin", TAURI_ORIGIN)
+                .header("Authorization", "Bearer " + IntegrationHttp.ADMIN_TOKEN)
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -189,6 +190,8 @@ class DesktopParentWatchIntegrationTest {
     Map<String, String> env = builder.environment();
     env.keySet().removeIf(name -> name.startsWith("QUERYHUB_") || name.startsWith("SPRING_"));
     env.putAll(metadataEnvironment);
+    // 셸이 하는 것처럼 관리자 토큰을 환경변수로 넘긴다 (argv 에는 넣지 않는다).
+    env.put("QUERYHUB_ADMIN_TOKEN", IntegrationHttp.ADMIN_TOKEN);
     env.put(PARENT_PID_VARIABLE, parentPid);
     Process process = builder.start();
     processes.add(process);

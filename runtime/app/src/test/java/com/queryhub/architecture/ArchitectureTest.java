@@ -15,7 +15,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
 /**
- * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R8 을 적용한다.
+ * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R9 를 적용한다.
  *
  * <p>app 의 테스트 클래스패스에는 모든 모듈이 있으므로, 나중에 추가되는 모듈의 클래스도 별도 설정 없이 검사된다.
  */
@@ -83,5 +83,13 @@ class ArchitectureTest {
   @Test
   void r8OnlyPersistenceAdaptersAndAppUseJdbc() {
     RULES.r8OnlyPersistenceAdaptersAndAppUseJdbc().check(PRODUCTION);
+  }
+
+  @Test
+  void r9TokenVerifierComparesInConstantTime() {
+    RULES.r9TokenVerifierComparesInConstantTime().check(PRODUCTION);
+    // 규칙이 실제 비교기를 대상으로 삼는다(이름이 바뀌어 대상이 비면 ArchUnit 이 실패하지만, 대상을 직접 확인해 둔다).
+    assertThat(PRODUCTION.contain("com.queryhub.adapter.web.admin.security.AdminTokenVerifier"))
+        .isTrue();
   }
 }

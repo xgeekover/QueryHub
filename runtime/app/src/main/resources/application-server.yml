@@ -1,6 +1,12 @@
 # server 프로파일: 서버 배포. 모든 인터페이스에 바인딩한다.
 # 반드시 SPRING_PROFILES_ACTIVE=server 처럼 명시적으로 선택한다.
-# 인증과 바인딩 주소 보호는 Phase 1 에서 추가한다 (계획).
+# 관리 API 는 Bearer 관리자 토큰으로 보호한다 (QUERYHUB_ADMIN_TOKEN 또는 QUERYHUB_ADMIN_TOKEN_FILE, P1-03).
+# 바인딩 주소 보호(바인딩 가드)는 아직 없다 (SECURITY.md 알려진 공백).
 server:
   address: 0.0.0.0
   port: 8080
+
+queryhub:
+  admin:
+    # 서버는 다른 호스트에서 관리 요청을 받는다 (토큰은 그대로 필요하다). Host 검사는 allowed-hosts 를 설정할 때만 한다.
+    allow-remote: true

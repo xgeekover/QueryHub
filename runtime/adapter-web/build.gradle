@@ -2,6 +2,8 @@
 dependencies {
     implementation project(':application')
     implementation libs.spring.boot.starter.webmvc
+    // 관리 API 의 SecurityFilterChain, Bearer 토큰 필터, 네트워크 가드 (P1-03).
+    implementation libs.spring.boot.starter.security
 
     // 필터 단위 테스트에 spring-test 의 MockHttpServletRequest 등을 쓴다.
     testImplementation libs.spring.boot.starter.test

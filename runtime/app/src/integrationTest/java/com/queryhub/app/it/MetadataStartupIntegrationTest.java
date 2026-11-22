@@ -70,7 +70,7 @@ class MetadataStartupIntegrationTest extends MetadataDatabaseIntegrationTest {
 
   @Test
   void runtimeInfoIsUnchangedFromP0A() throws Exception {
-    HttpResponse<String> response = IntegrationHttp.get(port, "/admin/api/v1/runtime");
+    HttpResponse<String> response = IntegrationHttp.adminGet(port, "/admin/api/v1/runtime");
 
     assertThat(response.statusCode()).as("body=%s", response.body()).isEqualTo(200);
     JsonNode body = IntegrationHttp.json(response);
@@ -90,6 +90,7 @@ class MetadataStartupIntegrationTest extends MetadataDatabaseIntegrationTest {
 
     try (ConfigurableApplicationContext server =
         new SpringApplicationBuilder(QueryHubApplication.class)
+            .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY)
             .web(WebApplicationType.SERVLET)
             .profiles("server")
             .properties(
@@ -101,7 +102,7 @@ class MetadataStartupIntegrationTest extends MetadataDatabaseIntegrationTest {
       HttpResponse<String> health = IntegrationHttp.get(serverPort, "/actuator/health");
       assertThat(health.statusCode()).as("body=%s", health.body()).isEqualTo(200);
       assertThat(IntegrationHttp.json(health).path("status").stringValue()).isEqualTo("UP");
-      HttpResponse<String> runtime = IntegrationHttp.get(serverPort, "/admin/api/v1/runtime");
+      HttpResponse<String> runtime = IntegrationHttp.adminGet(serverPort, "/admin/api/v1/runtime");
       assertThat(IntegrationHttp.json(runtime).path("data").path("mode").stringValue())
           .isEqualTo("server");
       assertThat(server.getEnvironment().getProperty("server.address")).isEqualTo("127.0.0.1");
@@ -123,6 +124,7 @@ class MetadataStartupIntegrationTest extends MetadataDatabaseIntegrationTest {
     try (ServerSocket trap = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
       try (ConfigurableApplicationContext context =
           new SpringApplicationBuilder(QueryHubApplication.class)
+              .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY)
               .web(WebApplicationType.SERVLET)
               .profiles("desktop")
               .properties(MetadataMariaDb.applicationProperties(database, MetadataMariaDb.PASSWORD))

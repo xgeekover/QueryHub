@@ -42,6 +42,9 @@ class BootJarIntegrationTest {
 
   private static final String FRESH_DATABASE = "queryhub_bootjar";
 
+  /** 토큰 없는 기동 테스트 전용 데이터베이스(createEmptyDatabase 는 이미 있으면 실패한다). */
+  private static final String NO_TOKEN_DATABASE = "queryhub_bootjar_no_token";
+
   private static final Duration HEALTHY_WITHIN = Duration.ofSeconds(60);
 
   private static Path bootJar;
@@ -62,12 +65,26 @@ class BootJarIntegrationTest {
     int port = freeLoopbackPort();
     Path log = workDir.resolve("healthy.log");
 
-    Process process = start(log, port, metadataEnvironment(true));
+    Process process = start(log, port, metadataEnvironment(true), true);
     try {
       HttpResponse<String> health = awaitHealthy(process, port, log);
 
       assertThat(health.statusCode()).as("body=%s", health.body()).isEqualTo(200);
       assertThat(IntegrationHttp.json(health).path("status").stringValue()).isEqualTo("UP");
+
+      // P1-03 AC14: 관리 API 는 환경변수로 받은 토큰이 있어야 열리고, health 는 토큰 없이 열린다.
+      HttpResponse<String> tokenless = IntegrationHttp.get(port, "/admin/api/v1/runtime");
+      assertThat(tokenless.statusCode()).as("body=%s", tokenless.body()).isEqualTo(401);
+      assertThat(tokenless.headers().firstValue("WWW-Authenticate")).hasValue("Bearer");
+      HttpResponse<String> admin = IntegrationHttp.adminGet(port, "/admin/api/v1/runtime");
+      assertThat(admin.statusCode()).as("body=%s", admin.body()).isEqualTo(200);
+      assertThat(IntegrationHttp.json(admin).path("data").path("name").stringValue())
+          .isEqualTo("queryhub-runtime");
+      // 토큰은 argv 에 없다 (ps 로 보이지 않는다).
+      String commandLine = process.info().commandLine().orElse("");
+      assertThat(commandLine).doesNotContain(IntegrationHttp.ADMIN_TOKEN);
+      assertThat(process.info().arguments().map(List::of).orElse(List.of()))
+          .noneMatch(argument -> argument.contains(IntegrationHttp.ADMIN_TOKEN));
     } finally {
       stop(process);
     }
@@ -84,15 +101,39 @@ class BootJarIntegrationTest {
       assertThat(rs.next()).isFalse();
     }
     assertThat(Files.readString(log, StandardCharsets.UTF_8))
-        .as("출력에 비밀번호가 없어야 한다")
-        .doesNotContain(MetadataMariaDb.PASSWORD);
+        .as("출력에 비밀번호와 관리자 토큰이 없어야 한다")
+        .doesNotContain(MetadataMariaDb.PASSWORD)
+        .doesNotContain(IntegrationHttp.ADMIN_TOKEN);
+  }
+
+  @Test
+  void bootJarWithoutTheAdminTokenExitsNonZeroWithoutOpeningThePort() throws Exception {
+    // Metadata DB 설정은 맞게 주고 토큰만 뺀다. 그래서 실패 원인은 토큰뿐이다.
+    MetadataMariaDb.createEmptyDatabase(NO_TOKEN_DATABASE);
+    Path log = workDir.resolve("no-token.log");
+    int port = freeLoopbackPort();
+    Map<String, String> metadata = metadataEnvironment(true);
+    metadata.put("QUERYHUB_METADATA_DB_NAME", NO_TOKEN_DATABASE);
+
+    Process process = start(log, port, metadata, false);
+    try {
+      assertThat(process.waitFor(HEALTHY_WITHIN.toSeconds(), TimeUnit.SECONDS))
+          .as("기동 실패로 스스로 끝나야 한다")
+          .isTrue();
+      assertThat(process.exitValue()).isNotZero();
+    } finally {
+      stop(process);
+    }
+    String output = Files.readString(log, StandardCharsets.UTF_8);
+    assertThat(output).contains("QUERYHUB_ADMIN_TOKEN");
+    assertThat(output).as("웹 서버가 포트를 열지 않았다").doesNotContain("Tomcat started on port");
   }
 
   @Test
   void bootJarWithoutThePasswordVariableExitsNonZeroNamingIt() throws Exception {
     Path log = workDir.resolve("no-password.log");
 
-    Process process = start(log, freeLoopbackPort(), metadataEnvironment(false));
+    Process process = start(log, freeLoopbackPort(), metadataEnvironment(false), true);
     try {
       assertThat(process.waitFor(HEALTHY_WITHIN.toSeconds(), TimeUnit.SECONDS))
           .as("기동 실패로 스스로 끝나야 한다")
@@ -123,7 +164,8 @@ class BootJarIntegrationTest {
     return env;
   }
 
-  private Process start(Path log, int port, Map<String, String> metadataEnvironment)
+  private Process start(
+      Path log, int port, Map<String, String> metadataEnvironment, boolean withAdminToken)
       throws IOException {
     ProcessBuilder builder =
         new ProcessBuilder(
@@ -134,6 +176,12 @@ class BootJarIntegrationTest {
     Map<String, String> env = builder.environment();
     env.keySet().removeIf(name -> name.startsWith("QUERYHUB_") || name.startsWith("SPRING_"));
     env.putAll(metadataEnvironment);
+    if (withAdminToken) {
+      // Tauri 셸과 같은 방식: 토큰은 자식 프로세스의 환경변수로만 넘긴다.
+      env.put("QUERYHUB_ADMIN_TOKEN", IntegrationHttp.ADMIN_TOKEN);
+    }
+    assertThat(builder.command())
+        .noneMatch(argument -> argument.contains(IntegrationHttp.ADMIN_TOKEN));
     return builder.start();
   }
 

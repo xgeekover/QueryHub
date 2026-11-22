@@ -15,6 +15,7 @@ import org.springframework.test.context.ActiveProfiles;
  * <ul>
  *   <li>server.address=127.0.0.1 로 고정한다. 테스트가 외부 인터페이스에 포트를 여는 일이 없다.
  *   <li>desktop 프로파일과 오류 프로브({@link ErrorProbeTestConfiguration})를 함께 쓴다.
+ *   <li>관리자 토큰은 고정 테스트 값({@link TestAdminToken})을 인라인 속성으로 넘긴다(프로세스 목록에 보이지 않는 소스).
  *   <li>이 애너테이션을 쓰는 테스트 클래스는 설정이 같으므로 애플리케이션 컨텍스트 하나를 공유한다.
  * </ul>
  *
@@ -25,7 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
 @Documented
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = "server.address=127.0.0.1")
+    properties = {"server.address=127.0.0.1", TestAdminToken.PROPERTY})
 @ActiveProfiles("desktop")
 @Import(ErrorProbeTestConfiguration.class)
 @WithoutMetadataDatabase

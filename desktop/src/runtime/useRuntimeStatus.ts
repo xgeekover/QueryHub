@@ -1,8 +1,8 @@
-// 런타임 상태 폴링(셸 커맨드)과 런타임 정보 조회(관리 API) 훅.
+// 런타임 상태 폴링(셸 커맨드), 관리 토큰(셸 커맨드, 한 번), 런타임 정보 조회(관리 API) 훅.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchRuntimeInfo } from "./adminApi";
-import { runtimeRestart, runtimeStart, runtimeStatus, runtimeStop } from "./shell";
+import { adminToken, runtimeRestart, runtimeStart, runtimeStatus, runtimeStop } from "./shell";
 import type { RuntimeInfoResult, RuntimeState, RuntimeStatus } from "./types";
 
 // 상태 조회 간격: starting 동안 1 초, 그 밖에는 3 초. 런타임 정보는 running 동안 10 초마다.
@@ -117,17 +117,48 @@ export function useRuntimeStatus(enabled: boolean): RuntimeController {
   };
 }
 
-// running 에 들어갈 때 한 번, 그 뒤 10 초마다 런타임 정보를 읽는다. running 이 아니면 null.
-export function useRuntimeInfo(baseUrl: string | null, running: boolean): RuntimeInfoResult | null {
+export interface AdminTokenState {
+  // 셸이 준 토큰. 받기 전이거나 받지 못했으면 null.
+  token: string | null;
+  // 셸 호출이 실패했을 때의 문장(토큰을 담지 않는다).
+  error: string | null;
+}
+
+// 관리 토큰을 셸에서 한 번(마운트당 한 번) 받는다. enabled 가 false 이면(Tauri 밖) 부르지 않는다. 토큰은 이 훅의 메모리(React
+// 상태)에만 있고 localStorage, sessionStorage, 화면, 로그에 남기지 않는다. 셸 프로세스마다 값이 하나이므로 다시 받지 않는다.
+export function useAdminToken(enabled: boolean): AdminTokenState {
+  const [state, setState] = useState<AdminTokenState>({ token: null, error: null });
+  const requested = useRef(false);
+
+  useEffect(() => {
+    if (!enabled || requested.current) {
+      return;
+    }
+    requested.current = true;
+    adminToken()
+      .then((token) => setState({ token, error: null }))
+      .catch((e: unknown) => setState({ token: null, error: `관리 토큰을 셸에서 받지 못했다: ${describe(e)}` }));
+  }, [enabled]);
+
+  return state;
+}
+
+// running 에 들어갈 때 한 번, 그 뒤 10 초마다 런타임 정보를 읽는다(Authorization: Bearer <token>). running 이 아니면 null.
+// 토큰이 아직 없으면 요청하지 않는다.
+export function useRuntimeInfo(
+  baseUrl: string | null,
+  running: boolean,
+  token: string | null,
+): RuntimeInfoResult | null {
   const [result, setResult] = useState<RuntimeInfoResult | null>(null);
 
   useEffect(() => {
-    if (!running || baseUrl === null) {
+    if (!running || baseUrl === null || token === null) {
       return;
     }
     let cancelled = false;
     const load = async () => {
-      const next = await fetchRuntimeInfo(baseUrl);
+      const next = await fetchRuntimeInfo(baseUrl, token);
       if (!cancelled) {
         setResult(next);
       }
@@ -139,7 +170,7 @@ export function useRuntimeInfo(baseUrl: string | null, running: boolean): Runtim
       clearInterval(timer);
       setResult(null);
     };
-  }, [baseUrl, running]);
+  }, [baseUrl, running, token]);
 
   return running ? result : null;
 }

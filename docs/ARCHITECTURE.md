@@ -13,7 +13,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
  └─ 런타임 감독(기동·중지·헬스) │                   │
         └─ 자식 프로세스 ──────▼───────────────────▼
                     QueryHub Runtime (Spring Boot, 같은 JAR, HTTP 포트 1개)
-                     ├─ 관리 API   /admin/api/v1/**  ← UI (관리자 토큰은 계획, Phase 1)
+                     ├─ 관리 API   /admin/api/v1/**  ← UI (관리자 토큰 Bearer, P1-03)
                      ├─ 데이터 API /api/v1/**        ← 외부 시스템 (계획, Phase 3·4. API Key 는 Phase 4)
                      ├─ Metadata DB (MariaDB, Flyway)
                      └─ Business DB × N (MSSQL · Oracle · MariaDB · PostgreSQL, 계획 Phase 1)
@@ -30,7 +30,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 - 포트는 `server.port` 하나다. 관리 API 는 `/admin/api/v1/**`, 데이터 API 는 `/api/v1/**` 로 경로만 다르다([ADR-002](ADR/ADR-002-single-http-port.md), 일부 구현).
 - 두 API 의 코드는 서로의 경로와 인증을 참조하지 않는다. ArchUnit R5 가 `adapter.web.admin` 과 `adapter.web.api` 의 분리를 검사한다(구현됨, P0-A). 나중에 포트를 나누면 설정 변경으로 끝나게 하려는 것이다.
 - 「API 서버 실행·중지」는 런타임 안의 스위치다. 꺼져 있으면 `/api/v1/**` 가 503 `SERVICE_STOPPED` 를 돌려주고 관리 API 는 계속 동작한다(계획, Phase 3·4). 「Runtime 시작·중지」는 JVM 프로세스 단위다(구현됨, P0-C).
-- Desktop 에서 바인딩 주소를 넓히면 관리 API 도 같은 주소로 열린다. 대책은 관리자 토큰과 desktop 의 루프백 전용 관리 API(`queryhub.admin.allow-remote`)다(계획, Phase 1). 지금의 공격면은 [SECURITY.md](SECURITY.md)에 있다.
+- Desktop 에서 바인딩 주소를 넓혀도 관리 API 는 관리자 토큰을 요구하고, desktop 프로파일은 소켓 원격 주소가 루프백인 관리 요청만 받는다(`queryhub.admin.allow-remote=false`, 구현됨 P1-03, [ADR-021](ADR/ADR-021-admin-token-bearer.md)). 넓은 주소로의 바인딩 자체를 거부하는 바인딩 가드는 계획이다([BACKLOG.md](BACKLOG.md) P103-1). 지금의 공격면은 [SECURITY.md](SECURITY.md)에 있다.
 
 엔드포인트와 응답 형식은 [API_SPECIFICATION.md](API_SPECIFICATION.md)에 있다.
 
@@ -40,7 +40,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 |---|---|---|---|
 | 실행 | 번들된 JRE(jlink) + JAR 을 셸이 자식 프로세스로 실행 | 외부 JDK 21 과 저장소의 JAR 을 자식 프로세스로 실행. JRE·JAR 묶기는 계획 (Phase 8) | `java -jar`, Docker 는 계획 (Phase 8) |
 | 포트 | 설정값, 기본 바인딩 127.0.0.1 | `127.0.0.1:18580` 고정([ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md), 제안) | 설정값(기본 8080), 기본 바인딩 0.0.0.0 |
-| 관리자 토큰 | 실행마다 셸이 만들어 런타임과 WebView 에 전달 | 없음. 계획 (Phase 1) | 환경변수 또는 시크릿 파일. 계획 (Phase 1) |
+| 관리자 토큰 | 실행마다 셸이 만들어 런타임과 WebView 에 전달 | 셸이 실행마다 OS 난수 생성기로 만들어 환경변수 `QUERYHUB_ADMIN_TOKEN` 과 Tauri 커맨드 `admin_token` 으로 전달 (구현됨, P1-03, [ADR-021](ADR/ADR-021-admin-token-bearer.md)) | `QUERYHUB_ADMIN_TOKEN` 또는 시크릿 파일 `QUERYHUB_ADMIN_TOKEN_FILE` (구현됨, P1-03) |
 | Metadata DB | 첫 실행 화면에서 입력, 비밀번호는 OS 키체인 | 셸 환경변수 `QUERYHUB_METADATA_DB_*` ([ADR-017](ADR/ADR-017-desktop-metadata-settings-from-env.md), 제안). 화면과 키체인은 계획 (Phase 6) | 환경변수 |
 | 마스터 키 | OS 키체인 | 없음. 계획 (Phase 1) | 환경변수 또는 시크릿 파일. 계획 (Phase 1) |
 
@@ -197,6 +197,6 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | 5 | §9.1 「(이후 `integration.sh`)」 | P0-B 에서 `scripts/gate/integration.sh` 를 만들었다. Docker 가 필요하고 Docker 가 없으면 건너뛰지 않고 실패한다. `integrationTest` 소스 세트는 `runtime/app` 에 있다 | 실제 MariaDB 없이는 Metadata DB 동작을 통과 처리할 수 없다(명세 14절) | [ADR-019](ADR/ADR-019-gate-scripts-judge-results.md) (승인됨), [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md) (제안) | CI-1 (CI 는 `gates` 작업에서만 Docker 로 `integration.sh` 를 돌린다. 첫 실행에서 확인한다) |
 | 6 | §1.2 「비밀 값…은 환경변수로 넘기고 명령행 인자에 넣지 않는다」. Boot 4.1.2 의 동작에 대한 대응은 설계에 없다 | Boot 4.1.2 의 별도 DataSource Flyway 경로를 막고 검사한 풀에 고정했다. Hikari `jdbc-url`·`password` 는 Boot 가 바인딩 뒤에 되돌리지만 프로세스 목록에 보이므로 방어적으로 거부한다 | `spring.flyway.url` 등으로 마이그레이션 연결을 돌릴 수 있었다. 비밀 값이 명령행에 보이면 안 된다(§1.2) | [ADR-012](ADR/ADR-012-flyway-connection-pin.md), [ADR-011](ADR/ADR-011-metadata-secrets-env-only.md) (승인됨) | Phase 1 (P0B-H1, P0B-R14, P0B-R15) |
 | 7 | §1.2 Desktop 은 번들된 JRE(jlink) + JAR | 외부 JDK 21(`QUERYHUB_DESKTOP_JAVA`, `JAVA_HOME`, `PATH` 순, 21 미만은 `java_too_old`)과 디버그 빌드의 저장소 JAR | 스파이크 범위. JRE·JAR 묶기는 설치본과 함께 한다 | [ADR-001](ADR/ADR-001-jvm-child-process.md) (승인됨, 일부 구현) | Phase 8 |
-| 8 | 설계에 없음 (§1.1 은 경로 분리만 말한다) | desktop 프로파일에서 관리 API 의 CORS 를 Tauri 출처 `tauri://localhost`, `http://tauri.localhost` 에만, GET 만 허용한다 | 앱 번들의 WebView 가 `http://127.0.0.1:18580` 의 관리 API 를 직접 읽어야 한다 | [ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md) (제안) | Phase 1 (관리자 토큰) |
+| 8 | 설계에 없음 (§1.1 은 경로 분리만 말한다) | desktop 프로파일에서 관리 API 의 CORS 를 Tauri 출처 `tauri://localhost`, `http://tauri.localhost` 에만, GET 과 요청 헤더 `Authorization` 만 허용한다. P1-03 부터 관리 Spring Security 체인 안에서 처리한다 | 앱 번들의 WebView 가 `http://127.0.0.1:18580` 의 관리 API 를 직접 읽어야 하고, 관리자 토큰을 `Authorization` 헤더로 보낸다 | [ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md) (제안), [ADR-022](ADR/ADR-022-admin-token-implementation.md) (제안) | 없음 (관리자 토큰은 P1-03 에서 더했다) |
 | 9 | §5.3 「헬스 체크는 인증 없이」, readiness 는 언급 없음 | `GET /actuator/health` 는 Metadata DB(`db`)를 포함한다. readiness 는 DB 를 포함하지 않는다 | P0-B 는 Metadata DB 상태를 health 에 더했고, readiness 에 넣을지는 정하지 않았다. Desktop 감독은 readiness 로 `starting` → `running` 을 판정한다 | 없음 | 계획 (readiness 에 DB 를 넣을지 정한다) |
 | 10 | §12 「설계 문서 기준선」은 P0-A 의 일부 | 별도 태스크(문서 기준선, T-20261119-074437-3980)로 했다 | P0-A 는 코드와 게이트에 집중했고 README 가 유일한 문서였다 | 없음 | 없음 |

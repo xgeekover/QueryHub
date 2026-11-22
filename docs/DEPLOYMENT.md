@@ -57,8 +57,47 @@ bash scripts/gate/build.sh
 
 - 프로파일을 지정하지 않으면 `desktop` 이다. 실수로 프로파일 없이 실행해도 루프백에만 열린다. 바인딩 주소의 공통 기본값(`application.yml`)도 `127.0.0.1` 이고, 모든 인터페이스로 넓히는 것은 `server` 프로파일뿐이다.
 - `desktop` 과 `server` 를 함께 켜거나, 다른 프로파일만 켜서 둘 다 없으면 기동 단계에서 포트를 열기 전에 실패한다. `spring.main.lazy-initialization=true` 여도 마찬가지다(모드 검사 빈은 `@Lazy(false)`).
-- 지금은 인증이 없다. `server` 프로파일은 모든 인터페이스에 바인딩하므로 신뢰할 수 있는 네트워크에서만 실행한다. 관리자 토큰, 루프백 전용 관리 API, API Key 는 Phase 1·4 에서 추가한다(계획, [SECURITY.md](SECURITY.md)).
+- 런타임은 관리자 토큰 없이는 포트를 열기 전에 기동을 거부한다. 아래 「관리자 토큰」을 본다. `server` 프로파일은 모든 인터페이스에 바인딩하고 다른 호스트의 관리 요청도 받으므로(토큰은 필요하다) 신뢰할 수 있는 네트워크에서만 실행하고 토큰을 비밀 값으로 다룬다. API Key 는 Phase 4 다([SECURITY.md](SECURITY.md)).
 - 손으로 실행한 `java -jar` 에는 `QUERYHUB_DESKTOP_PARENT_PID` 가 없으므로 부모 감시가 동작하지 않는다([ADR-014](ADR/ADR-014-runtime-parent-watch.md)).
+
+## 관리자 토큰 (구현됨, P1-03 커밋 전)
+
+관리 API(`/admin/**`)와 health 밖의 actuator 는 `Authorization: Bearer <토큰>` 을 요구한다([ADR-021](ADR/ADR-021-admin-token-bearer.md), [API_SPECIFICATION.md](API_SPECIFICATION.md)). 런타임을 직접 실행할 때(server, 손으로 실행한 desktop)는 다음 중 **하나만** 준다.
+
+| 변수 | 설명 |
+|---|---|
+| `QUERYHUB_ADMIN_TOKEN` | 토큰 값. 32-512 자, RFC 6750 b64token 문자(영문자, 숫자, `-`, `.`, `_`, `~`, `+`, `/`, 끝에 `=` 여럿). 예: `openssl rand -hex 32` 의 출력(64 자) |
+| `QUERYHUB_ADMIN_TOKEN_FILE` | 토큰 한 줄이 든 시크릿 파일의 경로. 4 KiB 이하. 끝의 LF 나 CRLF 하나는 지운다 |
+
+- 둘 다 없거나 둘 다 있거나, 파일이 없거나 읽을 수 없거나 비었거나 4 KiB 를 넘거나, 형식이 틀리면 포트를 열기 전에 기동을 거부한다. 메시지는 변수 이름만 말하고 값을 출력하지 않는다.
+- 명령행 인자(`--queryhub.admin.token=...`), `-D`, 그 두 곳으로 넘긴 `spring.application.json` 은 프로세스 목록에 보이므로 거부한다.
+- 개발용: `deploy/.env` 에 `QUERYHUB_ADMIN_TOKEN=<openssl rand -hex 32 의 출력>` 한 줄을 더하면(`deploy/env.example` 의 주석 줄) 위 「런타임 실행」의 명령이 그대로 넘긴다. `deploy/.env` 는 git 이 무시한다.
+- 서버: 시크릿 파일을 마운트하고 `QUERYHUB_ADMIN_TOKEN_FILE` 에 그 경로를 준다. Docker 이미지는 Phase 8 계획이다.
+- server 프로파일의 Host 검사: `queryhub.admin.allowed-hosts` 에 이름(호스트 이름, IPv4, `[IPv6]`. 와일드카드와 포트는 받지 않는다)을 주면 그 Host 만 받는다. 비워 두면 검사하지 않는다. 기본 설정에서는 리버스 프록시의 `X-Forwarded-*` 를 읽지 않는다(`server.forward-headers-strategy: none`, `server.tomcat.remoteip.*` 없음). server 프로파일(`allow-remote=true`)은 이 설정을 막지 않는다. `allow-remote=false` 로 두면 두 설정과 Tomcat 파이프라인의 RemoteIpValve 를 기동에서 거부한다.
+- 두 프로파일 모두 기동을 거부하는 설정은 아래 「기동 거부 설정」에 있다. 관리 체인이 보호하지 않는 경로·포트로 관리 API 나 actuator 를 옮기거나, 토큰이 로그에 남을 수 있는 설정이다.
+- desktop 셸: 셸이 실행마다 토큰을 만들어 넘기므로 설정하지 않는다. 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_ADMIN_TOKEN_FILE` 은 런타임에 넘어가지 않는다. desktop 프로파일의 JAR 을 손으로 실행하면 위 변수가 필요하고, 관리 요청은 루프백에서 `Host: localhost`·`127.0.0.1`·`[::1]` 로만 받는다.
+
+### 기동 거부 설정 (P1-03, 두 프로파일)
+
+아래 설정이 있으면 런타임은 포트를 열기 전에 기동을 거부하고 0 이 아닌 코드로 끝난다. 메시지는 속성 이름만 말하고 값은 옮기지 않는다.
+
+| 설정 | 거부하는 경우 |
+|---|---|
+| `management.endpoints.web.base-path` | `/actuator` 가 아닌 값 |
+| `management.server.port` | `server.port` 와 다른 포트 |
+| `spring.mvc.servlet.path` | `/` 가 아닌 값 |
+| `spring.security.filter.dispatcher-types` | Boot 기본 다섯 가지(request, error, async, forward, include) 중 하나라도 빠진 값 |
+| `management.endpoints.web.path-mapping.*` | 값이 하나라도 있을 때 |
+| `management.endpoint.health.probes.add-additional-paths` | `true` |
+| `management.endpoint.health.group.*.additional-path` | 값이 있을 때 |
+| `server.tomcat.accesslog.pattern` | `Authorization` 이 들어갈 때(대소문자 무관) |
+| `spring.mvc.log-request-details` | `true` |
+| `server.ssl.*` (SSL 번들 포함) | 내장 TLS 를 켤 때(속성이 하나라도 있고 `server.ssl.enabled=false` 가 아닐 때) |
+| `server.forward-headers-strategy`, `server.tomcat.remoteip.*` | `queryhub.admin.allow-remote=false` 일 때 none 이 아니거나 값이 있을 때(server 프로파일의 기본 `allow-remote=true` 에서는 막지 않는다) |
+
+- **TLS 는 앞단 리버스 프록시에서 끝낸다. 내장 `server.ssl` 은 기동 거부다.** 사람 결정 「받아들임 (권장)」(2026-11-22). 프록시와 런타임 사이는 평문 HTTP 이므로 같은 호스트나 신뢰할 수 있는 네트워크에 둔다. 런타임 자체의 HTTPS 는 [BACKLOG.md](BACKLOG.md) P103-7(Phase 8)이다.
+- 속성 이름과 상관없이, 포트를 열기 전에 Tomcat 의 필터 매핑(`springSecurityFilterChain` 이 `/*` 와 dispatcher 다섯 가지로 매핑된 DelegatingFilterProxy 인지, 그 앞에 허용 목록 밖의 필터가 없는지)과, `allow-remote=false` 일 때 파이프라인의 valve 를 검사한다.
+- **자기 점검:** 포트를 연 직후, readiness 가 200 이 되기 전에 런타임이 자기 포트로 토큰 없는 요청 여섯 개(관리 API, `/actuator/env`, `/actuator/beans`, health 세 경로)를 보낸다. 관리 체인의 401/403 이나 health 응답이 아니거나 health 경로가 5 초 안에 답하지 않으면(메타데이터 DB 가 멈춰 health 점검이 끝나지 않는 경우 등) 이유를 ERROR 로그에 남기고 기동을 멈춘다. 정리가 멈춰도 프로세스는 그 뒤 15 초쯤 안에 종료 코드 1 로 끝난다(`Runtime.halt`). 손으로 실행할 때 기동이 멈추면 로그의 `관리 체인 자기 점검` 줄을 먼저 본다.
 
 ## Desktop 셸 (구현됨, P0-C 스파이크)
 
@@ -86,7 +125,7 @@ Metadata DB 변수(비밀번호 포함)는 `( ... )` 하위 셸에서만 읽으�
 
 ### 환경변수 (desktop)
 
-코드: `desktop/src-tauri/src/runtime/launch.rs` 의 `JAVA_VAR`, `JAR_VAR`, `PARENT_PID_VAR`, `DB_*_VAR`.
+코드: `desktop/src-tauri/src/runtime/launch.rs` 의 `JAVA_VAR`, `JAR_VAR`, `PARENT_PID_VAR`, `DB_*_VAR`, `ADMIN_TOKEN_VAR`, 토큰은 `token.rs`.
 
 | 변수 | 읽는 쪽 | 설명 |
 |---|---|---|
@@ -94,6 +133,7 @@ Metadata DB 변수(비밀번호 포함)는 `( ... )` 하위 셸에서만 읽으�
 | `QUERYHUB_DESKTOP_RUNTIME_JAR` | 셸 | 런타임 JAR 경로. 없으면 디버그 빌드는 저장소의 `runtime/app/build/libs/queryhub-runtime.jar`, 릴리스 빌드는 `jar_not_found`(JAR 묶기는 Phase 8 계획) |
 | `QUERYHUB_METADATA_DB_HOST`, `_PORT`(선택), `_NAME`, `_USERNAME`, `_PASSWORD` | 셸 → 런타임 | 셸이 자기 환경에서 읽어 런타임에 **환경변수로만** 넘긴다(명령행 인자에 넣지 않는다). 셸은 비어 있지 않은지만 보고 형식 검사는 런타임이 한다. 없으면 `metadata_settings_missing`(빠진 이름만 말한다) |
 | `QUERYHUB_DESKTOP_PARENT_PID` | 셸 → 런타임 | 셸의 PID. 런타임의 부모 감시가 읽는다([ADR-014](ADR/ADR-014-runtime-parent-watch.md)). 손으로 설정하지 않는다 |
+| `QUERYHUB_ADMIN_TOKEN` | 셸 → 런타임 | 셸이 실행마다 OS 난수 생성기로 만든 64 자 16진수 관리자 토큰. 환경변수로만 넘긴다(명령행 인자에 넣지 않는다). UI 는 Tauri 커맨드 `admin_token` 으로 받는다. 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`·`QUERYHUB_ADMIN_TOKEN_FILE` 은 넘기지 않는다. 손으로 설정하지 않는다. Windows·Linux 는 미검증(PLAT-1) |
 
 - 셸은 허용 목록의 변수만 자식 런타임에 물려준다. 목록과 이유는 [SECURITY.md](SECURITY.md)의 「Desktop 셸의 자식 환경」에 있다([ADR-013](ADR/ADR-013-desktop-child-env-allowlist.md)).
 - **계획**: Metadata DB 첫 실행 설정 화면과 OS 키체인 저장(Phase 6). 그때까지 Finder 에서 연 앱은 변수가 없어 `metadata_settings_missing` 을 보인다([ADR-017](ADR/ADR-017-desktop-metadata-settings-from-env.md)).
@@ -117,5 +157,5 @@ pnpm --dir desktop tauri build --debug --bundles app --no-sign
 ## 계획 (Phase 8)
 
 - **Desktop 설치본:** JRE 묶기(jlink), JAR 묶기(`bundle.resources`), dmg·설치 프로그램, 코드 서명과 공증. `bundle.externalBin` 사이드카는 쓰지 않는다([ADR-001](ADR/ADR-001-jvm-child-process.md)).
-- **Server:** Docker 이미지와 `Dockerfile`(설계 §3 의 `deploy/`), 운영 프로파일과 관리자 토큰·마스터 키의 시크릿 파일 입력(Phase 1 과 함께).
+- **Server:** Docker 이미지와 `Dockerfile`(설계 §3 의 `deploy/`), 운영 프로파일과 마스터 키의 시크릿 파일 입력(관리자 토큰의 시크릿 파일 `QUERYHUB_ADMIN_TOKEN_FILE` 은 P1-03 에서 구현됐다).
 - **플랫폼:** Windows·Linux 의 빌드와 실행은 **미검증**이다. CI 워크플로(`.github/workflows/ci.yml`, 정의됨·미실행)의 첫 실행과 Phase 8 에서 확인한다([BACKLOG.md](BACKLOG.md) CI-1, PLAT-1). Windows 의 `Path` 대소문자 처리(P0C-C2-4)는 P0-D 에서 고쳤지만 Windows 에서 실행해 보지 않았다.

@@ -7,6 +7,7 @@ import com.queryhub.archfixture.adapter.export.DirectJdbcFixture;
 import com.queryhub.archfixture.adapter.metadata.CrossAdapterFixture;
 import com.queryhub.archfixture.adapter.metadata.DriverLeakFixture;
 import com.queryhub.archfixture.adapter.web.admin.AdminFixture;
+import com.queryhub.archfixture.adapter.web.admin.security.NonConstantTimeTokenVerifier;
 import com.queryhub.archfixture.adapter.web.api.DataApiFixture;
 import com.queryhub.archfixture.application.LeakyUseCase;
 import com.queryhub.archfixture.domain.FrameworkAwareDomain;
@@ -42,7 +43,8 @@ class ArchitectureRulesSelfTest {
           CrossAdapterFixture.class,
           StrayFixture.class,
           DriverLeakFixture.class,
-          DirectJdbcFixture.class);
+          DirectJdbcFixture.class,
+          NonConstantTimeTokenVerifier.class);
 
   @Test
   void fixturesAreImported() {
@@ -102,6 +104,16 @@ class ArchitectureRulesSelfTest {
         .anySatisfy(
             detail ->
                 assertThat(detail).contains("org.springframework.jdbc.core.simple.JdbcClient"));
+  }
+
+  @Test
+  void r9FailsWhenATokenVerifierUsesStringEqualsInsteadOfMessageDigestIsEqual() {
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(
+            RULES.r9TokenVerifierComparesInConstantTime(), NonConstantTimeTokenVerifier.class);
+    String report = String.join("\n", result.getFailureReport().getDetails());
+    assertThat(report).contains("java.lang.String.equals(java.lang.Object)");
+    assertThat(result.getFailureReport().toString()).contains("isEqual");
   }
 
   @Test

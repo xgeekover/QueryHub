@@ -31,7 +31,7 @@ class RequestIdTest {
 
   @Test
   void generatesUuidWhenHeaderIsAbsent() {
-    HttpResponse<String> response = http.get(RUNTIME_PATH);
+    HttpResponse<String> response = http.adminGet(RUNTIME_PATH);
 
     String requestId = LocalHttp.requestIdHeader(response);
     assertIsUuid(requestId);
@@ -41,8 +41,8 @@ class RequestIdTest {
 
   @Test
   void generatedIdsDifferBetweenRequests() {
-    String first = LocalHttp.requestIdHeader(http.get(RUNTIME_PATH));
-    String second = LocalHttp.requestIdHeader(http.get(RUNTIME_PATH));
+    String first = LocalHttp.requestIdHeader(http.adminGet(RUNTIME_PATH));
+    String second = LocalHttp.requestIdHeader(http.adminGet(RUNTIME_PATH));
 
     assertIsUuid(first);
     assertIsUuid(second);
@@ -52,7 +52,7 @@ class RequestIdTest {
   @ParameterizedTest
   @MethodSource("validIds")
   void echoesValidId(String requestId) {
-    HttpResponse<String> response = http.get(RUNTIME_PATH, requestId);
+    HttpResponse<String> response = http.adminGet(RUNTIME_PATH, requestId);
 
     assertThat(LocalHttp.requestIdHeader(response)).isEqualTo(requestId);
     assertThat(LocalHttp.json(response).path("meta").path("requestId").stringValue())
@@ -62,7 +62,7 @@ class RequestIdTest {
   @ParameterizedTest
   @MethodSource("invalidIds")
   void replacesInvalidIdWithGeneratedUuid(String requestId) {
-    HttpResponse<String> response = http.get(RUNTIME_PATH, requestId);
+    HttpResponse<String> response = http.adminGet(RUNTIME_PATH, requestId);
 
     String returned = LocalHttp.requestIdHeader(response);
     assertThat(returned).isNotEqualTo(requestId);
@@ -75,6 +75,17 @@ class RequestIdTest {
   @ValueSource(strings = {"/actuator/health", "/does-not-exist"})
   void actuatorAndErrorResponsesAlsoCarryTheId(String path) {
     assertThat(LocalHttp.requestIdHeader(http.get(path, "abc-123.X_9"))).isEqualTo("abc-123.X_9");
+  }
+
+  @Test
+  void unauthorizedAdminResponsesAlsoCarryTheId() {
+    // 401 은 Spring Security 가 쓰지만 RequestIdFilter 가 먼저 돈다 (FilterChainProxy 보다 앞).
+    HttpResponse<String> response = http.get(RUNTIME_PATH, "abc-123.X_9");
+
+    assertThat(response.statusCode()).isEqualTo(401);
+    assertThat(LocalHttp.requestIdHeader(response)).isEqualTo("abc-123.X_9");
+    assertThat(LocalHttp.json(response).path("error").path("requestId").stringValue())
+        .isEqualTo("abc-123.X_9");
   }
 
   static Stream<String> validIds() {
