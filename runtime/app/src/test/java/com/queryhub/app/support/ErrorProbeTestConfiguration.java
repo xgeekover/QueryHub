@@ -25,6 +25,7 @@ public class ErrorProbeTestConfiguration {
   public static final String ECHO_PATH = BASE_PATH + "/echo";
   public static final String DOMAIN_ERROR_PATH = BASE_PATH + "/domain-error";
   public static final String UNEXPECTED_PATH = BASE_PATH + "/unexpected";
+  public static final String SECRET_CIPHER_ERROR_PATH = BASE_PATH + "/secret-cipher-error";
   public static final String FILTER_ERROR_PATH = BASE_PATH + "/filter-error";
 
   /** 내부 예외 메시지에 넣는 표식. 응답 본문에 나오면 안 되고 로그에는 나와야 한다. */

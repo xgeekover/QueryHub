@@ -151,7 +151,8 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 | P0-D | d0b0f0f | 300 | 23 | 30 | 32 |
 | P1-01 | 99040c0 | 300 | 23 | 30 | 32 |
 | P1-02 | 9fc70db (2026-11-22) | 300 | 23 | 30 | 38 |
-| P1-03 | 커밋 전 | 703 | 24 | 42 | 50 |
+| P1-03 | 2698115 (2026-11-22) | 703 | 24 | 42 | 50 |
+| P1-04 | 커밋 전 | 868 | 26 | 43 | 68 |
 
 - P0-D 의 수는 macOS 로컬의 게이트 실행에서 센 값이다. cargo test 의 새 테스트 2건은 모든 플랫폼에서 돈다. `#[cfg(windows)]` 테스트 1건은 macOS 에서 컴파일되지 않아 32 에 들어 있지 않고 미검증이다. `selftest.sh` 는 93 시나리오(P0-D 전 35, 새로 58)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
 - P1-01 의 수도 macOS 로컬의 게이트 실행에서 센 값이다. 게이트 스크립트, 문서와 주석만 바꿨으므로 runtime·통합·vitest·cargo test 수는 P0-D 와 같다. `selftest.sh` 는 227 시나리오(P0-D 의 93, 새로 134)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
@@ -161,6 +162,9 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 - P1-03 리뷰 2회차 후속(3회차)의 runtime 단위 59건(628 에서 687): 기동 거부 시험 27건(`spring.security.filter.dispatcher-types` 넷과 환경변수 형태, 기본값을 다 적으면 허용, `management.endpoints.web.path-mapping.*` 셋과 환경변수 형태, health 추가 경로 셋과 환경변수 형태, false 면 허용, 접근 로그 패턴의 `Authorization` 셋, 없는 패턴은 허용, `spring.mvc.log-request-details`, 보안 필터 등록을 끈 경우의 필터 매핑 거부, 시험용 `WebSecurityCustomizer` 가 관리 경로를 체인에서 뺐을 때와 시험용 필터가 열린 health 경로에 env 모양 본문을 답할 때 자기 점검이 런타임을 멈추고 포트가 닫히며 readiness 가 ACCEPTING_TRAFFIC 이 되지 않는 것, 정상 기동과 `localhost` 가 없는 `allowed-hosts` 의 server 프로파일에서 자기 점검이 여섯 경로를 확인하는 것. 대부분 두 프로파일), 자기 점검 단위 24건(가짜 서버의 401·403·200·404·깨진 응답·시간 초과·닫힌 포트, health 문서 판정, chunked 본문), 필터 매핑 검사 단위 8건. 새 기동 거부·자기 점검 시험 19건은 바꾸기 전의 코드에서 실패하는 것을 먼저 확인했고, 새 클래스를 쓰는 시험은 검사를 끈 변이(자기 점검이 늘 통과, 필터 매핑 검사가 늘 빈 목록)에서 29건이 실패하는 것을 확인했다. 시험용 `ErrorProbeTestConfiguration` 의 예외 필터는 보안 필터 뒤로 옮겼다(필터 매핑 검사가 앞의 확인되지 않은 필터를 거부한다. 단언은 그대로다).
 - P1-03 리뷰 3회차 후속(4회차)의 runtime 단위 16건(687 에서 703): 자기 점검이 응답 본문을 JSON 으로 읽는지(들여쓴 401·403·404 본문 1건, `error.code` 밖의 같은 글자는 체인의 응답이 아님 6건), 답하지 않는 서버를 시간 초과로 구별하는지 1건, 기동 시험 5건(멈춘 health 기여자: 이유가 정리 전에 ERROR 로그에 남고 시간 초과를 따로 말하며 정해진 시간 안에 실패, `spring.jackson.serialization.indent-output=true` 로 두 프로파일 기동, 일회용 키 저장소의 내장 TLS 를 두 프로파일 모두 포트를 열기 전에 거부하고 `server.ssl.enabled=false` 면 시작, Boot 의 `Ssl.isEnabled` 와 같은 조건), 강제 종료 예약 2건(지연 뒤 종료 코드 1, 지연의 범위), 필터 매핑 검사 1건(DelegatingFilterProxy 가 아닌 `springSecurityFilterChain`). 수정을 되돌린 변형으로 새 시험이 실패하는지 확인했다(개발 보고의 변형 실행).
 - P1-03 의 수동 확인(AC16, macOS): 앱(`pnpm --dir desktop tauri dev`)의 런타임 패널에 런타임 정보가 보이는지, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18580/admin/api/v1/runtime` 이 401 이고 `Host: evil.example` 과 토큰을 함께 보내면 403 인지, `ps -ww -o args= -p <런타임 pid>` 에 64 자 16진수 토큰이 없는지 사람이 확인한다. Windows·Linux 의 같은 확인은 미검증이다(PLAT-1).
+
+- P1-04 의 수도 macOS 로컬의 게이트 실행에서 센 값이다. runtime 단위 868 은 모듈별로 adapter-crypto 77(새 모듈), adapter-metadata 18, adapter-web 249, app 481, application 32, domain 11 이다. app 의 새 시험은 키 출처(`MasterKeySourceTest`), 두 프로파일의 기동 거부(`MasterKeyStartupTest`), 누출(`MasterKeyLeakTest`), ArchUnit R10 과 자체 검증, 중단 알림의 ASCII 표식이다. 통합 26 은 `BootJarIntegrationTest` 의 키 없는 JAR 과 argv 의 키 거부 2건을 더한 수다. vitest 43 은 `master_key_unavailable` 실패 화면 1건을 더한 수다. cargo test 68 은 `master_key.rs` 15건(그중 unix 전용 6건), `launch.rs` 1건, 감독 시험 2건(첫 시작이 키 파일을 한 번 만들고 재시작이 다시 쓴다, 형식이 틀린 키 파일은 자식을 띄우지 않는다)을 더한 수다. 실제 앱 데이터 디렉터리는 쓰지 않는다(모든 시험이 임시 디렉터리의 키 경로를 준다). 게이트 스크립트는 바꾸지 않았고 `selftest.sh` 는 279 시나리오다. CI 의 수는 없다(미실행).
+- P1-04 의 수동 확인(AC28, macOS, Queen 이 한다. 대화상자는 없다): 첫 실행 전에 `~/Library/Application Support/com.queryhub.desktop/secrets/master.key` 가 없다. 첫 실행 뒤 런타임이 running 이고 파일이 있으며, 디렉터리는 0700, 파일은 0600 이다(`stat -f '%Sp %i %m'`). 두 번째 실행 뒤 inode 와 수정 시각이 같다(한 번 만들고 다시 쓴다). 런타임의 argv 에 키가 없다(`ps -o args= -p <pid>`).
 
 ## 명세 12절 테스트 기준과 Phase
 
@@ -178,6 +182,7 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 ## 미검증 플랫폼
 
 - Windows·Linux 의 Desktop 셸(빌드, 번들, 자식 환경 허용 목록, 경로 처리)은 macOS 에서 검증할 수 없어 **미검증**이다([BACKLOG.md](BACKLOG.md) PLAT-1, 목표 CI-1 첫 실행 / Phase 8). Windows 의 `Path` 대소문자 처리는 P0-D 에서 고쳤고(P0C-C2-4), 그 `#[cfg(windows)]` 테스트는 Windows CI 에서만 돈다(미검증).
+- Windows·Linux 의 마스터 키 파일(경로, `create_new`, 권한을 확인하지 않는 Windows 의 동작)은 미검증이다(PLAT-1, CI-1). unix 의 권한 시험은 macOS 에서만 실행했다.
 - macOS 에서 Windows 타깃으로 Tauri 앱 crate 를 `cargo check` 하면 `llvm-rc` 가 없어 멈춘다. Windows 전용 코드는 로컬에서 검증되지 않는다.
 - Metadata DB 는 MariaDB 12.3 만 검증했다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)).
 

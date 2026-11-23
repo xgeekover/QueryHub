@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import com.queryhub.app.QueryHubApplication;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
+import com.queryhub.app.support.TestMasterKey;
 import com.queryhub.app.support.WithoutMetadataDatabase;
 import jakarta.servlet.Filter;
 import jakarta.servlet.ServletException;
@@ -816,7 +817,7 @@ class AdminSecurityStartupTest {
             .web(WebApplicationType.SERVLET)
             .lazyInitialization(lazy)
             .profiles(profile)
-            .properties(WithoutMetadataDatabase.PROPERTY)
+            .properties(WithoutMetadataDatabase.PROPERTY, TestMasterKey.PROPERTY)
             .initializers(TestComponentScanExclusion::register, initializer)
             .listeners(webServerListener);
     if (withToken) {

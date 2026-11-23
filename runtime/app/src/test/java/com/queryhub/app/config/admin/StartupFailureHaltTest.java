@@ -2,6 +2,9 @@ package com.queryhub.app.config.admin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -26,6 +29,36 @@ class StartupFailureHaltTest {
     assertThat(Duration.ofNanos(System.nanoTime() - started))
         .isGreaterThanOrEqualTo(Duration.ofMillis(400))
         .isLessThan(Duration.ofSeconds(5));
+  }
+
+  @Test
+  void theNoticeStartsWithTheAsciiMarkerForTheProcessDelay() {
+    String notice = StartupFailureHalt.notice(StartupFailureHalt.HALT_AFTER);
+
+    assertThat(notice).startsWith("QUERYHUB_STARTUP_HALT exit=1 after=15s ");
+    assertThat(notice).as("기존 한국어 문장이 표식 뒤에 남는다").contains("Runtime.halt, 종료 코드 1");
+    assertThat(notice.substring(0, notice.indexOf("s ") + 1).chars())
+        .as("표식 부분은 ASCII 다")
+        .allMatch(c -> c < 0x80);
+  }
+
+  @Test
+  void theMarkerSurvivesAUsAsciiStderr() throws Exception {
+    // P1-04 C4-R1: LANG=C 처럼 표준 오류가 US-ASCII 이면 한글은 '?' 가 된다. 표식은 그대로 읽혀야 한다.
+    ByteArrayOutputStream captured = new ByteArrayOutputStream();
+    PrintStream original = System.err;
+    CompletableFuture<Integer> halted = new CompletableFuture<>();
+    System.setErr(new PrintStream(captured, true, StandardCharsets.US_ASCII));
+    try {
+      new StartupFailureHalt(Duration.ofMillis(50), halted::complete).arm();
+      assertThat(halted.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+    } finally {
+      System.setErr(original);
+    }
+
+    String line = captured.toString(StandardCharsets.US_ASCII);
+    assertThat(line).startsWith(StartupFailureHalt.MARKER + " exit=1 after=0s ");
+    assertThat(line).as("한글은 US-ASCII 에서 깨진다(표식이 필요한 이유)").contains("?");
   }
 
   @Test

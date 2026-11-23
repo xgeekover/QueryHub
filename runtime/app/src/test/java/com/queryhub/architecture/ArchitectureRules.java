@@ -16,7 +16,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 아키텍처 규칙 R1~R9 (P0-A FR-04, P0-B 가 R8 을, P1-03 이 R9 를 더했다).
+ * 아키텍처 규칙 R1~R10 (P0-A FR-04, P0-B 가 R8 을, P1-03 이 R9 를, P1-04 가 R10 을 더했다).
  *
  * <p>루트 패키지를 받는다. 운영 코드에는 {@code com.queryhub} 를, 자기 검사(ArchitectureRulesSelfTest)에는 고의 위반 클래스가 있는
  * {@code com.queryhub.archfixture} 를 넣어 같은 규칙을 적용한다. 그래서 규칙이 실제로 실패할 수 있음을 증명할 수 있다.
@@ -206,6 +206,23 @@ public final class ArchitectureRules {
           "regionMatches");
 
   private static final Set<String> ARRAY_COMPARISONS = Set.of("equals", "compare", "mismatch");
+
+  /**
+   * R10 JDK 암호 API(javax.crypto..)는 root.adapter.crypto.. 만 쓴다 (P1-04).
+   *
+   * <p>키를 다루는 코드를 한 모듈(adapter-crypto)에 가두어 검토할 곳을 좁힌다. 다른 곳은 application 의 SecretCipher 포트만 쓴다.
+   */
+  public ArchRule r10OnlyTheCryptoAdapterUsesJavaxCrypto() {
+    return noClasses()
+        .that()
+        .resideInAPackage(root + "..")
+        .and()
+        .resideOutsideOfPackage(root + ".adapter.crypto..")
+        .should()
+        .dependOnClassesThat()
+        .resideInAPackage("javax.crypto..")
+        .because("R10: 암호 기본 요소(javax.crypto)는 adapter-crypto 에만 둔다");
+  }
 
   /** R7 루트 아래의 모든 클래스는 domain, application, adapter, app 중 한 곳에 있다. */
   public ArchRule r7EveryClassResidesInAKnownLayer() {

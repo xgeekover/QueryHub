@@ -6,6 +6,7 @@ import com.queryhub.app.QueryHubApplication;
 import com.queryhub.app.support.RawHttp;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
+import com.queryhub.app.support.TestMasterKey;
 import com.queryhub.app.support.WithoutMetadataDatabase;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,7 +38,8 @@ class AdminTokenLeakTest {
         new SpringApplicationBuilder(QueryHubApplication.class)
             .web(WebApplicationType.SERVLET)
             .profiles("desktop")
-            .properties(WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY)
+            .properties(
+                WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
             .initializers(TestComponentScanExclusion::register)
             .run(
                 "--server.address=127.0.0.1",

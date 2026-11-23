@@ -1,0 +1,6 @@
+// adapter-crypto: 비밀 값 암호화 (P1-04, ADR-024). application 의 SecretCipher 포트를 AES-256-GCM 으로 구현한다.
+// JDK 암호 API(javax.crypto)만 쓰고 외부 라이브러리는 없다. javax.crypto 는 이 모듈에서만 쓴다(ArchUnit R10).
+// 빈 등록과 마스터 키 읽기는 app 이 맡는다(이 모듈에는 Spring 이 없다).
+dependencies {
+    implementation project(':application')
+}

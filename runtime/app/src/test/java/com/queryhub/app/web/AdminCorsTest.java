@@ -9,6 +9,7 @@ import com.queryhub.app.support.LocalHttp;
 import com.queryhub.app.support.QueryHubWebTest;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
+import com.queryhub.app.support.TestMasterKey;
 import com.queryhub.app.support.WithoutMetadataDatabase;
 import com.queryhub.domain.error.ErrorCode;
 import java.io.IOException;
@@ -239,7 +240,8 @@ class AdminCorsTest {
       return new SpringApplicationBuilder(QueryHubApplication.class)
           .web(WebApplicationType.SERVLET)
           .profiles("server")
-          .properties(WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY)
+          .properties(
+              WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
           .initializers(TestComponentScanExclusion::register)
           .run("--server.address=127.0.0.1", "--server.port=0");
     }
@@ -282,7 +284,8 @@ class AdminCorsTest {
               .web(WebApplicationType.SERVLET)
               .lazyInitialization(lazy)
               .profiles("desktop")
-              .properties(WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY)
+              .properties(
+                  WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
               .initializers(TestComponentScanExclusion::register)
               .listeners(webServerListener)
               .build();

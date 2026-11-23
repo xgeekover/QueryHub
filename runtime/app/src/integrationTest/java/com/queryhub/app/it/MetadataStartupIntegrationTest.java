@@ -90,7 +90,7 @@ class MetadataStartupIntegrationTest extends MetadataDatabaseIntegrationTest {
 
     try (ConfigurableApplicationContext server =
         new SpringApplicationBuilder(QueryHubApplication.class)
-            .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY)
+            .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY, IntegrationHttp.MASTER_KEY_PROPERTY)
             .web(WebApplicationType.SERVLET)
             .profiles("server")
             .properties(
@@ -124,7 +124,7 @@ class MetadataStartupIntegrationTest extends MetadataDatabaseIntegrationTest {
     try (ServerSocket trap = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
       try (ConfigurableApplicationContext context =
           new SpringApplicationBuilder(QueryHubApplication.class)
-              .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY)
+              .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY, IntegrationHttp.MASTER_KEY_PROPERTY)
               .web(WebApplicationType.SERVLET)
               .profiles("desktop")
               .properties(MetadataMariaDb.applicationProperties(database, MetadataMariaDb.PASSWORD))

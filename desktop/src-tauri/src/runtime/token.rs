@@ -53,7 +53,8 @@ impl AdminToken {
     }
 }
 
-fn to_lower_hex(bytes: &[u8]) -> String {
+/// 소문자 16진수(관리 토큰과 마스터 키가 같이 쓴다).
+pub(super) fn to_lower_hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut text = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

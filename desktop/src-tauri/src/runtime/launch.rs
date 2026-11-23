@@ -10,6 +10,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::master_key::MasterKey;
 use super::token::AdminToken;
 use super::{Failure, FailureKind};
 
@@ -33,6 +34,15 @@ pub const DB_PASSWORD_VAR: &str = "QUERYHUB_METADATA_DB_PASSWORD";
 pub const ADMIN_TOKEN_VAR: &str = "QUERYHUB_ADMIN_TOKEN";
 /// 서버 배포용 토큰 파일 경로. 데스크톱에서는 셸 환경에 있어도 자식에게 넘기지 않는다(둘 다 있으면 런타임이 기동을 거부한다).
 pub const ADMIN_TOKEN_FILE_VAR: &str = "QUERYHUB_ADMIN_TOKEN_FILE";
+
+/// 런타임의 마스터 키(ADR-023, ADR-024). 셸이 키 파일에서 읽은 값만 넣는다. 셸 자신의 환경에 있는 같은 이름은 넘기지 않는다.
+pub const MASTER_KEY_VAR: &str = "QUERYHUB_MASTER_KEY";
+/// 서버 배포용 키 파일 경로. 데스크톱에서는 셸 환경에 있어도 자식에게 넘기지 않는다(둘 다 있으면 런타임이 기동을 거부한다).
+pub const MASTER_KEY_FILE_VAR: &str = "QUERYHUB_MASTER_KEY_FILE";
+/// 교체용 이전 키(후속 작업, BACKLOG P104). 지금은 런타임이 읽지 않고, 셸 환경에 있어도 넘기지 않는다.
+pub const MASTER_KEY_PREVIOUS_VAR: &str = "QUERYHUB_MASTER_KEY_PREVIOUS";
+/// 교체용 이전 키 파일(후속 작업, BACKLOG P104). 셸 환경에 있어도 넘기지 않는다.
+pub const MASTER_KEY_PREVIOUS_FILE_VAR: &str = "QUERYHUB_MASTER_KEY_PREVIOUS_FILE";
 
 /// JAR 을 만드는 명령(jar_not_found 안내).
 pub const BOOT_JAR_COMMAND: &str = "sh runtime/gradlew -p runtime :app:bootJar";
@@ -257,13 +267,15 @@ pub fn inherited_env(base: &Env) -> Env {
         .collect()
 }
 
-/// 자식 환경: 허용 목록의 셸 환경 + Metadata DB 설정 + 관리 토큰 + 셸 PID. 비밀번호와 토큰은 환경변수로만 넘긴다(argv 에
-/// 넣지 않는다). 셸 환경의 QUERYHUB_ADMIN_TOKEN 과 QUERYHUB_ADMIN_TOKEN_FILE 은 허용 목록 밖이므로 넘어가지 않고, 토큰은
-/// 셸이 만든 값으로만 정한다.
+/// 자식 환경: 허용 목록의 셸 환경 + Metadata DB 설정 + 관리 토큰 + 마스터 키 + 셸 PID. 비밀번호, 토큰, 키는 환경변수로만
+/// 넘긴다(argv 에 넣지 않는다). 셸 환경의 QUERYHUB_ADMIN_TOKEN, QUERYHUB_ADMIN_TOKEN_FILE, QUERYHUB_MASTER_KEY,
+/// QUERYHUB_MASTER_KEY_FILE, QUERYHUB_MASTER_KEY_PREVIOUS, QUERYHUB_MASTER_KEY_PREVIOUS_FILE 은 허용 목록 밖이므로 넘어가지
+/// 않는다. 토큰은 셸이 만든 값, 키는 셸이 키 파일에서 읽은 값으로만 정한다.
 pub fn child_env(
     base: &Env,
     settings: &MetadataSettings,
     token: &AdminToken,
+    master_key: &MasterKey,
     parent_pid: u32,
 ) -> Env {
     let mut env = inherited_env(base);
@@ -275,6 +287,7 @@ pub fn child_env(
     env.insert(DB_USERNAME_VAR.to_string(), settings.username.clone());
     env.insert(DB_PASSWORD_VAR.to_string(), settings.password.clone());
     env.insert(ADMIN_TOKEN_VAR.to_string(), token.expose().to_string());
+    env.insert(MASTER_KEY_VAR.to_string(), master_key.expose().to_string());
     env.insert(PARENT_PID_VAR.to_string(), parent_pid.to_string());
     env
 }
@@ -447,6 +460,11 @@ pub fn port_in_use_failure(port: u16) -> Failure {
 mod tests {
     use super::*;
 
+    /// 시험용 고정 키(NOT A SECRET).
+    fn test_key() -> MasterKey {
+        MasterKey::from_test_value(&"f0e1d2c3b4a5968778695a4b3c2d1e0f".repeat(2))
+    }
+
     fn env(pairs: &[(&str, &str)]) -> Env {
         pairs
             .iter()
@@ -493,6 +511,10 @@ mod tests {
         ("QUERYHUB_METADATA_DB_PASSWORD", "inherited"),
         ("QUERYHUB_ADMIN_TOKEN", "inherited"),
         ("QUERYHUB_ADMIN_TOKEN_FILE", "/x"),
+        ("QUERYHUB_MASTER_KEY", "inherited"),
+        ("QUERYHUB_MASTER_KEY_FILE", "/x"),
+        ("QUERYHUB_MASTER_KEY_PREVIOUS", "inherited"),
+        ("QUERYHUB_MASTER_KEY_PREVIOUS_FILE", "/x"),
         ("FOO_BAR", "baz"),
     ];
 
@@ -521,19 +543,21 @@ mod tests {
             password: "p".into(),
         };
         let token = AdminToken::generate().expect("token");
-        let child = child_env(&base, &settings, &token, 4242);
+        let key = test_key();
+        let child = child_env(&base, &settings, &token, &key, 4242);
         for (name, value) in inherited {
             assert_eq!(child.get(name).map(String::as_str), Some(value), "{name}");
         }
         for (name, _) in NOT_INHERITED
             .iter()
-            .filter(|(n, _)| *n != DB_PASSWORD_VAR && *n != ADMIN_TOKEN_VAR)
+            .filter(|(n, _)| *n != DB_PASSWORD_VAR && *n != ADMIN_TOKEN_VAR && *n != MASTER_KEY_VAR)
         {
             assert!(!child.contains_key(*name), "{name} 가 자식 환경에 있다");
         }
         let mut expected: Vec<&str> = inherited.iter().map(|(k, _)| *k).collect();
         expected.extend([
             ADMIN_TOKEN_VAR,
+            MASTER_KEY_VAR,
             PARENT_PID_VAR,
             DB_HOST_VAR,
             DB_NAME_VAR,
@@ -549,8 +573,9 @@ mod tests {
         assert_eq!(child[DB_PASSWORD_VAR], "p");
         assert_eq!(child[PARENT_PID_VAR], "4242");
         assert_eq!(child[ADMIN_TOKEN_VAR], token.expose());
+        assert_eq!(child[MASTER_KEY_VAR], key.expose());
 
-        // java -version 의 환경도 같은 허용 목록이다(Metadata DB 설정, 토큰, PID 도 없다).
+        // java -version 의 환경도 같은 허용 목록이다(Metadata DB 설정, 토큰, 키, PID 도 없다).
         assert_eq!(inherited_env(&base), env(&inherited));
     }
 
@@ -571,7 +596,7 @@ mod tests {
             password: "p".into(),
         };
         let token = AdminToken::generate().expect("token");
-        let child = child_env(&base, &settings, &token, 1);
+        let child = child_env(&base, &settings, &token, &test_key(), 1);
         assert_eq!(
             child.get(ADMIN_TOKEN_VAR).map(String::as_str),
             Some(token.expose())
@@ -588,6 +613,61 @@ mod tests {
         assert!(args.iter().all(|a| !a.contains(token.expose())), "{args:?}");
         assert!(
             args.iter().all(|a| !a.contains(ADMIN_TOKEN_VAR)),
+            "{args:?}"
+        );
+    }
+
+    /// AC20: 자식의 QUERYHUB_MASTER_KEY 는 키 파일에서 읽은 값이다. 셸 환경의 QUERYHUB_MASTER_KEY, _FILE, _PREVIOUS,
+    /// _PREVIOUS_FILE 은 넘어가지 않는다. java -version 의 환경과 argv 에는 키의 이름도 값도 없다.
+    #[test]
+    fn child_env_uses_the_key_file_value_and_drops_inherited_master_key_variables() {
+        let inherited_names = [
+            MASTER_KEY_VAR,
+            MASTER_KEY_FILE_VAR,
+            MASTER_KEY_PREVIOUS_VAR,
+            MASTER_KEY_PREVIOUS_FILE_VAR,
+        ];
+        let mut pairs = vec![("PATH", "/usr/bin")];
+        pairs.extend(
+            inherited_names
+                .iter()
+                .map(|name| (*name, "inherited-key-marker")),
+        );
+        let base = env(&pairs);
+        let settings = MetadataSettings {
+            host: "h".into(),
+            port: None,
+            name: "n".into(),
+            username: "u".into(),
+            password: "p".into(),
+        };
+        let token = AdminToken::generate().expect("token");
+        let key = test_key();
+        let child = child_env(&base, &settings, &token, &key, 1);
+        assert_eq!(
+            child.get(MASTER_KEY_VAR).map(String::as_str),
+            Some(key.expose())
+        );
+        for name in &inherited_names[1..] {
+            assert!(!child.contains_key(*name), "{name} 가 자식 환경에 있다");
+        }
+        assert!(child.values().all(|v| v != "inherited-key-marker"));
+        assert_ne!(key.expose(), token.expose());
+
+        let version_env = inherited_env(&base);
+        for name in inherited_names {
+            assert!(
+                !version_env.contains_key(name),
+                "{name} 가 java -version 환경에 있다"
+            );
+        }
+        assert!(version_env.values().all(|v| !v.contains(key.expose())));
+
+        let args = child_args(Path::new("/opt/queryhub-runtime.jar"), 18580);
+        assert!(args.iter().all(|a| !a.contains(key.expose())), "{args:?}");
+        assert!(
+            args.iter()
+                .all(|a| !a.to_ascii_uppercase().contains("MASTER")),
             "{args:?}"
         );
     }

@@ -2,6 +2,7 @@ package com.queryhub.app.support;
 
 import com.queryhub.adapter.web.common.requestid.RequestIds;
 import com.queryhub.adapter.web.common.response.SuccessEnvelope;
+import com.queryhub.application.secret.SecretCipherException;
 import com.queryhub.domain.error.ErrorCode;
 import com.queryhub.domain.error.QueryHubException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -41,6 +42,12 @@ public class ErrorProbeController {
   public void domainError() {
     throw new QueryHubException(
         ErrorCode.INVALID_PARAMETER, ErrorProbeTestConfiguration.DOMAIN_ERROR_MESSAGE);
+  }
+
+  /** P1-04 AC13: 복호화 실패도 공통 500 INTERNAL_ERROR 봉투로 나간다(고정 메시지, 값 없음). */
+  @GetMapping("/secret-cipher-error")
+  public void secretCipherError() {
+    throw new SecretCipherException(SecretCipherException.Reason.AUTHENTICATION_FAILED);
   }
 
   @GetMapping("/unexpected")

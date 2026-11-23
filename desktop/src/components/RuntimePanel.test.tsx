@@ -242,6 +242,24 @@ describe("RuntimePanel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("master_key_unavailable 실패는 종류와 안내 문장을 보여 주고 출력 꼬리는 없다", async () => {
+    const message =
+      "마스터 키를 쓸 수 없어 런타임을 시작하지 않는다 (/home/qh/.local/share/com.queryhub.desktop/secrets/master.key): 그룹이나 다른 사용자에게 권한이 있다(모드 0644). 권한을 줄인다: chmod 600 '/home/qh/.local/share/com.queryhub.desktop/secrets/master.key'.";
+    mockShell(
+      status("failed", {
+        failure: { kind: "master_key_unavailable", message, exitCode: null, outputTail: [] },
+      }),
+    );
+    render(<RuntimePanel dev={false} />);
+
+    const card = await screen.findByTestId("runtime-failure");
+    expect(card).toHaveTextContent("실패: master_key_unavailable");
+    expect(card).toHaveTextContent("chmod 600");
+    expect(card).toHaveTextContent("종료 코드 없음");
+    expect(card.querySelector("pre")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("Tauri 밖에서는 안내만 보이고 invoke 를 부르지 않는다", async () => {
     isTauriMock.mockReturnValue(false);
     render(<RuntimePanel />);

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.queryhub.adapter.web.admin.security.AdminAccessPolicy;
 import com.queryhub.app.support.TestAdminToken;
+import com.queryhub.app.support.TestMasterKey;
 import com.queryhub.app.support.WithoutMetadataDatabase;
 import com.queryhub.application.runtime.GetRuntimeInfoUseCase;
 import com.queryhub.domain.runtime.RuntimeMode;
@@ -26,7 +27,7 @@ class ProfileConfigurationTest {
   @Nested
   @SpringBootTest(
       webEnvironment = SpringBootTest.WebEnvironment.NONE,
-      properties = TestAdminToken.PROPERTY)
+      properties = {TestAdminToken.PROPERTY, TestMasterKey.PROPERTY})
   @ActiveProfiles("desktop")
   @WithoutMetadataDatabase
   class DesktopProfile {
@@ -56,7 +57,7 @@ class ProfileConfigurationTest {
   @Nested
   @SpringBootTest(
       webEnvironment = SpringBootTest.WebEnvironment.NONE,
-      properties = TestAdminToken.PROPERTY)
+      properties = {TestAdminToken.PROPERTY, TestMasterKey.PROPERTY})
   @ActiveProfiles("server")
   @WithoutMetadataDatabase
   class ServerProfile {
@@ -85,7 +86,7 @@ class ProfileConfigurationTest {
   @Nested
   @SpringBootTest(
       webEnvironment = SpringBootTest.WebEnvironment.NONE,
-      properties = TestAdminToken.PROPERTY)
+      properties = {TestAdminToken.PROPERTY, TestMasterKey.PROPERTY})
   @WithoutMetadataDatabase
   class NoActiveProfile {
 

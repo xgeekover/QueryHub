@@ -2,6 +2,7 @@ package com.queryhub.architecture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.queryhub.adapter.crypto.AesGcmSecretCipher;
 import com.queryhub.adapter.metadata.setting.JdbcAppSettingRepository;
 import com.queryhub.adapter.web.common.error.GlobalExceptionHandler;
 import com.queryhub.app.QueryHubApplication;
@@ -15,7 +16,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
 /**
- * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R9 를 적용한다.
+ * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R10 을 적용한다.
  *
  * <p>app 의 테스트 클래스패스에는 모든 모듈이 있으므로, 나중에 추가되는 모듈의 클래스도 별도 설정 없이 검사된다.
  */
@@ -38,6 +39,7 @@ class ArchitectureTest {
     assertThat(PRODUCTION.contain(AppSettingRepository.class)).as("application 포트").isTrue();
     assertThat(PRODUCTION.contain(GlobalExceptionHandler.class)).as("adapter-web").isTrue();
     assertThat(PRODUCTION.contain(JdbcAppSettingRepository.class)).as("adapter-metadata").isTrue();
+    assertThat(PRODUCTION.contain(AesGcmSecretCipher.class)).as("adapter-crypto").isTrue();
     assertThat(PRODUCTION.contain(QueryHubApplication.class)).as("app").isTrue();
     assertThat(PRODUCTION.stream().map(JavaClass::getName))
         .noneMatch(name -> name.startsWith("com.queryhub.archfixture."))
@@ -91,5 +93,16 @@ class ArchitectureTest {
     // 규칙이 실제 비교기를 대상으로 삼는다(이름이 바뀌어 대상이 비면 ArchUnit 이 실패하지만, 대상을 직접 확인해 둔다).
     assertThat(PRODUCTION.contain("com.queryhub.adapter.web.admin.security.AdminTokenVerifier"))
         .isTrue();
+  }
+
+  @Test
+  void r10OnlyTheCryptoAdapterUsesJavaxCrypto() {
+    RULES.r10OnlyTheCryptoAdapterUsesJavaxCrypto().check(PRODUCTION);
+    // 규칙이 빈 집합에 적용되지 않는다: adapter-crypto 는 실제로 javax.crypto 를 쓴다.
+    assertThat(PRODUCTION.get(AesGcmSecretCipher.class).getDirectDependenciesFromSelf())
+        .anySatisfy(
+            dependency ->
+                assertThat(dependency.getTargetClass().getPackageName())
+                    .startsWith("javax.crypto"));
   }
 }

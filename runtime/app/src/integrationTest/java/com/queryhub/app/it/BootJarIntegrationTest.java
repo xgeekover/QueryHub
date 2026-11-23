@@ -16,8 +16,10 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,6 +47,11 @@ class BootJarIntegrationTest {
   /** 토큰 없는 기동 테스트 전용 데이터베이스(createEmptyDatabase 는 이미 있으면 실패한다). */
   private static final String NO_TOKEN_DATABASE = "queryhub_bootjar_no_token";
 
+  /** 마스터 키 없는 기동과 명령행 키 거부 테스트 전용 데이터베이스 (P1-04). */
+  private static final String NO_KEY_DATABASE = "queryhub_bootjar_no_key";
+
+  private static final String ARGV_KEY_DATABASE = "queryhub_bootjar_argv_key";
+
   private static final Duration HEALTHY_WITHIN = Duration.ofSeconds(60);
 
   private static Path bootJar;
@@ -65,7 +72,7 @@ class BootJarIntegrationTest {
     int port = freeLoopbackPort();
     Path log = workDir.resolve("healthy.log");
 
-    Process process = start(log, port, metadataEnvironment(true), true);
+    Process process = start(log, port, metadataEnvironment(true), true, true);
     try {
       HttpResponse<String> health = awaitHealthy(process, port, log);
 
@@ -85,6 +92,11 @@ class BootJarIntegrationTest {
       assertThat(commandLine).doesNotContain(IntegrationHttp.ADMIN_TOKEN);
       assertThat(process.info().arguments().map(List::of).orElse(List.of()))
           .noneMatch(argument -> argument.contains(IntegrationHttp.ADMIN_TOKEN));
+      // P1-04 AC14: 마스터 키도 환경변수로만 받고 argv 에 없다.
+      assertThat(commandLine).doesNotContainIgnoringCase(IntegrationHttp.MASTER_KEY);
+      assertThat(process.info().arguments().map(List::of).orElse(List.of()))
+          .noneMatch(
+              argument -> argument.toLowerCase(Locale.ROOT).contains(IntegrationHttp.MASTER_KEY));
     } finally {
       stop(process);
     }
@@ -101,9 +113,64 @@ class BootJarIntegrationTest {
       assertThat(rs.next()).isFalse();
     }
     assertThat(Files.readString(log, StandardCharsets.UTF_8))
-        .as("출력에 비밀번호와 관리자 토큰이 없어야 한다")
+        .as("출력에 비밀번호, 관리자 토큰, 마스터 키가 없어야 한다")
         .doesNotContain(MetadataMariaDb.PASSWORD)
-        .doesNotContain(IntegrationHttp.ADMIN_TOKEN);
+        .doesNotContain(IntegrationHttp.ADMIN_TOKEN)
+        .doesNotContainIgnoringCase(IntegrationHttp.MASTER_KEY)
+        .contains("마스터 키를 읽었다");
+  }
+
+  @Test
+  void bootJarWithoutTheMasterKeyExitsNonZeroWithoutOpeningThePort() throws Exception {
+    // P1-04 AC14: Metadata DB 설정과 토큰은 맞게 주고 마스터 키만 뺀다. 그래서 실패 원인은 키뿐이다.
+    MetadataMariaDb.createEmptyDatabase(NO_KEY_DATABASE);
+    Path log = workDir.resolve("no-key.log");
+    Map<String, String> metadata = metadataEnvironment(true);
+    metadata.put("QUERYHUB_METADATA_DB_NAME", NO_KEY_DATABASE);
+
+    Process process = start(log, freeLoopbackPort(), metadata, true, false);
+    try {
+      assertThat(process.waitFor(HEALTHY_WITHIN.toSeconds(), TimeUnit.SECONDS))
+          .as("기동 실패로 스스로 끝나야 한다")
+          .isTrue();
+      assertThat(process.exitValue()).isNotZero();
+    } finally {
+      stop(process);
+    }
+    String output = Files.readString(log, StandardCharsets.UTF_8);
+    assertThat(output).contains("QUERYHUB_MASTER_KEY").contains("QUERYHUB_MASTER_KEY_FILE");
+    assertThat(output).as("웹 서버가 포트를 열지 않았다").doesNotContain("Tomcat started on port");
+    assertThat(output).doesNotContainIgnoringCase(IntegrationHttp.MASTER_KEY);
+  }
+
+  @Test
+  void bootJarRefusesTheMasterKeyOnTheCommandLine() throws Exception {
+    // P1-04 AC14: argv 는 ps 로 보이므로 키를 받지 않는다. 출력에도 값이 나오지 않는다.
+    MetadataMariaDb.createEmptyDatabase(ARGV_KEY_DATABASE);
+    Path log = workDir.resolve("argv-key.log");
+    Map<String, String> metadata = metadataEnvironment(true);
+    metadata.put("QUERYHUB_METADATA_DB_NAME", ARGV_KEY_DATABASE);
+
+    Process process =
+        start(
+            log,
+            freeLoopbackPort(),
+            metadata,
+            true,
+            false,
+            "--queryhub.master-key=" + IntegrationHttp.MASTER_KEY);
+    try {
+      assertThat(process.waitFor(HEALTHY_WITHIN.toSeconds(), TimeUnit.SECONDS))
+          .as("기동 실패로 스스로 끝나야 한다")
+          .isTrue();
+      assertThat(process.exitValue()).isNotZero();
+    } finally {
+      stop(process);
+    }
+    String output = Files.readString(log, StandardCharsets.UTF_8);
+    assertThat(output).contains("queryhub.master-key").contains("명령행 인자");
+    assertThat(output).as("웹 서버가 포트를 열지 않았다").doesNotContain("Tomcat started on port");
+    assertThat(output).doesNotContainIgnoringCase(IntegrationHttp.MASTER_KEY);
   }
 
   @Test
@@ -115,7 +182,7 @@ class BootJarIntegrationTest {
     Map<String, String> metadata = metadataEnvironment(true);
     metadata.put("QUERYHUB_METADATA_DB_NAME", NO_TOKEN_DATABASE);
 
-    Process process = start(log, port, metadata, false);
+    Process process = start(log, port, metadata, false, true);
     try {
       assertThat(process.waitFor(HEALTHY_WITHIN.toSeconds(), TimeUnit.SECONDS))
           .as("기동 실패로 스스로 끝나야 한다")
@@ -133,7 +200,7 @@ class BootJarIntegrationTest {
   void bootJarWithoutThePasswordVariableExitsNonZeroNamingIt() throws Exception {
     Path log = workDir.resolve("no-password.log");
 
-    Process process = start(log, freeLoopbackPort(), metadataEnvironment(false), true);
+    Process process = start(log, freeLoopbackPort(), metadataEnvironment(false), true, true);
     try {
       assertThat(process.waitFor(HEALTHY_WITHIN.toSeconds(), TimeUnit.SECONDS))
           .as("기동 실패로 스스로 끝나야 한다")
@@ -165,11 +232,19 @@ class BootJarIntegrationTest {
   }
 
   private Process start(
-      Path log, int port, Map<String, String> metadataEnvironment, boolean withAdminToken)
+      Path log,
+      int port,
+      Map<String, String> metadataEnvironment,
+      boolean withAdminToken,
+      boolean withMasterKey,
+      String... extraArgs)
       throws IOException {
+    List<String> command =
+        new ArrayList<>(
+            List.of(javaExecutable(), "-jar", bootJar.toString(), "--server.port=" + port));
+    command.addAll(List.of(extraArgs));
     ProcessBuilder builder =
-        new ProcessBuilder(
-                List.of(javaExecutable(), "-jar", bootJar.toString(), "--server.port=" + port))
+        new ProcessBuilder(command)
             .directory(workDir.toFile())
             .redirectErrorStream(true)
             .redirectOutput(log.toFile());
@@ -179,6 +254,10 @@ class BootJarIntegrationTest {
     if (withAdminToken) {
       // Tauri 셸과 같은 방식: 토큰은 자식 프로세스의 환경변수로만 넘긴다.
       env.put("QUERYHUB_ADMIN_TOKEN", IntegrationHttp.ADMIN_TOKEN);
+    }
+    if (withMasterKey) {
+      // 마스터 키도 같은 방식이다 (P1-04, ADR-013).
+      env.put("QUERYHUB_MASTER_KEY", IntegrationHttp.MASTER_KEY);
     }
     assertThat(builder.command())
         .noneMatch(argument -> argument.contains(IntegrationHttp.ADMIN_TOKEN));

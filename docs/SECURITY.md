@@ -1,6 +1,6 @@
 # QueryHub 보안
 
-명세 9절의 보안 정책, 지금 구현된 통제, 알려진 빈 곳을 적는다. 결정의 이유는 ADR 에, 후속 과제는 [BACKLOG.md](BACKLOG.md)에 있다. P1-03(커밋 전)부터 관리 API 와 health 밖의 actuator 는 관리자 토큰(Bearer)을 요구한다(아래 「관리자 토큰」). 데이터 API 의 API Key 는 Phase 4 다.
+명세 9절의 보안 정책, 지금 구현된 통제, 알려진 빈 곳을 적는다. 결정의 이유는 ADR 에, 후속 과제는 [BACKLOG.md](BACKLOG.md)에 있다. P1-03(2698115 (2026-11-22))부터 관리 API 와 health 밖의 actuator 는 관리자 토큰(Bearer)을 요구한다(아래 「관리자 토큰」). 데이터 API 의 API Key 는 Phase 4 다.
 
 ## 명세 9절 정책과 설계 대응
 
@@ -13,9 +13,9 @@
 | 5 | SQL Injection 방지 | 파라미터는 PreparedStatement 바인딩만. 문자열 치환 금지. 인젝션 문자열이 값으로만 바인딩됨을 4개 DB 에서 확인 | 계획 | 2 |
 | 6 | API Key 인증 | `X-API-Key` 헤더([API_SPECIFICATION.md](API_SPECIFICATION.md)) | 계획 | 4 |
 | 7 | API Key 원문 미저장, Hash 저장 | HMAC-SHA-256 해시 + prefix 저장, 원문은 생성 응답에서 한 번만([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)) | 계획 | 4 |
-| 8 | DB 비밀번호 암호화 저장 | 업무 DB 비밀번호는 AES-256-GCM, 마스터 키는 OS 키체인(Desktop) 또는 환경변수(Server)([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)). Metadata DB 비밀번호는 저장하지 않고 환경변수로만 받는다([ADR-011](ADR/ADR-011-metadata-secrets-env-only.md), 구현됨) | 계획 (업무 DB) | 1 |
+| 8 | DB 비밀번호 암호화 저장 | 업무 DB 비밀번호는 AES-256-GCM, 마스터 키는 셸이 만드는 키 파일(Desktop, 설계의 OS 키체인 대신, [ADR-023](ADR/ADR-023-master-key-delivery.md)) 또는 환경변수·시크릿 파일(Server)([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md), 형식은 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)). 키와 암호는 P1-04 에서 구현했고, 비밀번호 저장은 연결 저장 태스크다. Metadata DB 비밀번호는 저장하지 않고 환경변수로만 받는다([ADR-011](ADR/ADR-011-metadata-secrets-env-only.md), 구현됨) | 일부 구현 (P1-04: 마스터 키와 암호. 업무 DB 비밀번호 저장은 계획) | 1 |
 | 9 | API별 접근 권한 관리 | `api_key_permission` 으로 API 별 권한([ERD.md](ERD.md)) | 계획 | 4, 7 |
-| 10 | 요청·응답 로그의 민감정보 마스킹 | 요청·응답 로그에 비밀 값과 SQL 원문을 기본으로 남기지 않는다. 지금 구현된 것: 오류 응답과 기동 메시지에 비밀 값을 넣지 않고, Desktop 셸 출력의 비밀번호와 관리자 토큰을 가린다(아래) | 일부 구현 (P0-B, P0-C) | 7 |
+| 10 | 요청·응답 로그의 민감정보 마스킹 | 요청·응답 로그에 비밀 값과 SQL 원문을 기본으로 남기지 않는다. 지금 구현된 것: 오류 응답과 기동 메시지에 비밀 값을 넣지 않고, Desktop 셸 출력의 비밀번호, 관리자 토큰, 마스터 키를 가린다(아래) | 일부 구현 (P0-B, P0-C, P1-03, P1-04) | 7 |
 | 11 | Query Timeout | `Statement.setQueryTimeout` | 계획 | 4, 7 |
 | 12 | API Timeout | API 별 `timeoutSeconds`, 초과 시 504 `QUERY_TIMEOUT` | 계획 | 4, 7 |
 | 13 | 최대 조회 건수 제한 | `Statement.setMaxRows(maxRows + 1)`([ADR-005](ADR/ADR-005-streaming-single-path.md)) | 계획 | 4 |
@@ -47,7 +47,7 @@
 | 테스트 JVM 격리 | 테스트 JVM 은 셸의 `QUERYHUB_*` 환경변수를 물려받지 않는다 | `runtime/build.gradle` |
 | 개발용 DB | 포트는 `127.0.0.1` 에만 열고, root 비밀번호는 무작위다. 비밀 값은 git 이 무시하는 `deploy/.env` 에 둔다([DEPLOYMENT.md](DEPLOYMENT.md)) | `deploy/compose.dev.yml` |
 
-### 관리자 토큰 (구현됨, P1-03 커밋 전)
+### 관리자 토큰 (구현됨, P1-03, 2698115)
 
 [BACKLOG.md](BACKLOG.md) P0A-I1 을 닫는다. 요청과 응답의 규칙은 [API_SPECIFICATION.md](API_SPECIFICATION.md)의 「관리자 토큰 인증」, 설정은 [DEPLOYMENT.md](DEPLOYMENT.md)의 「관리자 토큰」에 있다.
 
@@ -63,6 +63,21 @@
 - **행동 변화:** StrictHttpFirewall 이 `;`, `//`, `/./` 같은 경로를 400 으로 거부하고, 관리 체인 경로의 퍼센트 인코딩은 모두 400 이다. 일부 깨진 경로와 형식이 깨진 Host 는 Tomcat 이 애플리케이션보다 먼저 평문 400 으로 거부한다(공통 오류 형식과 `X-Request-Id` 없음, 애플리케이션 코드 실행 없음). `/actuator` 탐색과 health 하위 경로는 더는 제공하지 않는다. 거부된 CORS 요청은 여전히 Spring 의 403 본문이다.
 - **검증 범위:** macOS 에서 runtime 시험, 통합 시험, cargo test, vitest 로 확인했다. Windows·Linux 의 셸은 미검증이다(PLAT-1). CI 는 정의됨·미실행이다(CI-1).
 
+### 마스터 키 (구현됨, P1-04 커밋 전)
+
+업무 DB 비밀번호를 암호화하는 256 비트 키다([ADR-023](ADR/ADR-023-master-key-delivery.md)). 형식과 교체는 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)에 있다. 비밀번호를 저장하는 기능은 아직 없다(연결 저장은 다음 태스크다).
+
+- 두 프로파일 모두 키가 없거나 틀리면 포트를 열기 전에 기동을 거부한다. server 는 `QUERYHUB_MASTER_KEY` 나 `QUERYHUB_MASTER_KEY_FILE` 중 하나로 받는다. 명령행 인자, `-D`, 그 두 곳의 `spring.application.json` 에서 온 키는 거부한다. 관리자 토큰과 같은 값과 바이트가 모두 같은 키도 거부한다. 거부 메시지는 변수와 속성 이름만 말한다.
+- 키는 로그, 오류 응답, 예외 메시지, `toString`, actuator 출력에 나오지 않는다(`MasterKeyLeakTest`, `MasterKeySourceTest`, `AesGcmSecretCipherTest`, `MasterKeyTest`). 기동 로그에는 키 id(kid)만 남는다.
+- desktop 셸은 키 파일을 만들고 읽어 런타임 자식의 환경변수로만 넘긴다. argv, `java -version` 의 환경, 상태 JSON, WebView 에는 넣지 않고, 자식 출력에서는 가린다.
+- **키체인과 비교한 위협 모델.** 설계는 desktop 의 키를 OS 키체인에 두려 했다. 사용자가 2026-11-23 에 지금은 키체인을 쓰지 않기로 했다. 그래서 desktop 의 키는 키체인보다 약하게 보호된다.
+  - 키 파일을 지키는 것은 파일 권한뿐이다. unix 에서 셸은 디렉터리 0700, 파일 0600 과 소유자를 확인하고, 맞지 않으면 거부한다. 있는 파일의 권한을 저절로 바꾸지는 않는다.
+  - Windows 는 `%LOCALAPPDATA%` 사용자 프로필의 기본 ACL 에만 기댄다. 셸은 권한과 소유자를 확인하지 않는다(미검증, PLAT-1).
+  - 같은 사용자로 도는 모든 프로세스, 관리자와 root 는 키 파일을 읽을 수 있다. 실행 중에는 런타임 자식의 환경변수에서도 읽을 수 있다(macOS `ps -E`, Linux `/proc/<pid>/environ`. 관리자 토큰과 같다).
+  - 데이터 디렉터리의 백업(예: Time Machine)과 복사본에는 키 파일이 들어 있다. 같은 백업에 Metadata DB 덤프도 있으면 암호화한 비밀번호를 풀 수 있다. 키 파일과 Metadata DB 백업은 따로 보관한다([DEPLOYMENT.md](DEPLOYMENT.md) 「마스터 키」).
+  - 키체인처럼 앱마다 접근 동의를 받는 단계가 없다.
+- 런타임 JVM 의 Environment 에 키 문자열이 남으므로 힙 덤프에는 키가 들어 있다. actuator 는 health 만 노출하고, 관리 체인이 `/actuator/**` 를 지킨다.
+
 ### Metadata DB 비밀 값 규칙 (구현됨, P0-B)
 
 접속 정보는 환경변수 `QUERYHUB_METADATA_DB_*` 로만 받는다. 변수 표는 [DEPLOYMENT.md](DEPLOYMENT.md)에 있다.
@@ -76,7 +91,7 @@
 ### Desktop 셸의 자식 환경 (구현됨, P0-C)
 
 - 셸은 `java -version` 확인과 런타임을 빈 환경에서 띄우고, 자기 환경에서 허용 목록의 변수만 물려준다: `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TMPDIR`. Windows 는 `PATH`, `SYSTEMROOT`, `WINDIR`, `TEMP`, `TMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PATHEXT`, `COMPUTERNAME` 이고 대소문자를 무시한다(미검증).
-- `java -version` 은 이 허용 목록의 변수만 받는다(`launch.rs` 의 `inherited_env`). Metadata DB 변수(비밀번호 포함), 관리자 토큰 `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_DESKTOP_PARENT_PID` 는 런타임 자식의 환경에만 더한다(`child_env`). 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_ADMIN_TOKEN_FILE` 은 넘기지 않는다.
+- `java -version` 은 이 허용 목록의 변수만 받는다(`launch.rs` 의 `inherited_env`). Metadata DB 변수(비밀번호 포함), 관리자 토큰 `QUERYHUB_ADMIN_TOKEN`, 마스터 키 `QUERYHUB_MASTER_KEY`(P1-04), `QUERYHUB_DESKTOP_PARENT_PID` 는 런타임 자식의 환경에만 더한다(`child_env`). 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_ADMIN_TOKEN_FILE` 은 넘기지 않는다.
 - 목적: Spring Boot 는 OS 환경변수를 `application-desktop.yml` 보다 앞세우므로, 셸의 환경(`SERVER_ADDRESS`, `MANAGEMENT_*`, `LOGGING_*`, `DEBUG`, `SPRING_*`, `JAVA_TOOL_OPTIONS` 같은 JVM 옵션 변수 등)이 런타임의 바인딩 주소, 엔드포인트 노출, 로깅, 프로파일을 바꾸지 못하게 한다. 허용 목록의 이름은 Spring 속성에 바인딩되지 않는다. 이것이 P0-C 리뷰 1회차 지적 R1 의 수정이다.
 - 셸은 환경을 로그에 남기지 않고 로그 파일을 쓰지 않는다.
 - `java -version` 사전 점검의 환경은 P1-03 부터 가짜 java 가 남긴 환경 파일로 확인한다: 관리자 토큰, Metadata DB 비밀번호, 부모 PID 가 없다([BACKLOG.md](BACKLOG.md) P0C-C2-2 닫힘, [TEST_PLAN.md](TEST_PLAN.md)).
@@ -105,6 +120,9 @@
 | WebView 의 최상위 탐색을 막지 않는다(`on_navigation` 없음). `admin_token` 권한은 `remote` 키가 없는 capability 라 앱에 묶인 로컬 출처에만 주어진다(Tauri 2 의 규칙. 외부 페이지로 탐색해 시험하지는 않았다) | P103-2 | Phase 6 |
 | 서블릿 컨테이너가 먼저 거부하는 깨진 요청 대상(`%2F`, `%00`, `{`·`}`, 절대 형식 등)과 깨진 Host(대괄호 없는 IPv6(`::1`), zone id(`[::1%25lo0]`), userinfo(`user@localhost`), 숫자가 아닌 포트(`localhost:abc`), Host 헤더 둘, HTTP/1.1 의 Host 없음)는 Tomcat 의 평문 400 이고 공통 오류 형식과 `X-Request-Id` 가 없다. 애플리케이션 코드는 실행되지 않는다 | P103-4 | 정하지 않음 |
 | Windows·Linux 의 셸(토큰 생성, 자식 환경, capability)은 미검증이다 | PLAT-1 | CI-1 첫 실행 |
+| desktop 의 마스터 키 파일은 파일 권한만 지킨다. 같은 사용자의 프로세스, 관리자와 root, 데이터 디렉터리의 백업과 복사본이 키를 읽을 수 있다(위 「마스터 키」) | P104-2 | 정하지 않음 (키체인 통합을 다시 정할 때) |
+| Windows·Linux 의 키 파일 경로, `create_new`, 권한 동작은 미검증이다. Windows 는 키 파일의 DACL 을 따로 좁히지 않는다 | PLAT-1, P104-7 | CI-1 첫 실행 |
+| 이전 키 입력과 일괄 재암호화가 없다. `QUERYHUB_MASTER_KEY` 를 바꾸면 기존 암호문이 `UNKNOWN_KEY` 가 된다(지금은 저장된 암호문이 없다) | P104-4 | 연결 저장 태스크 |
 | `spring.datasource.hikari.catalog` 와 `connection-init-sql` 을 프로세스에 보이는 출처에서 막을지 정하지 않았다. catalog 는 연결 DB 를, connection-init-sql 은 UTC 세션 설정을 바꿀 수 있다 | P0B-H1 | Phase 1 |
 | `spring.autoconfigure.exclude` 로 `MetadataDatabaseAutoConfiguration` 을 빼면 가드, 검사한 연결 정보, Flyway 고정이 함께 사라진다 | P0B-R14 | Phase 1 |
 | `spring.flyway.url`·`user`·`password` 와 `spring.datasource.url`·`password` 를 명령행이나 `-D` 로 주면 무시되지만 거부도 경고도 없다. 값은 프로세스 목록에 보인다 | P0B-R15 | Phase 1 |

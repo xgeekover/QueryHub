@@ -3,8 +3,9 @@
 //! - launch: 셸 환경(주입한 맵)에서 java, JAR, Metadata DB 설정, 자식 환경과 인자를 정한다.
 //! - java: `java -version` 으로 주 버전을 읽는다.
 //! - health: std::net 으로 루프백 GET 의 상태 줄만 읽는다(HTTP 클라이언트 크레이트를 쓰지 않는다).
-//! - output: 자식 출력의 링 버퍼와 비밀 값(비밀번호, 관리 토큰) 가리기.
+//! - output: 자식 출력의 링 버퍼와 비밀 값(비밀번호, 관리 토큰, 마스터 키) 가리기.
 //! - token: 셸 프로세스마다 한 번 만드는 관리 토큰(ADR-021). Debug 와 Display 는 값을 보이지 않는다.
+//! - master_key: 앱 로컬 데이터 디렉터리의 마스터 키 파일(ADR-023). 처음 한 번 만들고 시작할 때마다 읽는다. 덮어쓰지 않는다.
 //! - supervisor: 상태 기계(stopped/starting/running/failed + health), 시작·정지·재시작, 감시 스레드, Drop.
 //!
 //! UI 에 돌려주는 계약은 이 파일의 RuntimeStatus 다(camelCase 로 직렬화). desktop/src/runtime/types.ts 가 같은 모양이다.
@@ -12,6 +13,7 @@
 pub mod health;
 pub mod java;
 pub mod launch;
+pub mod master_key;
 pub mod output;
 pub mod supervisor;
 pub mod token;
@@ -21,6 +23,7 @@ mod tests;
 
 use serde::Serialize;
 
+pub use master_key::MasterKey;
 pub use supervisor::{Supervisor, SupervisorConfig, SupervisorHandle};
 pub use token::AdminToken;
 
@@ -67,6 +70,8 @@ pub enum FailureKind {
     SpawnFailed,
     Exited,
     StartupTimeout,
+    /// 마스터 키 파일을 만들거나 읽지 못했다(ADR-023). 자식을 띄우지 않는다.
+    MasterKeyUnavailable,
 }
 
 impl FailureKind {
@@ -81,6 +86,7 @@ impl FailureKind {
             FailureKind::SpawnFailed => "spawn_failed",
             FailureKind::Exited => "exited",
             FailureKind::StartupTimeout => "startup_timeout",
+            FailureKind::MasterKeyUnavailable => "master_key_unavailable",
         }
     }
 
@@ -90,14 +96,14 @@ impl FailureKind {
     }
 }
 
-/// 실패 정보. message 는 한국어이고 변수 이름과 경로만 말한다. 비밀 값(비밀번호, 관리 토큰)은 넣지 않는다.
+/// 실패 정보. message 는 한국어이고 변수 이름과 경로만 말한다. 비밀 값(비밀번호, 관리 토큰, 마스터 키)은 넣지 않는다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Failure {
     pub kind: FailureKind,
     pub message: String,
     pub exit_code: Option<i32>,
-    /// 자식 출력의 마지막 줄들(비밀번호와 관리 토큰은 가려져 있다). 상태를 조회할 때 채운다.
+    /// 자식 출력의 마지막 줄들(비밀번호, 관리 토큰, 마스터 키는 가려져 있다). 상태를 조회할 때 채운다.
     pub output_tail: Vec<String>,
 }
 
@@ -112,7 +118,8 @@ impl Failure {
     }
 }
 
-/// 수명 주기 커맨드 네 개가 돌려주는 런타임 상태. 관리 토큰은 담지 않는다(admin_token 커맨드만 돌려준다).
+/// 수명 주기 커맨드 네 개가 돌려주는 런타임 상태. 관리 토큰은 담지 않는다(admin_token 커맨드만 돌려준다). 마스터 키는
+/// 어느 커맨드도 돌려주지 않는다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeStatus {

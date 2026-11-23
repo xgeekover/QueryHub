@@ -84,7 +84,7 @@
 - 모든 응답(actuator 와 오류 포함)의 `X-Request-Id` 헤더와 `meta.requestId`/`error.requestId` 가 같은 값이다. 필터(`RequestIdFilter`)는 가장 먼저 실행된다.
 - **로그의 요청 ID:** 오류 응답을 만들 때 오류 처리기(`GlobalExceptionHandler`, `QueryHubErrorController`)가 남기는 로그는 메시지 본문에 `requestId=<값>` 을 넣는다(예: `처리하지 못한 예외 (requestId=..., ...)`). 그 밖의 로그 줄에는 요청 ID 가 찍히지 않는다. 필터가 요청 처리 중에 MDC 키 `requestId` 에도 같은 값을 넣지만, 지금의 로그 패턴(Boot 기본값)은 MDC 를 출력하지 않는다. 필터에서 던진 예외의 `/error` 처리 로그는 필터가 MDC 를 지운 뒤에 남으므로, 그 요청 ID 는 요청 속성에서 읽어 메시지에 넣는다.
 
-### 관리자 토큰 인증 (구현됨, P1-03 커밋 전)
+### 관리자 토큰 인증 (구현됨, P1-03, 2698115)
 
 결정은 [ADR-021](ADR/ADR-021-admin-token-bearer.md)(승인됨)과 [ADR-022](ADR/ADR-022-admin-token-implementation.md)(제안)에 있다. 코드: `runtime/adapter-web/src/main/java/com/queryhub/adapter/web/admin/security/`.
 

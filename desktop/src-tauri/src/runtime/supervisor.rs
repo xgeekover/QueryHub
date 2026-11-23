@@ -15,6 +15,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::launch::{self, Env};
+use super::master_key;
 use super::output::{self, OutputBuffer};
 use super::token::AdminToken;
 use super::{health, java, Failure, FailureKind, Health, RuntimeState, RuntimeStatus};
@@ -31,6 +32,8 @@ pub struct SupervisorConfig {
     pub port: u16,
     /// 자식의 작업 디렉터리(앱 로컬 데이터 디렉터리). 시작할 때 만든다.
     pub work_dir: PathBuf,
+    /// 마스터 키 파일(ADR-023). 운영 경로는 lib.rs 만 정한다(앱 로컬 데이터 디렉터리의 secrets/master.key). 시험은 임시 경로를 준다.
+    pub master_key_path: PathBuf,
     /// QUERYHUB_DESKTOP_RUNTIME_JAR 가 없을 때 쓰는 JAR(디버그 빌드: 저장소의 bootJar 출력, 릴리스: 없음).
     pub default_jar: Option<PathBuf>,
     pub readiness_interval: Duration,
@@ -53,10 +56,11 @@ pub struct SupervisorConfig {
 
 impl SupervisorConfig {
     /// 앱 설정: 포트 18580, readiness 500 ms, health 5 s, 기동 제한 90 s, 정지 유예 10 s.
-    pub fn desktop(work_dir: PathBuf) -> Self {
+    pub fn desktop(work_dir: PathBuf, master_key_path: PathBuf) -> Self {
         SupervisorConfig {
             port: DESKTOP_PORT,
             work_dir,
+            master_key_path,
             default_jar: default_jar(),
             readiness_interval: Duration::from_millis(500),
             health_interval: Duration::from_secs(5),
@@ -131,7 +135,7 @@ struct LaunchPlan {
     java: PathBuf,
     args: Vec<String>,
     env: Env,
-    /// 자식 출력에서 가릴 값: Metadata DB 비밀번호와 관리 토큰.
+    /// 자식 출력에서 가릴 값: Metadata DB 비밀번호, 관리 토큰, 마스터 키.
     secrets: Arc<[Vec<u8>]>,
 }
 
@@ -337,7 +341,10 @@ impl SupervisorHandle {
         }
     }
 
-    /// 순서대로: java 와 버전, JAR, Metadata DB 설정, 포트. 실패하면 자식을 띄우지 않는다.
+    /// 순서대로: java 와 버전, JAR, Metadata DB 설정, 포트, 마스터 키 파일. 실패하면 자식을 띄우지 않는다.
+    ///
+    /// 마스터 키는 시작할 때마다 파일에서 다시 읽는다(캐시하지 않는다). 파일이 없을 때만 새로 만들고, 문제가 있으면
+    /// master_key_unavailable 로 실패한다(ADR-023).
     fn preflight(&self) -> Result<LaunchPlan, Failure> {
         let inner = &self.inner;
         let config = &inner.config;
@@ -354,12 +361,20 @@ impl SupervisorHandle {
         if !(config.port_probe)(config.port) {
             return Err(launch::port_in_use_failure(config.port));
         }
+        let master_key = master_key::load_or_create(&config.master_key_path, getrandom::fill)?;
         Ok(LaunchPlan {
             args: launch::child_args(&jar, config.port),
-            env: launch::child_env(env, &settings, &inner.token, std::process::id()),
+            env: launch::child_env(
+                env,
+                &settings,
+                &inner.token,
+                &master_key,
+                std::process::id(),
+            ),
             secrets: Arc::from(vec![
                 settings.password().as_bytes().to_vec(),
                 inner.token.expose().as_bytes().to_vec(),
+                master_key.expose().as_bytes().to_vec(),
             ]),
             java,
         })

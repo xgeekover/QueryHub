@@ -8,9 +8,35 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰)다.
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다.
 
-#### P1-03 관리자 토큰 (커밋 전)
+#### P1-04 마스터 키와 SecretCipher (커밋 전)
+
+Phase 1 범위의 둘째 태스크다. 결정은 [ADR-023](docs/ADR/ADR-023-master-key-delivery.md)(제안. 키체인을 쓰지 않는다는 것은 2026-11-23 사용자 결정)과 [ADR-024](docs/ADR/ADR-024-secret-cipher-format-and-rotation.md)(제안)에 있다. 설계 §1.2·§7 과 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 11 이다.
+
+##### 추가
+
+- runtime: 포트 `SecretCipher`, `SecretContext`, `SecretCipherException`(`com.queryhub.application.secret`)과 JDK 만 쓰는 새 모듈 `runtime/adapter-crypto`(`MasterKey`, `StoredSecretFormat`, `AesGcmSecretCipher`). AES-256-GCM, 96 비트 nonce, 128 비트 태그, 저장 형식 `qh1.<kid>.<base64url>`, AAD 는 헤더와 문맥(purpose, recordId)이다. 알려진 답 시험이 형식을 고정한다. 여러 키 복호화, `needsReencryption`, `reencrypt` 를 구현했다.
+- runtime: `MasterKeySource` 와 `SecretCipherConfiguration`(`@Lazy(false)`). `QUERYHUB_MASTER_KEY` 와 `QUERYHUB_MASTER_KEY_FILE` 중 하나를 16진수 64 자로 받는다. 키가 없거나, 둘 다 있거나, 파일이나 형식이 틀리거나, 약한 키이거나, 관리자 토큰과 같거나, 명령행·`-D`·그 두 곳의 `spring.application.json` 에서 오면 두 프로파일 모두 포트를 열기 전에 기동을 거부한다. 기동 로그에는 kid 만 남긴다.
+- runtime: ArchUnit R10(`javax.crypto..` 는 `adapter.crypto..` 만)과 자체 검증 픽스처.
+- desktop 셸: `runtime/master_key.rs`. 첫 실행에 앱 로컬 데이터 디렉터리의 `secrets/master.key` 를 `create_new` 로 만들고(unix 0700/0600, `sync_all` 뒤 다시 읽어 비교한다) 시작마다 다시 읽는다. 있는 파일은 덮어쓰지 않는다. 심볼릭 링크, 일반 파일이 아닌 것, 4096 바이트 초과, 형식 오류, 약한 키, unix 의 다른 소유자와 그룹·기타 권한 비트는 거부하고 `chmod`·`chown` 명령을 안내한다. 새 크레이트는 없다(`std`, `getrandom`, unix 의 `libc`).
+- desktop 셸: `SupervisorConfig.master_key_path`(운영 경로는 `lib.rs` 만 계산한다), 사전 점검의 마지막 단계, 자식 환경 `QUERYHUB_MASTER_KEY`, 출력 가림, 실패 종류 `master_key_unavailable`(UI 의 `FailureKind` 도).
+- 문서: ADR-023, ADR-024, `docs/SECURITY.md` 「마스터 키」, `docs/DEPLOYMENT.md` 「마스터 키」, `docs/ARCHITECTURE.md` 「설계와 다른 구현」 11, `deploy/env.example` 의 주석 자리표시자 줄, [BACKLOG](docs/BACKLOG.md) P104-1–P104-8.
+
+##### 변경
+
+- `StartupFailureHalt` 의 stderr 알림이 ASCII 표식 `QUERYHUB_STARTUP_HALT exit=1 after=15s` 로 시작한다(P1-03 리뷰 C4-R1). LANG=C 에서도 읽힌다. 중단 동작은 그대로다.
+- 컨텍스트를 띄우는 runtime 시험과 통합 시험은 시험용 키(NOT A SECRET)를 인라인 속성, 기본 속성, 자식 환경으로 준다(`-D` 는 쓰지 않는다).
+- 문서: ADR-006, ADR-013, `docs/ADR/README.md`, `docs/TEST_PLAN.md`, `README.md`. P1-03 을 아직 커밋하지 않은 것으로 적던 곳을 2698115 (2026-11-22) 로 바꿨다(`README.md`, `CHANGELOG.md`, `docs/API_SPECIFICATION.md`, `docs/BACKLOG.md`, `docs/DEPLOYMENT.md`, `docs/SECURITY.md`, `docs/TEST_PLAN.md`, ADR-021, ADR-022, `docs/ADR/README.md`).
+
+##### 보안
+
+- 키는 argv, 로그, 오류 응답, 예외 메시지, `toString`·Debug, actuator 출력, 상태 JSON, WebView 에 나오지 않는다(누출 시험과 cargo 시험).
+- 남은 것: desktop 의 키는 파일 권한만 지킨다(같은 사용자의 프로세스, 관리자·root, 백업과 복사본이 읽을 수 있다. P104-2). 이전 키 입력과 재암호화(P104-4), desktop 의 키 교체(P104-5), Windows 의 DACL 과 Windows·Linux 확인(P104-7, PLAT-1).
+
+테스트(macOS 로컬의 게이트 실행): runtime 단위 868, 통합 26, vitest 43, cargo test 68, 모두 통과, 건너뜀 0. `selftest.sh` 는 279 시나리오다. 수동 확인(AC28)은 Queen 이 한다([docs/TEST_PLAN.md](docs/TEST_PLAN.md)).
+
+#### P1-03 관리자 토큰 — 2698115 (2026-11-22)
 
 Phase 1 범위의 첫 태스크다. 결정은 [ADR-021](docs/ADR/ADR-021-admin-token-bearer.md)(승인됨)과 [ADR-022](docs/ADR/ADR-022-admin-token-implementation.md)(제안)에 있다. [BACKLOG](docs/BACKLOG.md) P0A-I1 과 P0C-C2-2 를 닫는다.
 
@@ -118,7 +144,7 @@ Phase 1 범위의 첫 태스크다. 결정은 [ADR-021](docs/ADR/ADR-021-admin-t
 
 - `launch.rs`: Metadata DB 설정이 없을 때의 메시지가 `docs/DEPLOYMENT.md` 와 하위 셸 명령 `(set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev)` 를 가리킨다.
 - `docs/BACKLOG.md`: P0A-N1, P0B-R4, P0B-R7, P0C-C2-4, DOC-1 을 닫았다. P0B-R6 은 Phase 1 로 미뤘고, PLAT-1 의 목표를 「CI-1 첫 실행 / Phase 8」로 바꿨고, CI-1 을 더했다(ID 24개).
-- `docs/TEST_PLAN.md`(CI 절, 게이트 범위, lint 의 저장소 단계, 새 사본 검사, 문서 점검 절차, 테스트 수), `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`, `docs/ADR/README.md`, ADR-013, ADR-017, ADR-019, `README.md`. 문서 기준선의 「커밋 전」을 51141df (2026-11-20) 로 바꿨다.
+- `docs/TEST_PLAN.md`(CI 절, 게이트 범위, lint 의 저장소 단계, 새 사본 검사, 문서 점검 절차, 테스트 수), `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`, `docs/ADR/README.md`, ADR-013, ADR-017, ADR-019, `README.md`. 문서 기준선을 아직 커밋하지 않은 것으로 적던 곳을 51141df (2026-11-20) 로 바꿨다.
 
 ##### 수정
 

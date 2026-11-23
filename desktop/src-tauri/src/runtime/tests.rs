@@ -6,6 +6,7 @@
 //! - 실제 포트 확인(launch::port_is_free)을 거치는 테스트의 포트는 free_port() 가 OS 의 임시 포트 범위 밖에서 고른다
 //!   (아래 설명).
 //! - 관리 토큰은 테스트마다 AdminToken::generate() 로 만든다(고정 값을 쓰지 않는다).
+//! - 마스터 키 파일은 샌드박스의 work/secrets/master.key 다(실제 앱 데이터 디렉터리는 쓰지 않는다). 감독이 첫 시작에서 만든다.
 //! - 모든 테스트는 끝날 때 자식을 정지하거나(Drop) 자식이 끝났음을 확인한다.
 
 use std::collections::BTreeMap;
@@ -34,9 +35,9 @@ const DB_USER: &str = "qh-user-marker";
 const SLEEP_LOOP: &str = "while :; do [ -f exit-now ] && exit 7; sleep 0.1; done";
 /// TERM 을 무시한다(정지 유예 뒤 KILL 되어야 한다).
 const TERM_IGNORING: &str = "trap '' TERM\ntouch trapped\nwhile :; do sleep 0.1; done";
-/// 비밀번호와 관리 토큰을 stderr 에 찍고 3 으로 끝난다(토큰 줄은 stdout 과 stderr 둘 다).
+/// 비밀번호, 관리 토큰, 마스터 키를 찍고 3 으로 끝난다(토큰과 키 줄은 stdout 과 stderr 둘 다).
 const EXIT_WITH_PASSWORD: &str =
-    "echo \"admin token=$QUERYHUB_ADMIN_TOKEN\"\necho \"metadata login failed for qh-user-marker password=$QUERYHUB_METADATA_DB_PASSWORD\" >&2\necho \"admin token=$QUERYHUB_ADMIN_TOKEN\" >&2\nexit 3";
+    "echo \"admin token=$QUERYHUB_ADMIN_TOKEN\"\necho \"master key=$QUERYHUB_MASTER_KEY\"\necho \"metadata login failed for qh-user-marker password=$QUERYHUB_METADATA_DB_PASSWORD\" >&2\necho \"admin token=$QUERYHUB_ADMIN_TOKEN\" >&2\necho \"master key=$QUERYHUB_MASTER_KEY\" >&2\nexit 3";
 /// 환경과 인자를 파일로 남기고 기다린다.
 const DUMP_ENV_AND_ARGS: &str = "env > child-env.tmp && mv child-env.tmp child-env.txt\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > child-argv.tmp && mv child-argv.tmp child-argv.txt\nwhile :; do sleep 0.1; done";
 
@@ -74,6 +75,19 @@ impl Sandbox {
 
     fn work(&self) -> PathBuf {
         self.root.join("work")
+    }
+
+    /// 마스터 키 파일(운영의 앱 로컬 데이터 디렉터리 secrets/master.key 자리).
+    fn key_path(&self) -> PathBuf {
+        self.work().join("secrets").join("master.key")
+    }
+
+    /// 감독이 만든 키 파일의 값(끝의 LF 를 뺀다).
+    fn key_value(&self) -> String {
+        fs::read_to_string(self.key_path())
+            .expect("key file")
+            .trim_end()
+            .to_string()
     }
 
     fn spawned(&self) -> bool {
@@ -130,7 +144,7 @@ impl Sandbox {
     }
 
     fn config(&self, port: u16, probe: fn(u16) -> bool) -> SupervisorConfig {
-        let mut config = SupervisorConfig::desktop(self.work());
+        let mut config = SupervisorConfig::desktop(self.work(), self.key_path());
         config.port = port;
         config.default_jar = None;
         config.readiness_interval = Duration::from_millis(50);
@@ -404,6 +418,17 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
     for line in token_lines {
         assert_eq!(line, &format!("admin token={MASK}"));
     }
+    // AC21: 마스터 키도 가려진다(stdout 과 stderr 의 줄 모두).
+    let key = sandbox.key_value();
+    let key_lines: Vec<&String> = failure
+        .output_tail
+        .iter()
+        .filter(|l| l.starts_with("master key="))
+        .collect();
+    assert_eq!(key_lines.len(), 2, "{:?}", failure.output_tail);
+    for line in key_lines {
+        assert_eq!(line, &format!("master key={MASK}"));
+    }
 
     let json = serde_json::to_string(&failed).expect("json");
     assert!(
@@ -419,6 +444,15 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
     assert!(
         !format!("{failed:?}").contains(&token),
         "토큰이 Debug 에 있다"
+    );
+    assert!(!json.contains(&key), "마스터 키가 상태 JSON 에 있다");
+    assert!(
+        !failure_json.contains(&key),
+        "마스터 키가 Failure JSON 에 있다"
+    );
+    assert!(
+        !format!("{failed:?}").contains(&key),
+        "마스터 키가 Debug 에 있다"
     );
     for expected in [
         "\"state\":\"failed\"",
@@ -513,6 +547,94 @@ fn restart_gives_running_with_a_different_pid() {
     assert_eq!(running.pid, Some(second));
 }
 
+// (5) 첫 시작이 키 파일을 한 번 만들고, 재시작은 같은 파일을 다시 읽기만 한다(바이트와 수정 시각이 그대로다).
+#[test]
+fn the_first_start_creates_the_key_file_once_and_a_restart_reuses_it() {
+    let sandbox = Sandbox::new();
+    sandbox.fake_java("21.0.11", SLEEP_LOOP);
+    let server = FakeServer::start(200, 200);
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
+    assert!(!sandbox.key_path().exists());
+    supervisor.start();
+    wait_for(&supervisor, WAIT, "running", |s| {
+        s.state == RuntimeState::Running
+    });
+    let bytes = fs::read(sandbox.key_path()).expect("key file");
+    let modified = fs::metadata(sandbox.key_path())
+        .and_then(|m| m.modified())
+        .expect("mtime");
+    let mode = |path: &Path| fs::metadata(path).expect("meta").permissions().mode() & 0o777;
+    assert_eq!(mode(&sandbox.key_path()), 0o600);
+    assert_eq!(mode(sandbox.key_path().parent().expect("dir")), 0o700);
+
+    supervisor.restart();
+    wait_for(&supervisor, WAIT, "running again", |s| {
+        s.state == RuntimeState::Running
+    });
+    assert_eq!(fs::read(sandbox.key_path()).expect("key file"), bytes);
+    assert_eq!(
+        fs::metadata(sandbox.key_path())
+            .and_then(|m| m.modified())
+            .expect("mtime"),
+        modified
+    );
+}
+
+// (5) AC21: 형식이 틀린 키 파일이면 failed(master_key_unavailable)이고, 자식을 띄우지 않으며, 파일을 바꾸지 않는다.
+#[test]
+fn a_malformed_key_file_gives_master_key_unavailable_spawns_nothing_and_keeps_the_file() {
+    let sandbox = Sandbox::new();
+    sandbox.fake_java("21.0.11", SLEEP_LOOP);
+    let dir = sandbox.key_path().parent().expect("dir").to_path_buf();
+    fs::create_dir_all(&dir).expect("dir");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+    let contents = "not-a-key-marker-0123456789\n";
+    fs::write(sandbox.key_path(), contents).expect("key file");
+    fs::set_permissions(sandbox.key_path(), fs::Permissions::from_mode(0o600)).expect("chmod");
+    let supervisor = Supervisor::new(
+        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.env(),
+        token(),
+    );
+
+    let status = supervisor.start();
+    assert_eq!(status.state, RuntimeState::Failed);
+    assert_eq!(
+        failure_kind(&status),
+        Some(FailureKind::MasterKeyUnavailable)
+    );
+    let failure = status.failure.as_ref().expect("failure");
+    assert!(failure.output_tail.is_empty());
+    assert_eq!(failure.exit_code, None);
+    assert!(
+        failure
+            .message
+            .contains(&sandbox.key_path().display().to_string()),
+        "{}",
+        failure.message
+    );
+    assert!(
+        !failure.message.contains("not-a-key-marker"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(status.pid, None);
+    assert!(!sandbox.spawned(), "자식을 띄웠다");
+    assert_eq!(
+        fs::read_to_string(sandbox.key_path()).expect("key file"),
+        contents
+    );
+    let json = serde_json::to_string(&status).expect("json");
+    assert!(
+        json.contains("\"kind\":\"master_key_unavailable\""),
+        "{json}"
+    );
+}
+
 // (6)
 #[test]
 fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv() {
@@ -537,12 +659,17 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         ("FOO_BAR", "baz"),
         // 셸 자신의 환경에 있는 토큰 변수는 넘어가지 않는다(자식의 토큰은 셸이 만든 값이다).
         (launch::ADMIN_TOKEN_FILE_VAR, "/x"),
+        // 키 변수도 넘어가지 않는다(자식의 키는 셸이 키 파일에서 읽은 값이다).
+        (launch::MASTER_KEY_FILE_VAR, "/x"),
+        (launch::MASTER_KEY_PREVIOUS_VAR, "inherited"),
+        (launch::MASTER_KEY_PREVIOUS_FILE_VAR, "/x"),
     ];
     let mut injected = sandbox.env();
     for (name, value) in allowed.iter().chain(denied.iter()) {
         injected.insert(name.to_string(), value.to_string());
     }
     injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
+    injected.insert(launch::MASTER_KEY_VAR.to_string(), "inherited".to_string());
     let supervisor = Supervisor::new(
         sandbox.config(port, launch::port_is_free),
         injected,
@@ -566,9 +693,12 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
     assert_eq!(env.get(launch::PARENT_PID_VAR), Some(&parent_pid.as_str()));
     let token = supervisor.admin_token().expose().to_string();
     assert_eq!(env.get(launch::ADMIN_TOKEN_VAR), Some(&token.as_str()));
+    // AC20: 자식의 키는 키 파일의 값이다.
+    let key = sandbox.key_value();
+    assert_eq!(env.get(launch::MASTER_KEY_VAR), Some(&key.as_str()));
     assert!(
         env.values().all(|v| *v != "inherited"),
-        "셸의 토큰 값이 넘어갔다"
+        "셸의 토큰이나 키 값이 넘어갔다"
     );
     assert_eq!(env.get("PATH"), Some(&"/usr/bin:/bin"));
     for (name, value) in allowed {
@@ -597,7 +727,7 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         .copied()
         .filter(|k| k.starts_with("QUERYHUB_"))
         .collect();
-    assert_eq!(queryhub.len(), 7, "{queryhub:?}");
+    assert_eq!(queryhub.len(), 8, "{queryhub:?}");
 
     let argv_text = fs::read_to_string(sandbox.work().join("child-argv.txt")).expect("argv");
     let argv: Vec<&str> = argv_text.lines().collect();
@@ -617,6 +747,7 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         argv.iter().all(|a| !a.contains(&token)),
         "토큰이 argv 에 있다"
     );
+    assert!(argv.iter().all(|a| !a.contains(&key)), "키가 argv 에 있다");
 }
 
 // (6) java -version 사전 확인의 환경에는 토큰도 Metadata DB 설정도 없다(허용 목록의 셸 환경뿐이다).
@@ -632,6 +763,7 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings()
     fs::set_permissions(sandbox.java(), fs::Permissions::from_mode(0o755)).expect("chmod");
     let mut injected = sandbox.env();
     injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
+    injected.insert(launch::MASTER_KEY_VAR.to_string(), "inherited".to_string());
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         injected,
@@ -639,6 +771,12 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings()
     );
     let pid = supervisor.start().pid.expect("pid");
     let token = supervisor.admin_token().expose().to_string();
+    let key = sandbox.key_value();
+    let text_for_key = fs::read_to_string(&version_env).expect("version env");
+    assert!(
+        !text_for_key.contains(&key),
+        "키가 java -version 환경에 있다"
+    );
 
     let text = fs::read_to_string(&version_env).expect("version env");
     let names: Vec<&str> = text
@@ -651,6 +789,7 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings()
     for absent in [
         launch::ADMIN_TOKEN_VAR,
         launch::ADMIN_TOKEN_FILE_VAR,
+        launch::MASTER_KEY_VAR,
         launch::DB_PASSWORD_VAR,
         launch::PARENT_PID_VAR,
     ] {
@@ -697,6 +836,8 @@ fn missing_metadata_settings_list_only_their_names_and_spawn_nothing() {
     assert!(failure.output_tail.is_empty());
     assert_eq!(status.pid, None);
     assert!(!sandbox.spawned());
+    // 앞의 확인이 실패하면 키 파일을 만들지 않는다(키는 마지막 확인이다).
+    assert!(!sandbox.key_path().exists());
 }
 
 // (8)

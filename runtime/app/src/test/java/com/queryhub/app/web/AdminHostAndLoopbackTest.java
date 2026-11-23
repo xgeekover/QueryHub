@@ -8,6 +8,7 @@ import com.queryhub.app.support.QueryHubWebTest;
 import com.queryhub.app.support.RawHttp;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
+import com.queryhub.app.support.TestMasterKey;
 import com.queryhub.app.support.WithoutMetadataDatabase;
 import java.util.ArrayList;
 import java.util.List;
@@ -205,7 +206,8 @@ class AdminHostAndLoopbackTest {
       return new SpringApplicationBuilder(QueryHubApplication.class)
           .web(WebApplicationType.SERVLET)
           .profiles(profile)
-          .properties(WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY)
+          .properties(
+              WithoutMetadataDatabase.PROPERTY, TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
           .initializers(TestComponentScanExclusion::register)
           .run(args.toArray(String[]::new));
     }

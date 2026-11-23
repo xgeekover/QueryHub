@@ -8,6 +8,8 @@ plugins {
 dependencies {
     implementation project(':adapter-web')
     implementation project(':adapter-metadata')
+    // 비밀 값 암호화(P1-04): SecretCipher 의 AES-GCM 구현. 마스터 키는 app 의 MasterKeySource 가 읽는다.
+    implementation project(':adapter-crypto')
     implementation project(':application')
     implementation libs.spring.boot.starter.webmvc
     implementation libs.spring.boot.starter.actuator

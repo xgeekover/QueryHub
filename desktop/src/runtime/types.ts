@@ -12,7 +12,9 @@ export type FailureKind =
   | "port_in_use"
   | "spawn_failed"
   | "exited"
-  | "startup_timeout";
+  | "startup_timeout"
+  // 마스터 키 파일을 만들거나 읽지 못했다(ADR-023). message 는 키 파일 경로와 고치는 방법만 말하고 키 값은 없다.
+  | "master_key_unavailable";
 
 export interface RuntimeFailure {
   kind: FailureKind;

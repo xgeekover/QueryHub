@@ -21,6 +21,9 @@ public final class StartupFailureHalt {
   /** 강제로 끝낼 때의 종료 코드 (기동 실패와 같은 1). */
   static final int EXIT_HALTED = 1;
 
+  /** 강제 종료 알림의 ASCII 표식. 로그 수집기와 사람이 로캘과 관계없이 찾을 수 있다. */
+  static final String MARKER = "QUERYHUB_STARTUP_HALT";
+
   private static volatile @Nullable StartupFailureHalt process;
 
   private final Duration delay;
@@ -44,6 +47,24 @@ public final class StartupFailureHalt {
     }
   }
 
+  /**
+   * 강제 종료 직전에 표준 오류에 남기는 한 줄. ASCII 표식({@value #MARKER} exit=1 after=15s)으로 시작하므로 LANG=C 처럼 콘솔 인코딩이
+   * 한글을 표현하지 못해도 원인을 알아볼 수 있다 (P1-04, C4-R1). 그 뒤에 기존 한국어 문장이 온다.
+   */
+  static String notice(Duration delay) {
+    return MARKER
+        + " exit="
+        + EXIT_HALTED
+        + " after="
+        + delay.toSeconds()
+        + "s "
+        + "관리 체인 자기 점검이 기동을 멈춘 뒤 "
+        + delay.toSeconds()
+        + " 초 안에 종료하지 못해 런타임을 강제로 끝낸다 (Runtime.halt, 종료 코드 "
+        + EXIT_HALTED
+        + ").";
+  }
+
   /** 지연 뒤 강제 종료를 부르는 데몬 스레드를 시작하고 돌려준다. */
   Thread arm() {
     Thread halter =
@@ -54,12 +75,7 @@ public final class StartupFailureHalt {
               } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
               }
-              System.err.println(
-                  "관리 체인 자기 점검이 기동을 멈춘 뒤 "
-                      + delay.toSeconds()
-                      + " 초 안에 종료하지 못해 런타임을 강제로 끝낸다 (Runtime.halt, 종료 코드 "
-                      + EXIT_HALTED
-                      + ").");
+              System.err.println(notice(delay));
               halt.accept(EXIT_HALTED);
             },
             "queryhub-startup-failure-halt");

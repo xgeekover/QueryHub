@@ -32,6 +32,19 @@ public final class IntegrationHttp {
    */
   public static final String ADMIN_TOKEN_PROPERTY = "queryhub.admin.token=" + ADMIN_TOKEN;
 
+  /**
+   * 통합 테스트 전용 마스터 키(64 자리 16진수, P1-04). NOT A SECRET: 고정 픽스처이고 운영에서 쓰지 않는다. 단위 테스트의 TestMasterKey 와
+   * 다르다.
+   */
+  public static final String MASTER_KEY =
+      "c0ffee00c0ffee01c0ffee02c0ffee03c0ffee04c0ffee05c0ffee06c0ffee07";
+
+  /**
+   * {@code key=value} 형식의 마스터 키 속성. 토큰과 같이 프로세스 목록에 보이지 않는 소스로만 넘긴다. 실행 JAR 은 환경변수
+   * QUERYHUB_MASTER_KEY 로 받는다.
+   */
+  public static final String MASTER_KEY_PROPERTY = "queryhub.master-key=" + MASTER_KEY;
+
   /** Authorization: Bearer 를 붙인 GET. */
   public static HttpResponse<String> adminGet(int port, String path)
       throws IOException, InterruptedException {

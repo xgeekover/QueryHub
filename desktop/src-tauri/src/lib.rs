@@ -2,6 +2,8 @@
 //!
 //! - setup: 관리 토큰(runtime::AdminToken)을 한 번 만들고, 런타임 감독(runtime::Supervisor)을 앱 상태로 두고 런타임을
 //!   자동으로 시작한다(별도 스레드, 창을 막지 않는다). 토큰을 만들지 못하면 setup 이 실패하고 런타임은 시작하지 않는다.
+//! - 마스터 키 파일의 경로는 여기서만 정한다: <app_local_data_dir>/secrets/master.key(ADR-023). 감독이 시작할 때마다 읽고,
+//!   없을 때만 한 번 만든다. 키는 런타임 자식의 환경변수로만 넘기고 커맨드로 돌려주지 않는다.
 //! - 커맨드 다섯 개(commands.rs): runtime_status, runtime_start, runtime_stop, runtime_restart, admin_token.
 //! - RunEvent::Exit: 런타임을 정지한다(SIGTERM, 10 초 뒤 SIGKILL). 셸이 SIGKILL 로 죽으면 런타임의 부모 감시
 //!   (QUERYHUB_DESKTOP_PARENT_PID)가 약 5 초 안에 런타임을 끝낸다.
@@ -14,7 +16,7 @@ pub mod runtime;
 
 use tauri::{Manager, RunEvent};
 
-use runtime::{launch, AdminToken, Supervisor, SupervisorConfig};
+use runtime::{launch, master_key, AdminToken, Supervisor, SupervisorConfig};
 
 /// Tauri 앱을 만들고 실행한다. 창이 모두 닫히면 돌아오지 않고 프로세스를 끝낸다.
 pub fn run() {
@@ -31,8 +33,13 @@ pub fn run() {
             let token = AdminToken::generate()?;
             // 자식의 작업 디렉터리. 시작할 때 만든다.
             let work_dir = app.path().app_local_data_dir()?;
+            // 마스터 키 파일(ADR-023). macOS ~/Library/Application Support/com.queryhub.desktop/secrets/master.key,
+            // Linux ~/.local/share/com.queryhub.desktop/..., Windows %LOCALAPPDATA%\com.queryhub.desktop\...(둘은 미검증).
+            let master_key_path = work_dir
+                .join(master_key::KEY_DIR_NAME)
+                .join(master_key::KEY_FILE_NAME);
             let supervisor = Supervisor::new(
-                SupervisorConfig::desktop(work_dir),
+                SupervisorConfig::desktop(work_dir, master_key_path),
                 launch::process_env(),
                 token,
             );

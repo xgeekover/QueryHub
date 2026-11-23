@@ -23,7 +23,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 - 프로파일을 지정하지 않으면 `desktop` 이다(`runtime/app/src/main/resources/application.yml` 의 `spring.profiles.default`). 공통 기본 바인딩 주소도 `127.0.0.1` 이고, 모든 인터페이스(`0.0.0.0:8080`)로 넓히는 것은 `application-server.yml` 뿐이다. `desktop` 은 `127.0.0.1:18580` 이다(`application-desktop.yml`). 구현됨 (P0-A).
 - `desktop` 과 `server` 를 함께 켜거나 둘 다 없으면 포트를 열기 전에 기동이 실패한다(`runtime/app/src/main/java/com/queryhub/app/config/RuntimeModeResolver.java`, `@Lazy(false)` 라서 `spring.main.lazy-initialization=true` 여도 같다). 구현됨 (P0-A).
 - UI 는 Tauri IPC 가 아니라 관리 API(HTTP)로 런타임 정보를 읽는다. IPC 는 수명 주기 커맨드 네 개뿐이다(아래 「Desktop 과 Runtime」). 같은 UI 가 원격 Server 런타임에 붙는 범위는 Phase 6 에서 정한다(계획).
-- Rust 셸의 책임은 런타임 프로세스 수명 주기다. OS 키체인과 파일 저장 대화상자는 계획(Phase 6)이다. 셸에 비즈니스 로직을 두지 않는다.
+- Rust 셸의 책임은 런타임 프로세스 수명 주기다. P1-04 부터는 마스터 키 파일을 처음 한 번 만들고 시작마다 읽어 런타임에 넘기는 일도 한다([ADR-023](ADR/ADR-023-master-key-delivery.md)). OS 키체인은 지금 쓰지 않는다(2026-11-23 사용자 결정, 아래 「설계와 다른 구현」 11). 파일 저장 대화상자는 계획(Phase 6)이다. 셸에 비즈니스 로직을 두지 않는다.
 
 ### 단일 포트와 경로 분리 (D3)
 
@@ -42,7 +42,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | 포트 | 설정값, 기본 바인딩 127.0.0.1 | `127.0.0.1:18580` 고정([ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md), 제안) | 설정값(기본 8080), 기본 바인딩 0.0.0.0 |
 | 관리자 토큰 | 실행마다 셸이 만들어 런타임과 WebView 에 전달 | 셸이 실행마다 OS 난수 생성기로 만들어 환경변수 `QUERYHUB_ADMIN_TOKEN` 과 Tauri 커맨드 `admin_token` 으로 전달 (구현됨, P1-03, [ADR-021](ADR/ADR-021-admin-token-bearer.md)) | `QUERYHUB_ADMIN_TOKEN` 또는 시크릿 파일 `QUERYHUB_ADMIN_TOKEN_FILE` (구현됨, P1-03) |
 | Metadata DB | 첫 실행 화면에서 입력, 비밀번호는 OS 키체인 | 셸 환경변수 `QUERYHUB_METADATA_DB_*` ([ADR-017](ADR/ADR-017-desktop-metadata-settings-from-env.md), 제안). 화면과 키체인은 계획 (Phase 6) | 환경변수 |
-| 마스터 키 | OS 키체인 | 없음. 계획 (Phase 1) | 환경변수 또는 시크릿 파일. 계획 (Phase 1) |
+| 마스터 키 | OS 키체인 | 키체인을 쓰지 않는다. 셸이 첫 실행에 앱 로컬 데이터 디렉터리의 `secrets/master.key` 를 만들고(unix 0700/0600, 있는 파일은 덮어쓰지 않는다) 시작마다 읽어 환경변수 `QUERYHUB_MASTER_KEY` 로 넘긴다. 없거나 틀리면 `master_key_unavailable` (구현됨, P1-04, [ADR-023](ADR/ADR-023-master-key-delivery.md), 아래 「설계와 다른 구현」 11) | `QUERYHUB_MASTER_KEY` 또는 시크릿 파일 `QUERYHUB_MASTER_KEY_FILE`. 없거나 틀리면 기동 거부 (구현됨, P1-04) |
 
 ### 셸의 런타임 감독 (구현됨, P0-C)
 
@@ -83,6 +83,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | domain | `com.queryhub.domain` | 없음 (Spring 을 포함한 어떤 프레임워크도 쓰지 않는다) |
 | application | `com.queryhub.application` | `:domain` 만 (Spring 웹·JDBC 를 모른다) |
 | adapter-web | `com.queryhub.adapter.web` | `:application`, `:domain`, 외부 라이브러리. 다른 어댑터는 안 된다 |
+| adapter-crypto | `com.queryhub.adapter.crypto` | `:application` 만. JDK 만 쓰고 외부 라이브러리는 없다. 다른 어댑터는 안 된다. `javax.crypto` 는 이 모듈만 쓴다(ArchUnit R10). 구현됨 (P1-04) |
 | adapter-metadata | `com.queryhub.adapter.metadata` | `:application`, `:domain`, 외부 라이브러리(Spring JDBC, Flyway, MariaDB 드라이버는 실행 시에만). 다른 어댑터는 안 된다 |
 | app | `com.queryhub.app` | 모든 모듈 (유일한 조립 지점) |
 | adapter-dbprovider, provider-{mssql,oracle,mariadb,postgresql}, adapter-export | | 계획 (Phase 1, Phase 5) |
@@ -92,7 +93,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 규칙은 두 겹으로 강제한다.
 
 1. **Gradle** (`runtime/build.gradle`): 모듈 선언 때문에 금지된 import 는 컴파일되지 않는다. 또 빌드 스크립트의 검사가 모든 모듈의 `api`, `implementation`, `compileOnly`, `compileOnlyApi`, `runtimeOnly` 선언과 `compileClasspath`·`runtimeClasspath` 에 상속되는 모든 설정(사용자 정의 설정 포함)의 선언을 확인해, 규칙을 넓히는 선언이 있으면 어떤 태스크도 실행하기 전에 빌드를 실패시킨다. 파일 의존성(`files(...)`, `fileTree(...)`)은 `app` 이외의 모든 모듈에서 거부한다. 테스트 설정(`testImplementation` 등)은 검사하지 않는다. 모듈은 `settings.gradle` 에 최상위로 include 한 `:domain`, `:application`, `:app`, `:adapter-*`, `:provider-*` 중 하나여야 하고(중첩 프로젝트는 거부한다), `runtime/<이름>/` 에 자기 `build.gradle` 이 있어야 한다(`build.gradle.kts` 는 쓰지 않는다). 남은 우회로 두 개(소비용 구성에 붙인 의존, `resolutionStrategy.dependencySubstitution`)는 [BACKLOG.md](BACKLOG.md) P0A-N3 이다. 클래스 수준에서는 ArchUnit 이 막는다.
-2. **ArchUnit** (`runtime/app/src/test/java/com/queryhub/architecture/`): R1 계층, R2 어댑터 간 독립, R3 domain 은 `java..` 만, R4 application 은 웹·HTTP·JDBC·Boot·서블릿·어댑터 금지, R5 관리 API(`adapter.web.admin`)와 데이터 API(`adapter.web.api`) 분리, R6 JDBC 드라이버 클래스(`org.mariadb.jdbc..` 등)는 `adapter.dbprovider.provider..` 만, R7 모든 클래스는 네 계층 중 하나에, R8 저장 기술(`org.springframework.jdbc..`, `org.flywaydb..`, `javax.sql..`, `com.zaxxer.hikari..`)은 `adapter.metadata..`, `adapter.dbprovider..`, `app..` 만(`java.sql` 은 허용). Gradle 규칙은 어떤 `adapter-*` 든 Spring JDBC 를 선언하게 두므로 R8 이 두 번째 방어선이다. `ArchitectureRulesSelfTest` 가 고의 위반 픽스처로 R1~R8 이 실제로 실패하는지 확인한다(자체 검증의 빈 곳은 [BACKLOG.md](BACKLOG.md) P0A-I2).
+2. **ArchUnit** (`runtime/app/src/test/java/com/queryhub/architecture/`): R1 계층, R2 어댑터 간 독립, R3 domain 은 `java..` 만, R4 application 은 웹·HTTP·JDBC·Boot·서블릿·어댑터 금지, R5 관리 API(`adapter.web.admin`)와 데이터 API(`adapter.web.api`) 분리, R6 JDBC 드라이버 클래스(`org.mariadb.jdbc..` 등)는 `adapter.dbprovider.provider..` 만, R7 모든 클래스는 네 계층 중 하나에, R8 저장 기술(`org.springframework.jdbc..`, `org.flywaydb..`, `javax.sql..`, `com.zaxxer.hikari..`)은 `adapter.metadata..`, `adapter.dbprovider..`, `app..` 만(`java.sql` 은 허용), R9 관리자 토큰 검증기는 `String.equals` 류와 `Arrays.equals` 를 쓰지 않는다(P1-03), R10 `javax.crypto..` 는 `adapter.crypto..` 만(P1-04). Gradle 규칙은 어떤 `adapter-*` 든 Spring JDBC 를 선언하게 두므로 R8 이 두 번째 방어선이다. `ArchitectureRulesSelfTest` 가 고의 위반 픽스처로 R1~R10 이 실제로 실패하는지 확인한다(자체 검증의 빈 곳은 [BACKLOG.md](BACKLOG.md) P0A-I2).
 
 ### application 계층의 포트 (설계 §3.1)
 
@@ -104,7 +105,8 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | `QueryExecutor` | 쿼리를 실행해 행을 콜백(`RowConsumer`)으로 넘긴다. List 를 반환하지 않는다 | 계획 (Phase 1, 4) |
 | `ResultWriter` | 형식별 구현체. 컬럼 정보·행·종료 메타를 `OutputStream` 에 바로 쓴다 | 계획 (Phase 4, 5) |
 | `SqlInspector` | 파라미터 추출, SELECT 전용 검증([ADR-004](ADR/ADR-004-select-only-defense.md)) | 계획 (Phase 2) |
-| `SecretCipher`, `ApiKeyHasher` | 비밀번호 암호화, API Key 해시([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)) | 계획 (Phase 1, 4) |
+| `SecretCipher` (`application.secret`) | 비밀 값 암호화(`encrypt`, `decrypt`, `needsReencryption`, `reencrypt`, 문맥 `SecretContext`). `AesGcmSecretCipher`(`adapter-crypto`)가 구현한다([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md), [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)) | 구현됨 (P1-04). 연결 저장에서 쓰는 것은 다음 태스크 |
+| `ApiKeyHasher` | API Key 해시([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)) | 계획 (Phase 4) |
 | `RouteRegistry` | (HTTP Method, 경로) → API Definition. 등록·수정 즉시 반영([ADR-003](ADR/ADR-003-single-dispatcher-route-registry.md)) | 계획 (Phase 3) |
 
 데이터 API 요청 한 건의 처리 순서(계획, Phase 3·4·7): 라우트 조회 → 인증·권한 → 파라미터 검증·변환 → 동시성·속도 제한 → 쿼리 실행(읽기 전용, timeout, maxRows, fetchSize) → 스트리밍 출력 → 이력 기록.
@@ -200,3 +202,4 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | 8 | 설계에 없음 (§1.1 은 경로 분리만 말한다) | desktop 프로파일에서 관리 API 의 CORS 를 Tauri 출처 `tauri://localhost`, `http://tauri.localhost` 에만, GET 과 요청 헤더 `Authorization` 만 허용한다. P1-03 부터 관리 Spring Security 체인 안에서 처리한다 | 앱 번들의 WebView 가 `http://127.0.0.1:18580` 의 관리 API 를 직접 읽어야 하고, 관리자 토큰을 `Authorization` 헤더로 보낸다 | [ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md) (제안), [ADR-022](ADR/ADR-022-admin-token-implementation.md) (제안) | 없음 (관리자 토큰은 P1-03 에서 더했다) |
 | 9 | §5.3 「헬스 체크는 인증 없이」, readiness 는 언급 없음 | `GET /actuator/health` 는 Metadata DB(`db`)를 포함한다. readiness 는 DB 를 포함하지 않는다 | P0-B 는 Metadata DB 상태를 health 에 더했고, readiness 에 넣을지는 정하지 않았다. Desktop 감독은 readiness 로 `starting` → `running` 을 판정한다 | 없음 | 계획 (readiness 에 DB 를 넣을지 정한다) |
 | 10 | §12 「설계 문서 기준선」은 P0-A 의 일부 | 별도 태스크(문서 기준선, T-20261119-074437-3980)로 했다 | P0-A 는 코드와 게이트에 집중했고 README 가 유일한 문서였다 | 없음 | 없음 |
+| 11 | §1.2 와 §7: desktop 의 마스터 키는 OS 키체인에 둔다 | desktop 은 키체인을 쓰지 않는다. 셸이 앱 로컬 데이터 디렉터리의 `secrets/master.key` 를 처음 한 번 만들고(unix 0700/0600, 덮어쓰지 않는다) 시작마다 읽어 `QUERYHUB_MASTER_KEY` 로 런타임에 넘긴다. macOS, Linux, Windows 가 같은 코드다 | 사용자 결정 2026-11-23: 「MacOS에서뿐만 아니고, 리눅스/윈도우 환경에서도 동작시킬 수 있어야 해.」 「키체인이 필수가 아니라면, 사내 폐쇄망에서 사용할 거라 지금 당장은 키체인을 사용 안하고 싶습니다.」 키 파일은 파일 권한만 지킨다([SECURITY.md](SECURITY.md) 「마스터 키」) | [ADR-023](ADR/ADR-023-master-key-delivery.md) (제안, 키체인 제외는 사용자 결정) | 키체인 통합을 다시 정할 때(BACKLOG P104-2). Linux·Windows 는 미검증(PLAT-1, CI-1) |

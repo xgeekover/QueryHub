@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import com.queryhub.app.QueryHubApplication;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
+import com.queryhub.app.support.TestMasterKey;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -503,7 +504,7 @@ class MetadataStartupFailureTest {
             .profiles("desktop")
             .properties(defaultProperties)
             // 관리자 토큰 검사가 아니라 Metadata DB 검사가 기동을 멈추는지 본다.
-            .properties(TestAdminToken.PROPERTY)
+            .properties(TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
             .initializers(TestComponentScanExclusion::register)
             .listeners(webServerListener)
             .build();

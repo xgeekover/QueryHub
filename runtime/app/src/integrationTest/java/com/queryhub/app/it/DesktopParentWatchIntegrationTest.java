@@ -192,6 +192,7 @@ class DesktopParentWatchIntegrationTest {
     env.putAll(metadataEnvironment);
     // 셸이 하는 것처럼 관리자 토큰을 환경변수로 넘긴다 (argv 에는 넣지 않는다).
     env.put("QUERYHUB_ADMIN_TOKEN", IntegrationHttp.ADMIN_TOKEN);
+    env.put("QUERYHUB_MASTER_KEY", IntegrationHttp.MASTER_KEY);
     env.put(PARENT_PID_VARIABLE, parentPid);
     Process process = builder.start();
     processes.add(process);

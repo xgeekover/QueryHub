@@ -26,6 +26,10 @@ import org.springframework.test.context.ActiveProfiles;
 @Documented
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"server.address=127.0.0.1", IntegrationHttp.ADMIN_TOKEN_PROPERTY})
+    properties = {
+      "server.address=127.0.0.1",
+      IntegrationHttp.ADMIN_TOKEN_PROPERTY,
+      IntegrationHttp.MASTER_KEY_PROPERTY
+    })
 @ActiveProfiles("desktop")
 public @interface QueryHubIntegrationTest {}

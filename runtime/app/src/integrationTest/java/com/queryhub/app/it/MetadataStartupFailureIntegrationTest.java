@@ -46,7 +46,7 @@ class MetadataStartupFailureIntegrationTest {
         };
     SpringApplication application =
         new SpringApplicationBuilder(QueryHubApplication.class)
-            .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY)
+            .properties(IntegrationHttp.ADMIN_TOKEN_PROPERTY, IntegrationHttp.MASTER_KEY_PROPERTY)
             .web(WebApplicationType.SERVLET)
             .lazyInitialization(lazy)
             .profiles("desktop")

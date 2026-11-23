@@ -3,9 +3,11 @@ package com.queryhub.architecture;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.queryhub.archfixture.adapter.crypto.AllowedCryptoFixture;
 import com.queryhub.archfixture.adapter.export.DirectJdbcFixture;
 import com.queryhub.archfixture.adapter.metadata.CrossAdapterFixture;
 import com.queryhub.archfixture.adapter.metadata.DriverLeakFixture;
+import com.queryhub.archfixture.adapter.web.CryptoOutsideAdapterFixture;
 import com.queryhub.archfixture.adapter.web.admin.AdminFixture;
 import com.queryhub.archfixture.adapter.web.admin.security.NonConstantTimeTokenVerifier;
 import com.queryhub.archfixture.adapter.web.api.DataApiFixture;
@@ -44,7 +46,9 @@ class ArchitectureRulesSelfTest {
           StrayFixture.class,
           DriverLeakFixture.class,
           DirectJdbcFixture.class,
-          NonConstantTimeTokenVerifier.class);
+          NonConstantTimeTokenVerifier.class,
+          CryptoOutsideAdapterFixture.class,
+          AllowedCryptoFixture.class);
 
   @Test
   void fixturesAreImported() {
@@ -119,6 +123,16 @@ class ArchitectureRulesSelfTest {
   @Test
   void r7FailsForAClassOutsideTheKnownLayers() {
     assertFailsOnlyBecauseOf(RULES.r7EveryClassResidesInAKnownLayer(), StrayFixture.class);
+  }
+
+  @Test
+  void r10FailsWhenAClassOutsideTheCryptoAdapterUsesJavaxCrypto() {
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(
+            RULES.r10OnlyTheCryptoAdapterUsesJavaxCrypto(), CryptoOutsideAdapterFixture.class);
+    assertThat(result.getFailureReport().getDetails())
+        .anySatisfy(detail -> assertThat(detail).contains("javax.crypto.Cipher"))
+        .noneSatisfy(detail -> assertThat(detail).contains(AllowedCryptoFixture.class.getName()));
   }
 
   /**

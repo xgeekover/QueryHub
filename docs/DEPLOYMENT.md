@@ -58,9 +58,10 @@ bash scripts/gate/build.sh
 - 프로파일을 지정하지 않으면 `desktop` 이다. 실수로 프로파일 없이 실행해도 루프백에만 열린다. 바인딩 주소의 공통 기본값(`application.yml`)도 `127.0.0.1` 이고, 모든 인터페이스로 넓히는 것은 `server` 프로파일뿐이다.
 - `desktop` 과 `server` 를 함께 켜거나, 다른 프로파일만 켜서 둘 다 없으면 기동 단계에서 포트를 열기 전에 실패한다. `spring.main.lazy-initialization=true` 여도 마찬가지다(모드 검사 빈은 `@Lazy(false)`).
 - 런타임은 관리자 토큰 없이는 포트를 열기 전에 기동을 거부한다. 아래 「관리자 토큰」을 본다. `server` 프로파일은 모든 인터페이스에 바인딩하고 다른 호스트의 관리 요청도 받으므로(토큰은 필요하다) 신뢰할 수 있는 네트워크에서만 실행하고 토큰을 비밀 값으로 다룬다. API Key 는 Phase 4 다([SECURITY.md](SECURITY.md)).
+- P1-04 부터 런타임은 마스터 키(`QUERYHUB_MASTER_KEY` 나 `QUERYHUB_MASTER_KEY_FILE`) 없이도 포트를 열기 전에 기동을 거부한다. 위 명령을 쓰려면 `deploy/.env` 에 관리자 토큰과 다른 키 한 줄을 더한다. 아래 「마스터 키」를 본다.
 - 손으로 실행한 `java -jar` 에는 `QUERYHUB_DESKTOP_PARENT_PID` 가 없으므로 부모 감시가 동작하지 않는다([ADR-014](ADR/ADR-014-runtime-parent-watch.md)).
 
-## 관리자 토큰 (구현됨, P1-03 커밋 전)
+## 관리자 토큰 (구현됨, P1-03, 2698115)
 
 관리 API(`/admin/**`)와 health 밖의 actuator 는 `Authorization: Bearer <토큰>` 을 요구한다([ADR-021](ADR/ADR-021-admin-token-bearer.md), [API_SPECIFICATION.md](API_SPECIFICATION.md)). 런타임을 직접 실행할 때(server, 손으로 실행한 desktop)는 다음 중 **하나만** 준다.
 
@@ -99,6 +100,80 @@ bash scripts/gate/build.sh
 - 속성 이름과 상관없이, 포트를 열기 전에 Tomcat 의 필터 매핑(`springSecurityFilterChain` 이 `/*` 와 dispatcher 다섯 가지로 매핑된 DelegatingFilterProxy 인지, 그 앞에 허용 목록 밖의 필터가 없는지)과, `allow-remote=false` 일 때 파이프라인의 valve 를 검사한다.
 - **자기 점검:** 포트를 연 직후, readiness 가 200 이 되기 전에 런타임이 자기 포트로 토큰 없는 요청 여섯 개(관리 API, `/actuator/env`, `/actuator/beans`, health 세 경로)를 보낸다. 관리 체인의 401/403 이나 health 응답이 아니거나 health 경로가 5 초 안에 답하지 않으면(메타데이터 DB 가 멈춰 health 점검이 끝나지 않는 경우 등) 이유를 ERROR 로그에 남기고 기동을 멈춘다. 정리가 멈춰도 프로세스는 그 뒤 15 초쯤 안에 종료 코드 1 로 끝난다(`Runtime.halt`). 손으로 실행할 때 기동이 멈추면 로그의 `관리 체인 자기 점검` 줄을 먼저 본다.
 
+## 마스터 키 (구현됨, P1-04 커밋 전)
+
+런타임은 업무 DB 비밀번호를 암호화하는 256 비트 마스터 키가 있어야 기동한다(두 프로파일). 결정은 [ADR-023](ADR/ADR-023-master-key-delivery.md)에, 형식과 교체는 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)에 있다. 키는 16진수 64 자다. 키를 잃으면 그 키로 암호화한 비밀번호는 되살릴 수 없다.
+
+### server 의 키
+
+다음 중 **하나만** 준다.
+
+| 변수 | 설명 |
+|---|---|
+| `QUERYHUB_MASTER_KEY` | 키 값. 16진수 64 자(대소문자 무관). `openssl rand -hex 32` 로 만든다 |
+| `QUERYHUB_MASTER_KEY_FILE` | 키 한 줄이 든 시크릿 파일의 경로. 4096 바이트 이하. 끝의 LF 나 CRLF 하나는 지운다 |
+
+```sh
+umask 077
+openssl rand -hex 32 > /secure/path/queryhub-master-key   # 경로는 예시다
+QUERYHUB_MASTER_KEY_FILE=/secure/path/queryhub-master-key java -jar queryhub-runtime.jar --spring.profiles.active=server
+```
+
+다음 경우에는 포트를 열기 전에 기동을 거부한다. 메시지는 변수와 속성 이름만 말하고 값과 파일 경로는 말하지 않는다.
+
+- 둘 다 없거나 둘 다 있다.
+- 파일이 없거나, 일반 파일이 아니거나, 읽을 수 없거나, 비었거나, 4096 바이트를 넘는다.
+- 값이 정확히 16진수 64 자가 아니거나, 32 바이트가 모두 같거나, 관리자 토큰과 같다(대소문자 무관).
+- 키가 명령행 인자(`--queryhub.master-key=...`), `-D`, 또는 그 두 곳으로 넘긴 `spring.application.json` 에서 온다. 프로세스 목록에 보이기 때문이다.
+
+개발용으로는 `deploy/.env` 에 `QUERYHUB_MASTER_KEY=<openssl rand -hex 32 의 출력>` 한 줄을 더한다(`deploy/env.example` 의 주석 줄). 관리자 토큰과 다른 값이어야 한다. 키 값은 Metadata DB 백업과 따로 보관한다.
+
+### desktop 의 키 파일
+
+셸이 첫 실행에 키 파일을 만들고, 그다음부터는 시작할 때마다 읽기만 한다. 따로 설정할 것은 없다. 셸 자신의 환경에 있는 `QUERYHUB_MASTER_KEY` 와 `QUERYHUB_MASTER_KEY_FILE` 은 런타임에 넘어가지 않는다.
+
+| OS | 키 파일 | 확인 |
+|---|---|---|
+| macOS | `~/Library/Application Support/com.queryhub.desktop/secrets/master.key` | 수동 확인 (P1-04 AC28) |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/com.queryhub.desktop/secrets/master.key` | 미검증 (PLAT-1) |
+| Windows | `%LOCALAPPDATA%\com.queryhub.desktop\secrets\master.key` (Roaming 이 아니다) | 미검증 (PLAT-1) |
+
+- 형식은 소문자 16진수 64 자와 LF 다(`openssl rand -hex 32` 의 출력과 같다). unix 에서는 디렉터리가 0700, 파일이 0600 이고, 앱을 실행하는 사용자가 소유한다.
+- 셸은 있는 파일을 덮어쓰거나, 지우거나, 권한을 바꾸지 않는다. 파일에 문제가 있으면 런타임을 띄우지 않고 `master_key_unavailable` 을 보인다. 메시지에는 경로와 고치는 명령(`chmod 600 '<경로>'`, `chmod 700 '<경로>'`, `chown <uid> '<경로>'`)이 있다. 파일 내용은 보이지 않는다.
+- 형식이 틀린 파일(예: 첫 실행의 쓰기 도중 멈췄다)을 지워도 되는 것은, 런타임이 그 키로 한 번도 시작하지 않았을 때뿐이다. 그 키로 비밀번호를 저장했을 수 있으면 지우지 말고 백업에서 되살린다.
+
+### 키의 백업과 복구
+
+- 키 파일은 데이터 디렉터리 안에 있다. 그래서 데이터 디렉터리를 백업하거나 복사하면(예: Time Machine) 키도 함께 들어간다. 키 파일과 Metadata DB 백업은 따로 보관한다. 둘이 함께 새면 암호화한 비밀번호를 풀 수 있다.
+- 조직이 통제하는 곳(예: 사내 비밀 보관소)에 키 사본을 둔다. 키 파일을 잃으면 그 키로 암호화한 비밀번호는 되살릴 수 없다. 셸은 다음 시작에서 새 키를 만들고, 저장한 연결 비밀번호는 다시 입력해야 한다(연결 저장 태스크 이후).
+- 되살리는 방법: 앱을 끄고, 백업한 키 파일을 같은 경로에 같은 권한(unix 는 파일 0600, 디렉터리 0700, 같은 소유자)으로 놓은 뒤 앱을 시작한다.
+
+### 키 미리 배치 (사내 폐쇄망)
+
+관리자는 첫 실행 전에 조직의 키 파일을 기본 경로에 둘 수 있다. 셸은 있는 파일을 그대로 쓴다. Metadata DB 하나를 함께 쓰는 데스크톱은 모두 같은 키 파일을 받아야 한다. 키가 다르면 다른 데스크톱이 저장한 비밀번호를 풀지 못한다(`UNKNOWN_KEY`).
+
+macOS 의 예다. 앱을 쓸 사용자로 실행한다. Linux 는 디렉터리를 `"${XDG_DATA_HOME:-$HOME/.local/share}/com.queryhub.desktop/secrets"` 로 바꾼다(미검증).
+
+```sh
+dir="$HOME/Library/Application Support/com.queryhub.desktop/secrets"
+mkdir -p "$dir" && chmod 700 "$dir"
+install -m 600 /path/to/organisation-master.key "$dir/master.key"
+```
+
+Windows(미검증)에서는 `%LOCALAPPDATA%\com.queryhub.desktop\secrets\master.key` 에 같은 형식으로 둔다. 셸은 권한을 확인하지 않으므로 사용자 프로필의 기본 ACL 을 넓히지 않는다. 다른 경로를 쓰게 하는 설정은 없다([BACKLOG.md](BACKLOG.md) P104-1).
+
+### 키 교체
+
+- server: 지금은 복호화 전용 이전 키를 넣는 방법이 없다(BACKLOG P104-4). 그래서 지금 `QUERYHUB_MASTER_KEY` 를 바꾸면 기존 암호문은 `UNKNOWN_KEY` 가 된다. 지금은 저장된 암호문이 없다.
+- P104-4 가 생긴 뒤의 절차([ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md) 결정 8):
+  1. 새 키를 만든다.
+  2. 새 키를 `QUERYHUB_MASTER_KEY` 로, 옛 키를 이전 키로 둔다.
+  3. 재시작한다.
+  4. 모든 행을 다시 암호화한다.
+  5. 옛 kid 를 쓰는 행이 남지 않았는지 확인한다.
+  6. 옛 키를 빼고 재시작한다.
+- desktop: 키 파일 교체는 후속이다(P104-5). 그때까지 키 파일을 바꾸거나 지우지 않는다.
+
 ## Desktop 셸 (구현됨, P0-C 스파이크)
 
 `desktop/` 은 Tauri 2.11 앱이다. 셸이 런타임을 자식 프로세스로 띄우는 방식, 상태와 버튼, 멈추는 방식은 [ARCHITECTURE.md](ARCHITECTURE.md)에 있다.
@@ -125,7 +200,7 @@ Metadata DB 변수(비밀번호 포함)는 `( ... )` 하위 셸에서만 읽으�
 
 ### 환경변수 (desktop)
 
-코드: `desktop/src-tauri/src/runtime/launch.rs` 의 `JAVA_VAR`, `JAR_VAR`, `PARENT_PID_VAR`, `DB_*_VAR`, `ADMIN_TOKEN_VAR`, 토큰은 `token.rs`.
+코드: `desktop/src-tauri/src/runtime/launch.rs` 의 `JAVA_VAR`, `JAR_VAR`, `PARENT_PID_VAR`, `DB_*_VAR`, `ADMIN_TOKEN_VAR`, `MASTER_KEY_VAR`. 토큰은 `token.rs`, 키 파일은 `master_key.rs`.
 
 | 변수 | 읽는 쪽 | 설명 |
 |---|---|---|
@@ -134,6 +209,7 @@ Metadata DB 변수(비밀번호 포함)는 `( ... )` 하위 셸에서만 읽으�
 | `QUERYHUB_METADATA_DB_HOST`, `_PORT`(선택), `_NAME`, `_USERNAME`, `_PASSWORD` | 셸 → 런타임 | 셸이 자기 환경에서 읽어 런타임에 **환경변수로만** 넘긴다(명령행 인자에 넣지 않는다). 셸은 비어 있지 않은지만 보고 형식 검사는 런타임이 한다. 없으면 `metadata_settings_missing`(빠진 이름만 말한다) |
 | `QUERYHUB_DESKTOP_PARENT_PID` | 셸 → 런타임 | 셸의 PID. 런타임의 부모 감시가 읽는다([ADR-014](ADR/ADR-014-runtime-parent-watch.md)). 손으로 설정하지 않는다 |
 | `QUERYHUB_ADMIN_TOKEN` | 셸 → 런타임 | 셸이 실행마다 OS 난수 생성기로 만든 64 자 16진수 관리자 토큰. 환경변수로만 넘긴다(명령행 인자에 넣지 않는다). UI 는 Tauri 커맨드 `admin_token` 으로 받는다. 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`·`QUERYHUB_ADMIN_TOKEN_FILE` 은 넘기지 않는다. 손으로 설정하지 않는다. Windows·Linux 는 미검증(PLAT-1) |
+| `QUERYHUB_MASTER_KEY` | 셸 → 런타임 | 셸이 키 파일(위 「마스터 키」)에서 시작마다 읽은 값. 환경변수로만 넘긴다(명령행 인자에 넣지 않는다). 셸 자신의 환경에 있는 `QUERYHUB_MASTER_KEY`, `QUERYHUB_MASTER_KEY_FILE`, `QUERYHUB_MASTER_KEY_PREVIOUS`, `QUERYHUB_MASTER_KEY_PREVIOUS_FILE` 은 넘기지 않는다 |
 
 - 셸은 허용 목록의 변수만 자식 런타임에 물려준다. 목록과 이유는 [SECURITY.md](SECURITY.md)의 「Desktop 셸의 자식 환경」에 있다([ADR-013](ADR/ADR-013-desktop-child-env-allowlist.md)).
 - **계획**: Metadata DB 첫 실행 설정 화면과 OS 키체인 저장(Phase 6). 그때까지 Finder 에서 연 앱은 변수가 없어 `metadata_settings_missing` 을 보인다([ADR-017](ADR/ADR-017-desktop-metadata-settings-from-env.md)).
@@ -157,5 +233,5 @@ pnpm --dir desktop tauri build --debug --bundles app --no-sign
 ## 계획 (Phase 8)
 
 - **Desktop 설치본:** JRE 묶기(jlink), JAR 묶기(`bundle.resources`), dmg·설치 프로그램, 코드 서명과 공증. `bundle.externalBin` 사이드카는 쓰지 않는다([ADR-001](ADR/ADR-001-jvm-child-process.md)).
-- **Server:** Docker 이미지와 `Dockerfile`(설계 §3 의 `deploy/`), 운영 프로파일과 마스터 키의 시크릿 파일 입력(관리자 토큰의 시크릿 파일 `QUERYHUB_ADMIN_TOKEN_FILE` 은 P1-03 에서 구현됐다).
+- **Server:** Docker 이미지와 `Dockerfile`(설계 §3 의 `deploy/`), 운영 프로파일(시크릿 파일 입력은 구현됐다: 관리자 토큰의 `QUERYHUB_ADMIN_TOKEN_FILE` 은 P1-03, 마스터 키의 `QUERYHUB_MASTER_KEY_FILE` 은 P1-04).
 - **플랫폼:** Windows·Linux 의 빌드와 실행은 **미검증**이다. CI 워크플로(`.github/workflows/ci.yml`, 정의됨·미실행)의 첫 실행과 Phase 8 에서 확인한다([BACKLOG.md](BACKLOG.md) CI-1, PLAT-1). Windows 의 `Path` 대소문자 처리(P0C-C2-4)는 P0-D 에서 고쳤지만 Windows 에서 실행해 보지 않았다.
