@@ -118,7 +118,7 @@ sqlite-jdbc 는 SQLite C 라이브러리를 JAR 안에 OS·아키텍처별로 �
 | `postgres:16-alpine` (113,895,262 바이트) | PostgreSQL 16.15 (이미지의 `PG_VERSION`) | `PostgreSqlProviderIntegrationTest` 9 | 재지 못했다(시험이 짧아 `docker stats` 가 잡기 전에 끝났다) |
 | `testcontainers/ryuk:0.14.0` (2,124,447 바이트) | — | Testcontainers 의 정리 컨테이너 | 약 11.5 MiB (같은 때) |
 
-- 세 이미지는 모두 이미 로컬에 있었고 받은 것(`docker pull`)은 없다. CI 의 `gates` 작업은 이 이미지를 받게 된다(P1-07 코드는 아직 CI 에서 돌지 않았다).
+- 세 이미지는 모두 이미 로컬에 있었고 받은 것(`docker pull`)은 없다. CI 의 `gates` 작업에서는 이 이미지(Linux 컨테이너)로 통합 시험이 통과했다(P1-07 코드 bb0cd8c, 실행 45194878756 의 2회차, 2026-11-23).
 - 컨테이너는 시험 클래스마다 하나씩, 차례로 뜬다. run D 의 통합 게이트 전체는 75 초였다. 컨테이너 포트는 127.0.0.1 에만 묶는다([TEST_PLAN.md](TEST_PLAN.md)).
 - 호스트 메모리 16 GB, Docker VM 약 8 GB(`docker stats` 의 한도 7.75 GiB). SQL Server 는 arm64 이미지가 없어 P1-11 에서 통합 시험을 생략한다(사람의 결정 「Oracle만, MSSQL은 테스트 생략」).
 

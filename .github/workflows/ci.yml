@@ -1,14 +1,20 @@
 # QueryHub CI (P0-D, ADR-020).
 #
 # 상태: 2026-11-23 부터 공개 저장소 github.com/xgeekover/QueryHub 에서 push 로 실행된다(BACKLOG CI-1).
-# P1-06(39c90e1)과 MIT 라이선스(319c8ee) 코드를 돌린 두 실행(45135537429, 45139240703)의 결과:
-# - gates (ubuntu-24.04): 성공. 네 게이트 전체와 통합 테스트, Linux desktop 이 돌았다.
-# - desktop (macos-15, --desktop-only): 성공.
-# - desktop (windows-2025, --desktop-only): 실패. build.sh 는 통과했고 test.sh 가 junit-check 자체 검증에서 멈췄다:
+# P1-07(bb0cd8c) 코드를 돌린 실행 45194878756 의 결과(2회차는 실패한 작업만 다시 돌렸다, 2026-11-23):
+# - gates (ubuntu-24.04): 1회차는 build.sh 에서 실패했다. Gradle 이 플러그인 클래스패스를 받는 중에 Maven Central 이
+#   429 Too Many Requests 로 답했다(코드 문제가 아니다). 2회차는 성공했다(약 19분). selftest --no-skip 과 네 게이트 전체,
+#   P1-07 의 MariaDB·PostgreSQL 통합 시험(Testcontainers), 깨끗한 작업 트리 확인이 돌았다.
+# - desktop (macos-15, --desktop-only): 1회차는 러너가 배정되지 않아 15분 뒤 취소되었고(실행한 단계 0개), 2회차는 성공했다.
+# - desktop (windows-2025, --desktop-only): 두 회차 모두 실패. test.sh 가 junit-check 자체 검증의 i6 에서 멈췄다:
 #   ln: failed to create symbolic link '/tmp/queryhub-junit-selftest.*/i6-dangling-link/TEST-link.xml': No such file or directory
-#   (selftest.sh:92). Git Bash 의 ln -s 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다.
-#   MSYS2 의 winsymlinks 설정을 env 로 두는 해법은 workflow-check.sh 의 FORBIDDEN_ENV(MSYS*)가 거부한다. 어떻게 할지는
-#   사람이 정한다(BACKLOG CI-1). 그래서 Windows 는 미검증이다(PLAT-1).
+#   Git Bash 의 ln -s 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다.
+# 앞선 두 실행(P1-06 39c90e1 의 45135537429, MIT 라이선스 319c8ee 의 45139240703)도 gates 와 macOS 는 성공, Windows 는
+#   같은 자리에서 실패였다.
+# P1-07a(커밋 전)는 이 파일이 아니라 selftest.sh 의 그 ln -s 한 명령에만 MSYS2 의 winsymlinks:native 설정을 주고, 그래도 깨진
+#   링크를 만들지 못하면 이유를 적고 i6 을 SKIP 한다(desktop 작업의 인자 없는 selftest 는 SKIP 을 받고, gates 의 --no-skip 은
+#   받지 않는다). 설정을 env 로 두는 해법은 workflow-check.sh 의 FORBIDDEN_ENV(MSYS*)가 거부하고, 그 규칙은 그대로다(BACKLOG
+#   CI-1). Windows 는 P1-07a 를 push 한 뒤의 CI 실행까지 미검증이다(PLAT-1).
 #
 # 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
 # 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서

@@ -124,13 +124,13 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 
 ## CI (P0-D, 2026-11-23 부터 실행)
 
-`.github/workflows/ci.yml` 은 P0-D 에서 정의했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. push 는 사람이 한다. 결정과 이유는 [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)(제안)에 있다. P1-06(39c90e1)과 MIT 라이선스(319c8ee) 코드를 돌린 두 실행(45135537429, 45139240703)의 결과는 다음과 같다([BACKLOG.md](BACKLOG.md) CI-1). P1-07 코드는 아직 CI 에서 돌지 않았다.
+`.github/workflows/ci.yml` 은 P0-D 에서 정의했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. push 는 사람이 한다. 결정과 이유는 [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)(제안)에 있다. P1-07(bb0cd8c) 코드를 돌린 실행 45194878756 의 결과는 다음과 같다([BACKLOG.md](BACKLOG.md) CI-1). 2회차는 실패한 작업만 다시 돌렸다(2026-11-23). 앞선 두 실행(P1-06 39c90e1 의 45135537429, MIT 라이선스 319c8ee 의 45139240703)도 `gates` 와 macOS 는 성공, Windows 는 같은 i6 에서 실패였다.
 
 | 작업 | 결과 |
 |---|---|
-| `gates (ubuntu-24.04)` | 성공. 네 게이트 전체(selftest `--no-skip`, build, test, lint, integration)와 새 사본 검사 |
-| `desktop (macos-15, --desktop-only)` | 성공 |
-| `desktop (windows-2025, --desktop-only)` | 실패. `build.sh` 는 통과했고, `test.sh` 가 junit-check 자체 검증 i6 에서 멈췄다: `ln: failed to create symbolic link '/tmp/queryhub-junit-selftest.*/i6-dangling-link/TEST-link.xml': No such file or directory`(`selftest.sh:92`). Git Bash 의 `ln -s` 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다. 사람의 결정(2026-11-23) 「별도 작은 태스크 (권장)」: P1-07 다음의 작은 태스크가 `selftest.sh` 의 i6 줄만 고친다(그 `ln -s` 에만 `MSYS=winsymlinks:native`, 그래도 안 되면 이유를 적고 SKIP). 점검기 규칙은 그대로이고, run 명령 안에 설정을 넣는 모양은 점검기의 빈 곳으로만 통과하므로 쓰지 않는다. 그 태스크의 push 뒤 CI 실행까지 Windows 는 미검증이다(CI-1, PLAT-1) |
+| `gates (ubuntu-24.04)` | 1회차 실패: `build.sh` 에서 Gradle 이 플러그인 클래스패스(예: `spring-boot-buildpack-platform:4.1.2`)를 받는 중에 Maven Central 이 `429 Too Many Requests` 로 답했다(코드 문제가 아니다). 2회차 성공(약 19분): 네 게이트 전체(selftest `--no-skip`, build, test, lint, integration. integration 에는 P1-07 의 MariaDB·PostgreSQL Testcontainers 시험이 든다)와 새 사본 검사 |
+| `desktop (macos-15, --desktop-only)` | 1회차는 러너가 배정되지 않아 15분 뒤 취소(실행한 단계 0개). 2회차 성공 |
+| `desktop (windows-2025, --desktop-only)` | 두 회차 모두 실패. `test.sh` 가 junit-check 자체 검증 i6 에서 멈췄다: `ln: failed to create symbolic link '/tmp/queryhub-junit-selftest.*/i6-dangling-link/TEST-link.xml': No such file or directory`(bb0cd8c 의 `selftest.sh:92`). Git Bash 의 `ln -s` 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다. 사람의 결정(2026-11-23) 「별도 작은 태스크 (권장)」에 따라 P1-07a(커밋 전)가 `selftest.sh` 의 i6 줄만 고쳤다: 그 `ln -s` 에만 `MSYS=winsymlinks:native` 를 주고, 그래도 깨진 링크를 만들지 못하면 이유를 적고 i6 를 SKIP 한다(아래 「root 아님과 `--no-skip`」). 점검기 규칙은 그대로이고, run 명령 안에 설정을 넣는 모양은 점검기의 빈 곳으로만 통과하므로 쓰지 않는다. P1-07a 의 push 뒤 CI 실행까지 Windows 는 미검증이다(CI-1, PLAT-1) |
 
 단계 구성은 다음과 같다.
 
@@ -141,10 +141,10 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 
 - **같은 명령:** `gates` 작업의 네 줄은 팩토리 게이트 명령과 글자 그대로 같고 인자가 없다. 게이트 스크립트 밖에서 gradle, pnpm, cargo 를 부르지 않는다. 그러므로 junit-check, cargo-test-check, selftest 의 거짓 통과 방어도 로컬과 같다. `workflow-check.sh` 가 이 네 줄이 단계의 한 줄짜리 run 값으로 있는지(다음 줄에 이어지는 더 깊은 줄 없이), 그리고 `continue-on-error`, `if:`, bash 가 아닌 `shell:`, 단계 밖의 `run:`, 같은 매핑의 같은 키가 없는지 lint 단계에서 확인한다(P1-01).
 - **통합 테스트는 Linux 에서만:** `integration.sh` 는 Docker 사전 점검을 한다. macOS 러너에는 Docker 가 없고 Windows 러너는 Windows 컨테이너만 돌린다. 그래서 `integration.sh` 는 `gates` 작업에만 있다. P1-05 까지는 `mariadb:12.3`(Metadata DB), P1-07 부터는 업무 DB 컨테이너(`mariadb:12.3`, `postgres:16-alpine`, Linux 컨테이너)가 이유다. CI 는 이 이미지를 받게 된다.
-- **root 아님과 `--no-skip`:** `gates` 작업은 root 가 아닌지 먼저 확인하고 selftest 를 `--no-skip` 으로 돌린다. `desktop` 작업은 `test.sh` 안의 인자 없는 selftest 만 돌리므로, Git Bash 에서 권한 000 시나리오가 SKIP 되어도 막히지 않는다(미검증).
+- **root 아님과 `--no-skip`:** `gates` 작업은 root 가 아닌지 먼저 확인하고 selftest 를 `--no-skip` 으로 돌린다. `desktop` 작업은 `test.sh` 안의 인자 없는 selftest 만 돌리므로, Git Bash 에서 권한 000 시나리오가 SKIP 되어도 막히지 않는다(미검증). P1-07a 부터 깨진 심볼릭 링크 시나리오 i6 도 같다: 링크를 만들지 못하면(`[ -L ]` 가 거짓) `SKIP (i6)` 줄을 찍고 건너뛴 시나리오로 센다. 그래서 Windows 에서는 SKIP 으로 지나갈 수 있고, Linux 의 `gates` 작업(`--no-skip`)에서는 실패한다. macOS 로컬에서는 i6 가 그대로 돈다(279 시나리오, SKIP 0). 링크를 만들지 못하게 한 임시 사본에서 인자 없이는 SKIP 1 로 exit 0, `--no-skip` 은 exit 1 이었다(2026-11-24, macOS).
 - **캐시:** 의존성 캐시뿐이고 빌드 산출물은 없다. Gradle(`setup-java` 의 `cache: gradle`), pnpm store(`setup-node` 의 `cache: pnpm`, `cache-dependency-path: desktop/pnpm-lock.yaml`), `~/.cargo/registry/index`, `~/.cargo/registry/cache`, `~/.cargo/git/db`(키: `runner.os`, `1.97.1`, `Cargo.lock` 해시). `target`, `node_modules`, `dist`, `build`, `test-results` 는 캐시하지 않으므로 매 실행이 새 빌드다. 다만 `cache: gradle` 은 `~/.gradle/caches` 와 `~/.gradle/wrapper` 를 담고, 그 안에는 Gradle 이 만든 데이터(transforms, 컴파일된 빌드 스크립트)도 있다. 복원한 캐시는 검증하지 않는다(Gradle 의존성 검증이 없다, [BACKLOG.md](BACKLOG.md) CI-2).
 - **트리거와 권한:** main 의 push·pull_request 와 수동 실행(`workflow_dispatch`). 최상위 권한 `contents: read` 하나, 비밀 값 없음([SECURITY.md](SECURITY.md)).
-- **첫 실행(2026-11-23)에서 확인한 것:** 세 러너 레이블, action 입력 이름, Linux WebKitGTK 빌드, ubuntu 의 awk(mawk)에서 새 awk 코드(gates 의 selftest). **아직 모르는 것:** Windows 의 `test.sh` 나머지(가짜 실행 파일과 심볼릭 링크를 쓰는 selftest 시나리오, cargo test 와 `#[cfg(windows)]` 테스트)와 `lint.sh`.
+- **첫 실행(2026-11-23)에서 확인한 것:** 세 러너 레이블, action 입력 이름, Linux WebKitGTK 빌드, ubuntu 의 awk(mawk)에서 새 awk 코드(gates 의 selftest). **아직 모르는 것:** Windows 에서 i6 의 네이티브 링크가 만들어지는지와 junit-check 가 그것을 `[INVALID]` 로 거부하는지(P1-07a), Windows 의 `test.sh` 나머지(가짜 실행 파일과 심볼릭 링크를 쓰는 다른 selftest 시나리오, cargo test 와 `#[cfg(windows)]` 테스트)와 `lint.sh`.
 
 ## 테스트 수
 
@@ -163,7 +163,7 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 | P1-04 | 037385b (2026-11-23) | 868 | 26 | 43 | 68 |
 | P1-05 | 6ceef51 (2026-11-23) | 871 | 28 | 43 | 71 |
 | P1-06 | 39c90e1 (2026-11-23) | 894 | 33 | 44 | 79 |
-| P1-07 | 커밋 전 | 1093 | 52 | 44 | 79 |
+| P1-07 | bb0cd8c (2026-11-23) | 1093 | 52 | 44 | 79 |
 
 - P0-D 의 수는 macOS 로컬의 게이트 실행에서 센 값이다. cargo test 의 새 테스트 2건은 모든 플랫폼에서 돈다. `#[cfg(windows)]` 테스트 1건은 macOS 에서 컴파일되지 않아 32 에 들어 있지 않고 미검증이다. `selftest.sh` 는 93 시나리오(P0-D 전 35, 새로 58)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
 - P1-01 의 수도 macOS 로컬의 게이트 실행에서 센 값이다. 게이트 스크립트, 문서와 주석만 바꿨으므로 runtime·통합·vitest·cargo test 수는 P0-D 와 같다. `selftest.sh` 는 227 시나리오(P0-D 의 93, 새로 134)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).

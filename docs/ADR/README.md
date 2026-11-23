@@ -47,8 +47,8 @@ QueryHub 의 기술 결정을 결정 하나에 파일 하나로 남긴다. 다�
 | [ADR-023](ADR-023-master-key-delivery.md) | 마스터 키 전달: server 는 환경변수나 시크릿 파일, desktop 은 셸이 만드는 키 파일(키체인 대신, 설계 §1.2·§7 과 다름) | 제안 (키체인 제외는 사용자 결정 2026-11-23) | 구현됨 (P1-04, 037385b) — Windows·Linux 미검증 | 2026-11-23 |
 | [ADR-024](ADR-024-secret-cipher-format-and-rotation.md) | 비밀 값 암호 형식 v1(AES-256-GCM, AAD, 키 id)과 키 교체 | 제안 | 일부 구현 (P1-04, 037385b) — 이전 키 입력과 일괄 재암호화는 계획 | 2026-11-23 |
 | [ADR-025](ADR-025-java-17-baseline.md) | Java 기준선은 17 이다 (Spring Boot 4.1 은 그대로, ADR-010 의 Java 버전 결정을 대체) | 승인됨 | 구현됨 (P1-05, 6ceef51) — Linux·macOS 는 CI 통과(2026-11-23), Windows 미검증 | 2026-11-23 |
-| [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) | Metadata 저장소는 두 모드 모두 내장 SQLite 다 (ADR-009 를 대체) | 승인됨 | 구현됨 (P1-06, 39c90e1 (2026-11-23)), P1-07 보강은 커밋 전 — macOS arm64 와 Linux x86_64(CI) 실행, 다른 네이티브와 Windows 미검증 | 2026-11-23 |
-| [ADR-027](ADR-027-database-provider.md) | 업무 DB Provider: 필드로 만든 URL, 옵션 허용 목록, 고정 속성, `Driver.connect`, 연결마다 읽기 전용 Hikari 풀(Spring 빈 아님), 고정 메시지 | 제안 | 구현됨 (P1-07, 커밋 전) — MariaDB·PostgreSQL 만, Oracle·MSSQL 계획(P1-10, P1-11) | 2026-11-23 |
+| [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) | Metadata 저장소는 두 모드 모두 내장 SQLite 다 (ADR-009 를 대체) | 승인됨 | 구현됨 (P1-06, 39c90e1 (2026-11-23)), P1-07 보강 bb0cd8c (2026-11-23) — macOS arm64 와 Linux x86_64(CI) 실행, 다른 네이티브와 Windows 미검증 | 2026-11-23 |
+| [ADR-027](ADR-027-database-provider.md) | 업무 DB Provider: 필드로 만든 URL, 옵션 허용 목록, 고정 속성, `Driver.connect`, 연결마다 읽기 전용 Hikari 풀(Spring 빈 아님), 고정 메시지 | 제안 | 구현됨 (P1-07, bb0cd8c (2026-11-23)) — MariaDB·PostgreSQL 만, Oracle·MSSQL 계획(P1-10, P1-11) | 2026-11-23 |
 
 제안 상태인 ADR-015, ADR-018, ADR-020, ADR-022, ADR-023, ADR-024, ADR-027 은 사용자가 받아들이면 승인됨으로 바꾼다. ADR-009, ADR-011, ADR-017 은 2026-11-23 에 ADR-026 이 대체했다.
 

@@ -89,7 +89,10 @@ printf 'not a junit report\n\377\376\001garbage\n' >"$WORK/i4-not-xml/TEST-x.xml
 write_xml "$WORK/i5-not-regular" com.example.GoodTest 2 0 0 0
 mkdir -p "$WORK/i5-not-regular/TEST-dir.xml"
 write_xml "$WORK/i6-dangling-link" com.example.GoodTest 2 0 0 0
-ln -s "$WORK/no-such-file.xml" "$WORK/i6-dangling-link/TEST-link.xml"
+# (i6) Git Bash(MSYS2) 의 ln -s 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다. MSYS=winsymlinks:native 는
+#   대상이 없어도 Windows 네이티브 심볼릭 링크를 만든다. 이 명령에만 준다(macOS·Linux 의 ln 은 MSYS 를 읽지 않는다).
+#   그래도 만들지 못하면 여기서 멈추지 않고 아래 (i6) 기대에서 SKIP 으로 센다(P1-07a). Windows 동작은 push 뒤 CI 실행 전까지 미검증이다.
+MSYS=winsymlinks:native ln -s "$WORK/no-such-file.xml" "$WORK/i6-dangling-link/TEST-link.xml" || true
 
 # 속성이 여러 줄에 걸친 <testsuite 시작 태그. (ml) 는 통과해야 하고, (ml-s) 는 뒤쪽 줄의 skipped 를 읽어 거부해야 한다.
 # write_multiline DIR NAME SKIPPED
@@ -163,7 +166,13 @@ expect reject INVALID '(i2) tests 속성이 없는 <testsuite' --require-each "$
 expect reject INVALID '(i3) 닫히지 않은 <testsuite 태그' --require-each "$WORK/i3-unterminated"
 expect reject INVALID '(i4) XML 이 아닌 TEST-x.xml' --require-each "$WORK/i4-not-xml"
 expect reject INVALID '(i5) 디렉터리인 TEST-dir.xml' --require-each "$WORK/i5-not-regular"
-expect reject INVALID '(i6) 깨진 심볼릭 링크인 TEST-link.xml' --require-each "$WORK/i6-dangling-link"
+if [ -L "$WORK/i6-dangling-link/TEST-link.xml" ]; then
+  expect reject INVALID '(i6) 깨진 심볼릭 링크인 TEST-link.xml' --require-each "$WORK/i6-dangling-link"
+else
+  # 위 ln -s 가 깨진 링크를 만들지 못했다(그 오류는 위에 출력된다). --no-skip(CI 의 Linux gates 작업)에서는 실패한다.
+  echo "SKIP (i6) 깨진 심볼릭 링크를 만들 수 없다: 이 환경의 ln -s 는 대상이 없는 링크를 만들지 못한다 (Git Bash 에서 네이티브 심볼릭 링크 권한이 없음)"
+  skipped_scenarios=$((skipped_scenarios + 1))
+fi
 expect pass - '(ml) 속성이 여러 줄에 걸친 <testsuite' --require-each --newer "$MARKER" "$WORK/ml-clean"
 expect reject SKIPPED '(ml-s) 여러 줄 태그의 뒤쪽 줄에 있는 skipped=1' --require-each "$WORK/ml-skipped"
 

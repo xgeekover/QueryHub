@@ -8,9 +8,26 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. P1-07a 는 Windows CI 의 selftest i6 실패(CI-1)만 고친 작은 태스크다. 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
 
-#### P1-07 업무 DB Provider (MariaDB, PostgreSQL)와 P1-06 리뷰 후속 (커밋 전)
+#### P1-07a Windows CI 의 selftest i6 (커밋 전)
+
+태스크 T-20261123-234733-7f09. 사람의 결정(2026-11-23) 「별도 작은 태스크 (권장)」([REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-3)에 따라 보호 파일 `scripts/gate/selftest.sh` 의 i6 줄만 고쳤다. 사람은 이 태스크에서만 보호 파일을 바꾸는 데 동의했다.
+
+##### 수정
+
+- `selftest.sh` 의 i6 픽스처: 깨진 심볼릭 링크를 만드는 `ln -s` 한 명령에만 `MSYS=winsymlinks:native` 를 준다. Git Bash 의 `ln -s` 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못했다(CI-1). macOS·Linux 의 `ln` 은 `MSYS` 를 읽지 않는다. 그 `ln` 이 실패해도 스크립트는 멈추지 않는다.
+- i6 의 기대: 링크가 있으면(`[ -L ]`) 예전 그대로 `[INVALID]` 거부를 요구하고, 없으면 이유를 담은 `SKIP (i6)` 줄을 찍고 건너뛴 시나리오로 센다(i1 과 같은 방식). 그래서 `--no-skip`(CI 의 Linux `gates` 작업)에서는 i6 를 건너뛰면 실패하고, Windows 의 `desktop` 작업(`test.sh` 안의 인자 없는 selftest)에서는 SKIP 으로 지나간다.
+
+##### 변경
+
+- 문서: P1-07 의 커밋 표시(bb0cd8c)와 P1-07 코드의 CI 실행 45194878756 의 결과를 적었다([docs/BACKLOG.md](docs/BACKLOG.md) CI-1, PLAT-1, [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 「CI」). `.github/workflows/ci.yml` 은 머리 주석만 바꿨다. `MSYS` 설정은 워크플로에 넣지 않았고 `workflow-check.sh` 의 `FORBIDDEN_ENV`(`MSYS*`)는 그대로다.
+
+- 남은 것: Windows 에서 네이티브 링크가 만들어지는지와 junit-check 가 그 링크를 `[INVALID]` 로 거부하는지는 P1-07a 를 push 한 뒤의 CI 실행까지 미검증이다(CI-1, PLAT-1). Windows 의 나머지 단계(`test.sh` 의 cargo test 와 `#[cfg(windows)]` 시험, `lint.sh`)도 미검증이다.
+
+테스트(macOS arm64 로컬): `selftest.sh` 는 인자 없이와 `--no-skip` 모두 279 시나리오, SKIP 0 으로 통과했고 출력이 bb0cd8c 와 같다(i6 실행). i6 의 `ln -s` 를 실패하게 한 임시 사본에서는 인자 없이 `SKIP (i6)` 하나로 exit 0, `--no-skip` 으로 exit 1 이었다. runtime·desktop 코드와 시험은 바뀌지 않았다.
+
+#### P1-07 업무 DB Provider (MariaDB, PostgreSQL)와 P1-06 리뷰 후속 — bb0cd8c (2026-11-23)
 
 태스크 T-20261123-164312-7774. 결정은 [ADR-027](docs/ADR/ADR-027-database-provider.md)(제안)에 있다. 사람의 결정(2026-11-23): PostgreSQL 드라이버와 Testcontainers PostgreSQL 모듈만 내려받기, CI-2 는 「Phase 1 마무리로 미룸」, Oracle·MSSQL 은 「Oracle만, MSSQL은 테스트 생략」([REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-3).
 
@@ -47,7 +64,7 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 - 남은 것: 원시 JDBC URL 정책(P107-1), Oracle·MSSQL Provider(P107-2, P107-3), 쓰기 권한 경고(P107-4), socketTimeout 재설계(P107-5), pgjdbc `verify-ca`·`verify-full` 의 홈 파일(P107-6), `permitRedirect` 미시험(P107-7), 다른 서버 버전(P107-8), PostgreSQL 응답 없는 서버의 시간 차이(P107-9), 1044 의 모호함(P107-10), Ryuk 바인딩(P107-11), Windows CI(CI-1), Gradle 의존성 검증(CI-2, P1-12), PLAT-1.
 
-테스트(macOS arm64 로컬의 게이트 실행, Java 17 toolchain, run D 의 최종 트리): runtime 단위 1093(adapter-crypto 77, adapter-dbprovider 20, adapter-metadata 135, adapter-web 249, app 422, application 35, domain 109, provider-mariadb 20, provider-postgresql 26), 통합 52, vitest 44, cargo test 79, 모두 통과, 건너뜀 0. build, test, lint, integration 게이트 모두 GATE PASS. P1-07 코드는 아직 CI 에서 돌지 않았다.
+테스트(macOS arm64 로컬의 게이트 실행, Java 17 toolchain, run D 의 최종 트리): runtime 단위 1093(adapter-crypto 77, adapter-dbprovider 20, adapter-metadata 135, adapter-web 249, app 422, application 35, domain 109, provider-mariadb 20, provider-postgresql 26), 통합 52, vitest 44, cargo test 79, 모두 통과, 건너뜀 0. build, test, lint, integration 게이트 모두 GATE PASS. CI(실행 45194878756, 2026-11-23): 1회차에서 `gates` 는 Maven Central 의 `429 Too Many Requests`(코드 문제가 아니다)로 `build.sh` 에서 실패했고 macOS 작업은 러너가 배정되지 않아 취소되었다. 실패한 작업만 다시 돌린 2회차에서 `gates (ubuntu-24.04)`(네 게이트, MariaDB·PostgreSQL 통합 시험 포함)와 `desktop (macos-15)` 가 성공했다. `desktop (windows-2025)` 는 두 회차 모두 selftest i6 에서 실패했다(P1-07a, CI-1).
 
 #### MIT 라이선스 — 319c8ee (2026-11-23)
 

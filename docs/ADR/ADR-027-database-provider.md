@@ -2,7 +2,7 @@
 
 - 상태: 제안
 - 날짜: 2026-11-23
-- 구현: 구현됨 (P1-07, 커밋 전). MariaDB 와 PostgreSQL 만 구현했다. Oracle 은 P1-10, MSSQL 은 P1-11 이다(계획). macOS arm64 의 로컬 컨테이너(mariadb:12.3, postgres:16-alpine)에서만 실행했다. P1-07 코드는 아직 CI 에서 돌지 않았다
+- 구현: 구현됨 (P1-07, bb0cd8c (2026-11-23)). MariaDB 와 PostgreSQL 만 구현했다. Oracle 은 P1-10, MSSQL 은 P1-11 이다(계획). 실행해 본 곳은 macOS arm64 의 로컬 컨테이너(mariadb:12.3, postgres:16-alpine)와 CI 의 `gates (ubuntu-24.04)` 작업(Linux x86_64, 실행 45194878756 의 2회차, 2026-11-23)이다
 
 ## 맥락
 
