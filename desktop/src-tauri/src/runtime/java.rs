@@ -69,7 +69,7 @@ pub fn check(java: &Path, env: &Env, timeout: Duration) -> Result<u32, Failure> 
         return Err(Failure::new(
             FailureKind::JavaTooOld,
             format!(
-                "Java {major} 은(는) 런타임을 실행할 수 없다 ({shown}, 버전 \"{version}\"). 런타임은 Java {MIN_MAJOR} 이상이 필요하다. QUERYHUB_DESKTOP_JAVA 에 JDK {MIN_MAJOR} 의 java 경로를 지정한다."
+                "Java {major} 은(는) 런타임을 실행할 수 없다 ({shown}, 버전 \"{version}\"). 런타임은 Java {MIN_MAJOR} 이상이 필요하다. QUERYHUB_DESKTOP_JAVA 에 JDK {MIN_MAJOR} 이상의 java 경로를 지정한다."
             ),
         ));
     }

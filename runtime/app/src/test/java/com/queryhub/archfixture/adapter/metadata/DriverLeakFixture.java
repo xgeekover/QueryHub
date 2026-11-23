@@ -9,6 +9,6 @@ import java.sql.Driver;
 public final class DriverLeakFixture {
 
   public Driver driver() {
-    return new org.mariadb.jdbc.Driver();
+    return new org.sqlite.JDBC();
   }
 }

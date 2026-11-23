@@ -135,7 +135,12 @@ public final class ArchitectureRules {
         .should()
         .dependOnClassesThat()
         .resideInAnyPackage(
-            "com.microsoft.sqlserver..", "oracle.jdbc..", "org.mariadb.jdbc..", "org.postgresql..")
+            "com.microsoft.sqlserver..",
+            "oracle.jdbc..",
+            "org.mariadb.jdbc..",
+            "org.postgresql..",
+            // P1-06: Metadata 저장소의 SQLite 드라이버도 코드에서 참조하지 않는다(URL 과 클래스 이름 문자열로만 쓴다).
+            "org.sqlite..")
         .because("R6: DB 별 차이는 provider 모듈 안에 가둔다");
   }
 

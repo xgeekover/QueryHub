@@ -42,6 +42,8 @@ subprojects {
     // mavenBom 의 bomProperty 가 아니라 프로젝트 속성(ext)으로 둔다. app 에서는 Boot 플러그인이 BOM 을 한 번 더 가져와 bomProperty 를
     // 덮어쓰기 때문이다. Boot BOM 이 3.5.11 이상을 관리하게 되면 이 줄과 카탈로그의 버전을 지운다. 확인 방법:
     //   sh runtime/gradlew -p runtime -q :app:dependencyInsight --dependency mariadb-java-client --configuration runtimeClasspath
+    // P1-06 (ADR-026) 부터 Metadata 저장소는 SQLite 라서 지금은 어떤 클래스패스에도 Connector/J 가 없다. 이 덮어쓰기는 업무 DB Provider
+    // 작업이 OSV 수정판(3.5.11)을 그대로 물려받도록 남겨 둔다. 클래스패스에는 아무것도 더하지 않는다.
     ext['mariadb.version'] = catalog.versions.mariadb.connector.j.get()
 
     dependencyManagement {

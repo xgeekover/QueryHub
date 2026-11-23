@@ -10,7 +10,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,10 +21,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
- * AC-15 (단위): 입력 검사는 SQL 보다 먼저 일어나고, 시각은 UTC LocalDateTime 으로 바인딩된다.
+ * AC-15 (단위), P1-06 AC4: 입력 검사는 SQL 보다 먼저 일어나고, 시각은 UTC 고정 폭 문자열로 바인딩된다.
  *
- * <p>DB 없이 돈다. JDBC 호출을 기록하는 DataSource 로 "SQL 이 실행되었는가"와 "무엇이 바인딩되었는가"만 본다. 실제 저장과 조회(정렬 규칙,
- * DATETIME(6) 값)는 app 의 통합 테스트(AppSettingRepositoryIntegrationTest)가 MariaDB 에서 확인한다.
+ * <p>DB 없이 돈다. JDBC 호출을 기록하는 DataSource 로 "SQL 이 실행되었는가"와 "무엇이 바인딩되었는가"만 본다. 실제 SQLite 에서의 저장과
+ * 조회(BINARY 키, 저장된 문자열)는 {@link SqliteAppSettingRepositoryTest} 와 app 의 통합 테스트가 확인한다.
  */
 class JdbcAppSettingRepositoryTest {
 
@@ -85,25 +84,24 @@ class JdbcAppSettingRepositoryTest {
   }
 
   @Test
-  void putValueBindsTimestampsAsUtcLocalDateTimeTruncatedToMicros() {
+  void putValueBindsTimestampsAsUtcTextTruncatedToMicros() {
     repository.putValue("runtime.sample", "값");
 
     assertThat(dataSource.statements).hasSize(1);
     RecordedStatement statement = dataSource.statements.get(0);
     assertThat(statement.sql())
         .contains("INSERT INTO app_setting")
-        .contains("ON DUPLICATE KEY UPDATE");
-    LocalDateTime expected = LocalDateTime.parse("2026-01-02T03:04:05.123456");
-    // INSERT 의 created_at, updated_at 과 UPDATE 절의 updated_at: 세 번 모두 UTC 벽시계 값이다(서울 시각 12:04 가
-    // 아니다).
+        .contains("ON CONFLICT (setting_key) DO UPDATE SET")
+        .contains("setting_value = excluded.setting_value")
+        .contains("updated_at = excluded.updated_at")
+        .doesNotContain("created_at = ");
+    // VALUES 의 created_at, updated_at: 두 번 모두 UTC 문자열이다(서울 시각 12:04 가 아니다).
     assertThat(statement.parameters())
-        .filteredOn(value -> value instanceof LocalDateTime)
-        .hasSize(3)
-        .allSatisfy(value -> assertThat(value).isEqualTo(expected));
-    // Instant 나 java.sql.Timestamp 는 바인딩하지 않는다(Connector/J 가 JVM 시간대로 바꾼다).
+        .containsExactly(
+            "runtime.sample", "값", "2026-01-02T03:04:05.123456Z", "2026-01-02T03:04:05.123456Z");
+    // 날짜 객체는 바인딩하지 않는다(sqlite-jdbc 의 기본 변환은 정수로 저장한다).
     assertThat(statement.parameters())
-        .noneMatch(value -> value instanceof Instant || value instanceof java.util.Date);
-    assertThat(statement.parameters()).contains("runtime.sample", "값");
+        .allSatisfy(value -> assertThat(value).isInstanceOf(String.class));
   }
 
   @Test
@@ -123,7 +121,17 @@ class JdbcAppSettingRepositoryTest {
 
   @Test
   void utcNowIgnoresTheClockZone() {
-    assertThat(repository.utcNow()).isEqualTo(LocalDateTime.parse("2026-01-02T03:04:05.123456"));
+    assertThat(repository.utcNow()).isEqualTo("2026-01-02T03:04:05.123456Z");
+  }
+
+  @Test
+  void utcNowIsFixedWidthEvenForWholeSeconds() {
+    JdbcAppSettingRepository wholeSecond =
+        new JdbcAppSettingRepository(
+            JdbcClient.create(dataSource.proxy()),
+            Clock.fixed(Instant.parse("2026-11-23T00:00:00Z"), ZoneId.of("America/New_York")));
+
+    assertThat(wholeSecond.utcNow()).isEqualTo("2026-11-23T00:00:00.000000Z");
   }
 
   private record RecordedStatement(String sql, List<Object> parameters) {}

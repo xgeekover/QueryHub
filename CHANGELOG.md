@@ -1,6 +1,6 @@
 # 변경 이력
 
-이 파일은 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) 형식을 따른다. 분류 이름은 한국어로 쓴다: 추가, 변경, 수정, 보안. 아직 릴리스한 버전이 없으므로 모든 항목은 `[Unreleased]` 아래에 있다. 버전 번호 규칙은 첫 릴리스(Phase 8) 때 정한다.
+이 파일은 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) 형식을 따른다. 분류 이름은 한국어로 쓴다: 추가, 변경, 삭제, 수정, 보안(삭제는 P1-06 부터 쓴다). 아직 릴리스한 버전이 없으므로 모든 항목은 `[Unreleased]` 아래에 있다. 버전 번호 규칙은 첫 릴리스(Phase 8) 때 정한다.
 
 Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명세 13절). 항목은 최신이 위에 온다. 날짜는 커밋 날짜(`git log -1 --format=%cs <커밋>`)다. 테스트 수는 그 태스크의 마지막 게이트 실행에서 센 값이다.
 
@@ -8,9 +8,52 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. 다음 태스크 P1-06(SQLite 내장 metadata 저장소)은 계획이다.
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. 다음은 DB Provider 와 연결 CRUD 다.
 
-#### P1-05 Java 17 (커밋 전)
+#### P1-06 내장 SQLite Metadata 저장소 (커밋 전)
+
+사용자 결정(2026-11-23)에 따른 태스크다. 결정은 [ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md)(승인됨)에 있고, [ADR-009](docs/ADR/ADR-009-mariadb-metadata-db.md)(사용자 결정 D2), [ADR-011](docs/ADR/ADR-011-metadata-secrets-env-only.md), [ADR-017](docs/ADR/ADR-017-desktop-metadata-settings-from-env.md)을 대체한다. 명세 3절 「Metadata Database: MariaDB」와 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 13, 사용자 문구와 항목별 대응은 [REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-2 에 있다. P1-05 리뷰의 후속 R1, R2, R3, R6, R8 도 함께 했다.
+
+##### 추가
+
+- runtime: `org.xerial:sqlite-jdbc` 3.53.4.0(Spring Boot 4.1.2 BOM 관리, 카탈로그 항목에 버전 없음, `adapter-metadata` 의 `runtimeOnly`). 클래스패스의 외부 모듈 추가는 이것 하나다. Flyway 모듈은 더하지 않았다(`flyway-core` 12.4.0 이 SQLite 를 지원한다). JAR 은 12,002,370 바이트, Apache-2.0(번들된 SQLite 는 public domain), 네이티브 20개(실행해 본 것은 Mac/aarch64 하나, [DATABASE_SUPPORT.md](docs/DATABASE_SUPPORT.md)).
+- runtime: 새 패키지 `com.queryhub.adapter.metadata.store`(순수 Java, `org.sqlite` 참조 없음). 데이터 디렉터리 설정 검사(`?` 없는 절대 경로), 비공개 디렉터리·파일 규칙(만들면 0700/0600, 심볼릭 링크·종류·다른 소유자·그룹·기타 비트 거부, 저절로 고치지 않고 `chmod` 안내, Windows 는 확인하지 않음), 네트워크 파일 시스템 분류기, `queryhub.lock` 의 `FileChannel.tryLock`, 네이티브 디렉터리와 `org.sqlite.tmpdir`, `CREATE_NEW` 0600 DB 파일, SQLite 머리글 검사, `PRAGMA quick_check`, 부트스트랩 연결의 PRAGMA 검사, 네이티브 실패 분류기(`QUERYHUB_SQLITE_NATIVE_DIR`, `os.name`/`os.arch`, `noexec`·백신 안내).
+- runtime: `MetadataStoreProperties`(`queryhub.data-dir` / `QUERYHUB_DATA_DIR` 필수, `queryhub.sqlite.native-dir` / `QUERYHUB_SQLITE_NATIVE_DIR` 선택). 환경변수, 외부 설정 파일(`spring.config.additional-location`), 명령행 어느 것으로든 받는다.
+- runtime: `MetadataPoolCheck`(BeanPostProcessor). 주 DataSource 가 만들어진 직후, Flyway 를 포함해 누구도 풀을 쓰기 전에 `data-source-properties` 의 SQLite 설정 이름을 거부하고 최대 풀 크기만큼의 연결에서 PRAGMA 를 확인한다. 기동 검사는 Flyway 뒤에 다시 확인한다.
+- runtime 시험: `StoreRulesTest`, `StoreBootstrapTest`, `SqliteAppSettingRepositoryTest`, `MetadataStorePropertiesTest`, 다시 쓴 `MetadataStartupFailureTest`·`MetadataFlywayConnectionTest`·통합 시험(아래 테스트 줄과 [TEST_PLAN.md](docs/TEST_PLAN.md)).
+- desktop 셸: `runtime/data_dir.rs`(`<앱 로컬 데이터 디렉터리>/data` 준비, 절대 UTF-8 경로)와 `runtime/private_dir.rs`(마스터 키 디렉터리 규칙을 옮긴 공용 모듈. `master_key.rs` 의 동작과 시험은 그대로). 실패 종류 `data_dir_unavailable`(UI 의 `FailureKind` 도). 자식 환경 `QUERYHUB_DATA_DIR`.
+- 문서: ADR-026, `docs/DEPLOYMENT.md` 「데이터 디렉터리」(외부 설정 파일, 네이티브 디렉터리, 로컬 디스크만, 런타임 하나)와 「백업·복구」, `docs/SECURITY.md` 「Metadata 저장소 파일」, `docs/DATABASE_SUPPORT.md` 의 Metadata 저장소, `docs/ERD.md` 의 SQLite DDL 과 파일 배치, ARCHITECTURE 「설계와 다른 구현」 13, [BACKLOG](docs/BACKLOG.md) P105-R3·R4·R5·R7, P106-1–P106-8.
+
+##### 변경
+
+- runtime: Flyway V1 `app_setting` 을 SQLite DDL 로 그 자리에서 다시 썼다(STRICT, `setting_key TEXT COLLATE BINARY` 1-100 자, UTC 고정 폭 TEXT 시각과 GLOB 검사, `pk_app_setting`). SQLite 저장소는 아직 어디에도 없었으므로 체크섬이 깨질 곳이 없다. `JdbcAppSettingRepository` 는 `ON CONFLICT … DO UPDATE` 로 쓰고 시각을 `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'` 문자열로 바인딩한다. `MigrationScriptConventionTest` 는 STRICT 와 MariaDB 전용 문법 없음을 본다.
+- runtime: `MetadataDatabaseAutoConfiguration` 이 `JdbcConnectionDetails` 빈을 만들 때 저장소를 검사하고 연다(DataSource·Flyway 빈보다 먼저, 포트를 열기 전). URL 은 `jdbc:sqlite:<data-dir>/queryhub.db?journal_mode=WAL&synchronous=FULL&foreign_keys=true&busy_timeout=5000&transaction_mode=IMMEDIATE`, 드라이버 `org.sqlite.JDBC`, 사용자·비밀번호 없음. 잠금은 컨텍스트가 닫힐 때 푼다. Flyway 고정([ADR-012](docs/ADR/ADR-012-flyway-connection-pin.md))은 그대로다. `application.yml`: `maximum-pool-size: 4`, SQLite 주석.
+- runtime: ArchUnit R6 의 금지 드라이버 패키지에 `org.sqlite..` 를 더했고 `DriverLeakFixture` 는 `org.sqlite.JDBC` 를 참조한다.
+- runtime 시험(P1-05 리뷰 R2): `BootJarIntegrationTest` 의 기동 줄 확인은 `using Java 17(\.[0-9][0-9.]*)? with ` 패턴으로 `using Java 17 with`(GA 빌드)와 `using Java 17.0.x with` 를 모두 받고, `Runtime.version().feature() == 17` 확인은 그대로다.
+- 통합 시험: Testcontainers 와 MariaDB 를 쓰지 않는다. 컨텍스트마다 임시 데이터 디렉터리를 쓰고 실행 JAR 자식 프로세스로 새 저장소, 재시작 재사용, 네이티브 위치, 외부 설정 파일, 데이터 디렉터리 없음을 본다.
+- desktop 셸: 사전 점검 순서가 java, JAR, 포트, 데이터 디렉터리, 마스터 키다. 자식이 받는 `QUERYHUB_*` 는 `QUERYHUB_DATA_DIR`, `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_MASTER_KEY`, `QUERYHUB_DESKTOP_PARENT_PID` 넷이다. 출력 가림 목록은 관리자 토큰과 마스터 키다. `java_too_old` 문구는 「JDK 17 이상의 java 경로」다(P1-05 리뷰 R8).
+- 게이트: `scripts/gate/integration.sh` 는 머리 주석만 바꿨다. Docker 사전 점검은 다음 DB Provider 태스크를 위해 그대로 두었다. `junit-check.sh`, `cargo-test-check.sh`, `selftest.sh`, `lib.sh`, `Cargo.toml`, `Cargo.lock` 은 6ceef51 과 같다.
+- `deploy/env.example`: 주석 줄만 둔다. `QUERYHUB_DATA_DIR`(주석 예시), 선택 `QUERYHUB_SQLITE_NATIVE_DIR`, 관리자 토큰과 마스터 키의 자리표시자, 저장소와 키를 함께 백업하라는 안내. `QUERYHUB_METADATA_DB_*` 줄은 없다.
+- 문서: ADR-009·ADR-011·ADR-017 은 대체됨(ADR-026). ADR-012·ADR-013·ADR-016·ADR-018·ADR-020 에 P1-06 주. ADR-025 는 결과 줄을 시험한 것만 말하게 고쳤고(P1-05 리뷰 R1: JDK 를 내려받지 않는다, 의존성·Gradle 은 처음 한 번 네트워크나 미러가 필요하다, 닫힌 사내망에서는 시험하지 않았다, 캐시가 있으면 `--offline`), Windows 역슬래시 안내(R3)와 javac 17 lint 범위(R6)를 더했다. `docs/DEPLOYMENT.md` 준비물에도 R3 안내를 넣었다. REQUIREMENTS AR-0 D2·AR-2, ARCHITECTURE, ERD, DATABASE_SUPPORT, DEPLOYMENT, SECURITY, TEST_PLAN, BACKLOG, `README.md`. P1-05 를 아직 커밋하지 않은 것으로 적던 곳을 6ceef51 (2026-11-23) 로 바꿨다(`README.md`, `CHANGELOG.md`, `docs/REQUIREMENTS.md`, `docs/TEST_PLAN.md`, ADR-025, `docs/ADR/README.md`).
+
+##### 삭제
+
+- runtime: `QUERYHUB_METADATA_DB_*` 와 그 검사(`MetadataDatabaseProperties`, 시험 포함), ADR-011 의 Metadata 비밀번호·Hikari `password`·`jdbc-url`·`data-source-properties` 거부(프로세스에 보이는 출처 검사 `ProcessVisibleSources` 는 관리자 토큰과 마스터 키에 남는다), `flyway-mysql`, `mariadb-java-client`, `testcontainers-mariadb`(통합 시험 클래스패스에서 Testcontainers 와 그 의존성 전부), `MetadataMariaDb`, `MetadataSchemaIntegrationTest`. `ext['mariadb.version']` 과 카탈로그의 MariaDB·Testcontainers 별칭은 Provider 태스크를 위해 주석을 달아 남겼다(클래스패스에 아무것도 넣지 않는다).
+- desktop 셸: `MetadataSettings`, Metadata 변수 상수, `metadata_settings_from_env`, `settings_missing_failure`, 실패 종류 `metadata_settings_missing`.
+- `deploy/compose.dev.yml`(개발용 MariaDB).
+
+##### 보안
+
+- 저장소 파일은 unix 에서 런타임 사용자 전용(디렉터리 0700, 파일 0600)이고, 런타임이 DB 파일을 먼저 0600 으로 만들므로 SQLite 가 umask 기본값으로 만들지 않는다. 심볼릭 링크와 느슨한 권한은 거부하고 고치지 않는다. Windows 는 확인하지 않는다(PLAT-1).
+- 네이티브 라이브러리는 공용 `java.io.tmpdir` 대신 런타임 사용자의 0700 디렉터리에 푼다.
+- 거부 메시지와 실행 JAR 자식 프로세스의 출력에 관리자 토큰과 마스터 키가 없다(통합 시험). P1-03 의 관리자 토큰 층과 P1-04 의 마스터 키 규칙은 그대로이고 그 시험은 단언을 바꾸지 않았다.
+- 리뷰 1회차 후속(2회차): 거부한 저장소를 바꾸지 않는다(R1). 내용 검사(`quick_check`)를 읽기 전용 연결(sqlite-jdbc 연결 속성 `open_mode=1`, `org.sqlite` 참조 없음)로 해서, 살아 있는 WAL 이 있는 손상 저장소를 거부할 때 SQLite 가 WAL 을 DB 파일로 옮기고 `-wal`·`-shm` 을 지우던 것을 막았다(리뷰어가 1회차 JAR 로 재현). DB 파일이 없거나 비었는데 데이터가 든 `-wal`·`-journal` 이 있으면 연결 전에 거부하고(SQLite 는 빈 DB 옆의 WAL 을 읽기 전용 연결에서도 지운다), 되돌리지 않은 롤백 저널은 재생하지 않고 거부한다. `-shm` 은 데이터 없는 색인이라 SQLite 가 만들거나 고쳐 쓴다(0600).
+- 리뷰 1회차 후속: 같은 JVM 의 두 번째 열기는 `queryhub.lock` 을 열기 전에 거부한다(R2, JVM 전체 표, 열쇠는 장치와 inode). 1회차는 두 번째 채널을 열었다 닫아 첫 런타임의 OS 잠금을 조용히 풀었다. 풀 연결마다 `PRAGMA database_list` 로 연 파일이 검사한 `queryhub.db` 인지 본다(R3). 데이터·네이티브 디렉터리가 Windows UNC 경로이면 아무것도 만들기 전에 거부한다(R4, 매핑한 드라이브 문자는 여전히 못 잡는다). sqlite-jdbc 의 네이티브 찾는 순서를 알려진 빈 곳에 적었다(R6, P106-9).
+- 남은 것: 네트워크 파일 시스템 감지는 최선 노력(P106-4), 내장 백업 없음(P106-2), Mac/aarch64 밖의 네이티브·`noexec`·백신 미검증(P106-3, PLAT-1), 저장소 백업에는 암호화한 비밀번호가 들어가므로 키와 같은 비밀 값으로 다룬다([docs/SECURITY.md](docs/SECURITY.md)).
+
+테스트(macOS arm64 로컬의 게이트 실행, Java 17.0.19, 리뷰 1회차 후속의 최종 트리): runtime 단위 894(adapter-crypto 77, adapter-metadata 113, adapter-web 249, app 412, application 32, domain 11), 통합 33, vitest 44, cargo test 79, 모두 통과, 건너뜀 0. `selftest.sh` 는 279 시나리오다. 통합 게이트는 Docker 사전 점검만 Docker 를 쓴다. 수동 확인(AC33, Queen, macOS arm64): 환경변수와 MariaDB·Docker 없이 desktop 앱을 두 번 시작해 `data/` 0700, `queryhub.db` 0600, 같은 inode 재사용, running·health UP 을 확인했다. CI 의 수는 없다(미실행). Windows·Linux 는 미검증이다(PLAT-1).
+
+#### P1-05 Java 17 — 6ceef51 (2026-11-23)
 
 사용자 요청(2026-11-23)에 따른 태스크다. 결정은 [ADR-025](docs/ADR/ADR-025-java-17-baseline.md)(승인됨)에 있다. Spring Boot 4.1.2 는 그대로이고, [ADR-010](docs/ADR/ADR-010-spring-boot-4-java-21.md)(사용자 결정 D1)의 Java 21 부분을 대체한다. 설계 §0·§2 와 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 12, 사용자 문구와 항목별 대응은 [REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-2 에 있다.
 

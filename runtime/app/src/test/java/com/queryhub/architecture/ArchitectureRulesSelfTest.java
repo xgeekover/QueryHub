@@ -96,7 +96,7 @@ class ArchitectureRulesSelfTest {
     EvaluationResult result =
         assertFailsOnlyBecauseOf(RULES.r6OnlyProvidersUseJdbcDrivers(), DriverLeakFixture.class);
     assertThat(result.getFailureReport().getDetails())
-        .anySatisfy(detail -> assertThat(detail).contains("org.mariadb.jdbc.Driver"));
+        .anySatisfy(detail -> assertThat(detail).contains("org.sqlite.JDBC"));
   }
 
   @Test

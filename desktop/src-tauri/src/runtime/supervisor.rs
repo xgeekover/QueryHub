@@ -15,10 +15,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::launch::{self, Env};
-use super::master_key;
+use super::master_key::{self, MasterKey};
 use super::output::{self, OutputBuffer};
 use super::token::AdminToken;
-use super::{health, java, Failure, FailureKind, Health, RuntimeState, RuntimeStatus};
+use super::{data_dir, health, java, Failure, FailureKind, Health, RuntimeState, RuntimeStatus};
 
 /// desktop 프로파일의 고정 포트(runtime/app/src/main/resources/application-desktop.yml). 운영 CSP 의 connect-src 와 같다.
 pub const DESKTOP_PORT: u16 = 18580;
@@ -34,6 +34,9 @@ pub struct SupervisorConfig {
     pub work_dir: PathBuf,
     /// 마스터 키 파일(ADR-023). 운영 경로는 lib.rs 만 정한다(앱 로컬 데이터 디렉터리의 secrets/master.key). 시험은 임시 경로를 준다.
     pub master_key_path: PathBuf,
+    /// 데이터 디렉터리(P1-06): 런타임의 내장 SQLite 저장소가 있는 곳. 운영 경로는 lib.rs 만 정한다(앱 로컬 데이터 디렉터리의
+    /// data). 시작할 때마다 준비하고(data_dir::prepare) QUERYHUB_DATA_DIR 로 넘긴다. 시험은 임시 경로를 준다.
+    pub data_dir: PathBuf,
     /// QUERYHUB_DESKTOP_RUNTIME_JAR 가 없을 때 쓰는 JAR(디버그 빌드: 저장소의 bootJar 출력, 릴리스: 없음).
     pub default_jar: Option<PathBuf>,
     pub readiness_interval: Duration,
@@ -56,11 +59,12 @@ pub struct SupervisorConfig {
 
 impl SupervisorConfig {
     /// 앱 설정: 포트 18580, readiness 500 ms, health 5 s, 기동 제한 90 s, 정지 유예 10 s.
-    pub fn desktop(work_dir: PathBuf, master_key_path: PathBuf) -> Self {
+    pub fn desktop(work_dir: PathBuf, master_key_path: PathBuf, data_dir: PathBuf) -> Self {
         SupervisorConfig {
             port: DESKTOP_PORT,
             work_dir,
             master_key_path,
+            data_dir,
             default_jar: default_jar(),
             readiness_interval: Duration::from_millis(500),
             health_interval: Duration::from_secs(5),
@@ -135,8 +139,16 @@ struct LaunchPlan {
     java: PathBuf,
     args: Vec<String>,
     env: Env,
-    /// 자식 출력에서 가릴 값: Metadata DB 비밀번호, 관리 토큰, 마스터 키.
+    /// 자식 출력에서 가릴 값: 관리 토큰, 마스터 키(output_secrets).
     secrets: Arc<[Vec<u8>]>,
+}
+
+/// 자식 출력에서 가릴 값: 관리 토큰과 마스터 키, 이 둘뿐이다. 데이터 디렉터리 경로는 비밀이 아니므로 가리지 않는다.
+pub(super) fn output_secrets(token: &AdminToken, master_key: &MasterKey) -> Arc<[Vec<u8>]> {
+    Arc::from(vec![
+        token.expose().as_bytes().to_vec(),
+        master_key.expose().as_bytes().to_vec(),
+    ])
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -341,10 +353,12 @@ impl SupervisorHandle {
         }
     }
 
-    /// 순서대로: java 와 버전, JAR, Metadata DB 설정, 포트, 마스터 키 파일. 실패하면 자식을 띄우지 않는다.
+    /// 순서대로: java 와 버전, JAR, 포트, 데이터 디렉터리, 마스터 키 파일. 실패하면 자식을 띄우지 않는다. 키는 마지막
+    /// 확인이다(앞의 확인이 실패하면 첫 실행에서도 키 파일을 만들지 않는다).
     ///
-    /// 마스터 키는 시작할 때마다 파일에서 다시 읽는다(캐시하지 않는다). 파일이 없을 때만 새로 만들고, 문제가 있으면
-    /// master_key_unavailable 로 실패한다(ADR-023).
+    /// 데이터 디렉터리는 시작할 때마다 확인한다. 없으면 0700 으로 만들고, 문제가 있으면 data_dir_unavailable 로 실패한다
+    /// (P1-06). 셸 환경에는 Metadata 저장소 설정이 필요 없다. 마스터 키는 시작할 때마다 파일에서 다시 읽는다(캐시하지
+    /// 않는다). 파일이 없을 때만 새로 만들고, 문제가 있으면 master_key_unavailable 로 실패한다(ADR-023).
     fn preflight(&self) -> Result<LaunchPlan, Failure> {
         let inner = &self.inner;
         let config = &inner.config;
@@ -356,26 +370,21 @@ impl SupervisorHandle {
             config.java_version_timeout,
         )?;
         let jar = launch::resolve_jar(env, config.default_jar.as_deref())?;
-        let settings =
-            launch::metadata_settings_from_env(env).map_err(launch::settings_missing_failure)?;
         if !(config.port_probe)(config.port) {
             return Err(launch::port_in_use_failure(config.port));
         }
+        let data_dir = data_dir::prepare(&config.data_dir)?;
         let master_key = master_key::load_or_create(&config.master_key_path, getrandom::fill)?;
         Ok(LaunchPlan {
             args: launch::child_args(&jar, config.port),
             env: launch::child_env(
                 env,
-                &settings,
+                &data_dir,
                 &inner.token,
                 &master_key,
                 std::process::id(),
             ),
-            secrets: Arc::from(vec![
-                settings.password().as_bytes().to_vec(),
-                inner.token.expose().as_bytes().to_vec(),
-                master_key.expose().as_bytes().to_vec(),
-            ]),
+            secrets: output_secrets(&inner.token, &master_key),
             java,
         })
     }

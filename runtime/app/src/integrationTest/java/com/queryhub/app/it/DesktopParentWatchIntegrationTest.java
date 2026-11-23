@@ -3,7 +3,6 @@ package com.queryhub.app.it;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.queryhub.app.it.support.IntegrationHttp;
-import com.queryhub.app.it.support.MetadataMariaDb;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -28,8 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * AC-16: 실행 JAR 을 Tauri 셸처럼 띄운다(desktop 프로파일, 포트 명시, 접속 정보는 환경변수로만). 부모 자리에는 도우미 프로세스를 두고 그 PID 를
- * QUERYHUB_DESKTOP_PARENT_PID 로 넘긴다.
+ * AC-16: 실행 JAR 을 Tauri 셸처럼 띄운다(desktop 프로파일, 포트 명시, 데이터 디렉터리·토큰·마스터 키는 환경변수로만). 부모 자리에는 도우미 프로세스를
+ * 두고 그 PID 를 QUERYHUB_DESKTOP_PARENT_PID 로 넘긴다.
  *
  * <ul>
  *   <li>도우미가 죽으면 JAR 프로세스가 20 초 안에 끝나고 포트가 다시 열린다(셸이 SIGKILL 로 죽은 경우와 같다).
@@ -45,8 +44,6 @@ class DesktopParentWatchIntegrationTest {
 
   private static final String PARENT_PID_VARIABLE = "QUERYHUB_DESKTOP_PARENT_PID";
 
-  private static final String DATABASE = "queryhub_parent_watch";
-
   private static final String TAURI_ORIGIN = "tauri://localhost";
 
   private static final Duration HEALTHY_WITHIN = Duration.ofSeconds(60);
@@ -60,8 +57,6 @@ class DesktopParentWatchIntegrationTest {
           .build();
 
   private static Path bootJar;
-
-  private static boolean databaseCreated;
 
   @TempDir private Path workDir;
 
@@ -93,7 +88,7 @@ class DesktopParentWatchIntegrationTest {
     int port = freeLoopbackPort();
     Path log = workDir.resolve("runtime.log");
 
-    Process runtime = startRuntime(log, port, metadataEnvironment(), String.valueOf(parent.pid()));
+    Process runtime = startRuntime(log, port, storeEnvironment(), String.valueOf(parent.pid()));
     awaitHealthy(runtime, port, log);
 
     HttpResponse<String> cors =
@@ -124,7 +119,10 @@ class DesktopParentWatchIntegrationTest {
     }
     String output = read(log);
     assertThat(output).contains(PARENT_PID_VARIABLE);
-    assertThat(output).as("출력에 비밀번호가 없어야 한다").doesNotContain(MetadataMariaDb.PASSWORD);
+    assertThat(output)
+        .as("출력에 관리자 토큰과 마스터 키가 없어야 한다")
+        .doesNotContain(IntegrationHttp.ADMIN_TOKEN)
+        .doesNotContainIgnoringCase(IntegrationHttp.MASTER_KEY);
   }
 
   @Test
@@ -132,7 +130,7 @@ class DesktopParentWatchIntegrationTest {
     int port = freeLoopbackPort();
     Path log = workDir.resolve("invalid.log");
 
-    Process runtime = startRuntime(log, port, metadataEnvironment(), "abc");
+    Process runtime = startRuntime(log, port, storeEnvironment(), "abc");
     boolean connected = false;
     Instant deadline = Instant.now().plus(HEALTHY_WITHIN);
     while (runtime.isAlive() && Instant.now().isBefore(deadline)) {
@@ -147,26 +145,9 @@ class DesktopParentWatchIntegrationTest {
     assertThat(output).contains(PARENT_PID_VARIABLE).doesNotContain("Tomcat started");
   }
 
-  private static Map<String, String> metadataEnvironment() throws Exception {
-    createDatabaseOnce();
-    return Map.of(
-        "QUERYHUB_METADATA_DB_HOST",
-        MetadataMariaDb.host(),
-        "QUERYHUB_METADATA_DB_PORT",
-        String.valueOf(MetadataMariaDb.port()),
-        "QUERYHUB_METADATA_DB_NAME",
-        DATABASE,
-        "QUERYHUB_METADATA_DB_USERNAME",
-        MetadataMariaDb.USERNAME,
-        "QUERYHUB_METADATA_DB_PASSWORD",
-        MetadataMariaDb.PASSWORD);
-  }
-
-  private static synchronized void createDatabaseOnce() throws Exception {
-    if (!databaseCreated) {
-      MetadataMariaDb.createEmptyDatabase(DATABASE);
-      databaseCreated = true;
-    }
+  /** 테스트마다 새 데이터 디렉터리(아직 없다, 런타임이 0700 으로 만든다). P1-06 부터 셸은 QUERYHUB_DATA_DIR 만 넘긴다. */
+  private Map<String, String> storeEnvironment() {
+    return Map.of("QUERYHUB_DATA_DIR", workDir.resolve("data").toString());
   }
 
   /**
@@ -174,7 +155,7 @@ class DesktopParentWatchIntegrationTest {
    * SPRING_* 는 지운다.
    */
   private Process startRuntime(
-      Path log, int port, Map<String, String> metadataEnvironment, String parentPid)
+      Path log, int port, Map<String, String> storeEnvironment, String parentPid)
       throws IOException {
     ProcessBuilder builder =
         new ProcessBuilder(
@@ -189,7 +170,7 @@ class DesktopParentWatchIntegrationTest {
             .redirectOutput(log.toFile());
     Map<String, String> env = builder.environment();
     env.keySet().removeIf(name -> name.startsWith("QUERYHUB_") || name.startsWith("SPRING_"));
-    env.putAll(metadataEnvironment);
+    env.putAll(storeEnvironment);
     // 셸이 하는 것처럼 관리자 토큰을 환경변수로 넘긴다 (argv 에는 넣지 않는다).
     env.put("QUERYHUB_ADMIN_TOKEN", IntegrationHttp.ADMIN_TOKEN);
     env.put("QUERYHUB_MASTER_KEY", IntegrationHttp.MASTER_KEY);

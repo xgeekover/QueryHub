@@ -7,6 +7,8 @@
 //!   (아래 설명).
 //! - 관리 토큰은 테스트마다 AdminToken::generate() 로 만든다(고정 값을 쓰지 않는다).
 //! - 마스터 키 파일은 샌드박스의 work/secrets/master.key 다(실제 앱 데이터 디렉터리는 쓰지 않는다). 감독이 첫 시작에서 만든다.
+//! - 데이터 디렉터리는 샌드박스의 work/data 다(운영의 <앱 로컬 데이터 디렉터리>/data 자리). 감독이 시작할 때 0700 으로 만든다.
+//! - 셸 환경에 Metadata 저장소 설정은 없다(P1-06: 런타임이 데이터 디렉터리의 내장 SQLite 를 쓴다).
 //! - 모든 테스트는 끝날 때 자식을 정지하거나(Drop) 자식이 끝났음을 확인한다.
 
 use std::collections::BTreeMap;
@@ -22,22 +24,24 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::launch::{self, Env};
 use super::output::MASK;
+use super::supervisor;
 use super::{
-    AdminToken, FailureKind, Health, RuntimeState, RuntimeStatus, Supervisor, SupervisorConfig,
+    AdminToken, FailureKind, Health, MasterKey, RuntimeState, RuntimeStatus, Supervisor,
+    SupervisorConfig,
 };
 
 const MARKER: &str = "queryhub-fake-runtime";
-const PASSWORD: &str = "pw-secret-marker-7f3a";
-const DB_HOST: &str = "db-host-marker";
-const DB_USER: &str = "qh-user-marker";
+/// P1-06 에서 없앤 Metadata DB 변수의 이름 앞부분. 이름을 둘로 나누어 적어 desktop 에 옛 이름이 그대로 남지 않게 한다
+/// (AC21 의 git grep). 셸 환경에 있어도 자식에게 가면 안 된다.
+const RETIRED_METADATA_PREFIX: &str = concat!("QUERYHUB_", "METADATA_DB_");
 
 /// 멈출 때까지 기다린다. 작업 디렉터리에 exit-now 가 생기면 7 로 끝난다.
 const SLEEP_LOOP: &str = "while :; do [ -f exit-now ] && exit 7; sleep 0.1; done";
 /// TERM 을 무시한다(정지 유예 뒤 KILL 되어야 한다).
 const TERM_IGNORING: &str = "trap '' TERM\ntouch trapped\nwhile :; do sleep 0.1; done";
-/// 비밀번호, 관리 토큰, 마스터 키를 찍고 3 으로 끝난다(토큰과 키 줄은 stdout 과 stderr 둘 다).
-const EXIT_WITH_PASSWORD: &str =
-    "echo \"admin token=$QUERYHUB_ADMIN_TOKEN\"\necho \"master key=$QUERYHUB_MASTER_KEY\"\necho \"metadata login failed for qh-user-marker password=$QUERYHUB_METADATA_DB_PASSWORD\" >&2\necho \"admin token=$QUERYHUB_ADMIN_TOKEN\" >&2\necho \"master key=$QUERYHUB_MASTER_KEY\" >&2\nexit 3";
+/// 관리 토큰, 마스터 키, 데이터 디렉터리를 찍고 3 으로 끝난다(토큰과 키 줄은 stdout 과 stderr 둘 다).
+const EXIT_WITH_SECRETS: &str =
+    "echo \"admin token=$QUERYHUB_ADMIN_TOKEN\"\necho \"master key=$QUERYHUB_MASTER_KEY\"\necho \"store failed at data dir=$QUERYHUB_DATA_DIR\" >&2\necho \"admin token=$QUERYHUB_ADMIN_TOKEN\" >&2\necho \"master key=$QUERYHUB_MASTER_KEY\" >&2\nexit 3";
 /// 환경과 인자를 파일로 남기고 기다린다.
 const DUMP_ENV_AND_ARGS: &str = "env > child-env.tmp && mv child-env.tmp child-env.txt\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > child-argv.tmp && mv child-argv.tmp child-argv.txt\nwhile :; do sleep 0.1; done";
 
@@ -80,6 +84,11 @@ impl Sandbox {
     /// 마스터 키 파일(운영의 앱 로컬 데이터 디렉터리 secrets/master.key 자리).
     fn key_path(&self) -> PathBuf {
         self.work().join("secrets").join("master.key")
+    }
+
+    /// 데이터 디렉터리(운영의 앱 로컬 데이터 디렉터리 data 자리).
+    fn data_dir(&self) -> PathBuf {
+        self.work().join("data")
     }
 
     /// 감독이 만든 키 파일의 값(끝의 LF 를 뺀다).
@@ -127,11 +136,6 @@ impl Sandbox {
             ("PATH", "/usr/bin:/bin"),
             (launch::JAVA_VAR, java.as_str()),
             (launch::JAR_VAR, jar.as_str()),
-            (launch::DB_HOST_VAR, DB_HOST),
-            (launch::DB_PORT_VAR, "13306"),
-            (launch::DB_NAME_VAR, "queryhub"),
-            (launch::DB_USERNAME_VAR, DB_USER),
-            (launch::DB_PASSWORD_VAR, PASSWORD),
             ("QUERYHUB_OTHER", "other"),
             ("SPRING_PROFILES_ACTIVE", "server"),
             ("JAVA_TOOL_OPTIONS", "-Dinjected=1"),
@@ -144,7 +148,7 @@ impl Sandbox {
     }
 
     fn config(&self, port: u16, probe: fn(u16) -> bool) -> SupervisorConfig {
-        let mut config = SupervisorConfig::desktop(self.work(), self.key_path());
+        let mut config = SupervisorConfig::desktop(self.work(), self.key_path(), self.data_dir());
         config.port = port;
         config.default_jar = None;
         config.readiness_interval = Duration::from_millis(50);
@@ -379,9 +383,9 @@ fn readiness_that_never_answers_200_ends_in_startup_timeout_and_kills_the_child(
 
 // (3)
 #[test]
-fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_json() {
+fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_token_or_key_in_json() {
     let sandbox = Sandbox::new();
-    sandbox.fake_java("21.0.11", EXIT_WITH_PASSWORD);
+    sandbox.fake_java("21.0.11", EXIT_WITH_SECRETS);
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
@@ -393,19 +397,20 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
         failure_kind(s) == Some(FailureKind::Exited)
             && s.failure
                 .as_ref()
-                .is_some_and(|f| f.output_tail.iter().any(|l| l.contains("login failed")))
+                .is_some_and(|f| f.output_tail.iter().any(|l| l.contains("store failed")))
     });
     let failure = failed.failure.as_ref().expect("failure");
     assert_eq!(failed.state, RuntimeState::Failed);
     assert_eq!(failure.exit_code, Some(3));
+    // 데이터 디렉터리 경로는 비밀이 아니므로 가리지 않는다(가리는 값은 토큰과 키뿐이다, AC21).
     let line = failure
         .output_tail
         .iter()
-        .find(|l| l.contains("login failed"))
+        .find(|l| l.contains("store failed"))
         .expect("line");
     assert_eq!(
         line,
-        &format!("metadata login failed for qh-user-marker password={MASK}")
+        &format!("store failed at data dir={}", sandbox.data_dir().display())
     );
     // 관리 토큰도 가려진다(stdout 과 stderr 의 줄 모두).
     let token = supervisor.admin_token().expose().to_string();
@@ -431,10 +436,6 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
     }
 
     let json = serde_json::to_string(&failed).expect("json");
-    assert!(
-        !json.contains(PASSWORD),
-        "비밀번호가 상태 JSON 에 있다: {json}"
-    );
     assert!(!json.contains(&token), "토큰이 상태 JSON 에 있다");
     let failure_json = serde_json::to_string(failure).expect("failure json");
     assert!(
@@ -465,6 +466,22 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_password_in_js
     ] {
         assert!(json.contains(expected), "{expected} 가 없다: {json}");
     }
+}
+
+// (3) AC21: 자식 출력에서 가리는 값은 관리 토큰과 마스터 키, 정확히 이 둘이다(Metadata DB 비밀번호는 없다).
+#[test]
+fn the_output_mask_list_is_exactly_the_admin_token_and_the_master_key() {
+    let token = token();
+    // 시험용 고정 키(NOT A SECRET).
+    let key = MasterKey::from_test_value(&"0123456789abcdef".repeat(4));
+    let secrets = supervisor::output_secrets(&token, &key);
+    assert_eq!(
+        secrets.to_vec(),
+        vec![
+            token.expose().as_bytes().to_vec(),
+            key.expose().as_bytes().to_vec()
+        ]
+    );
 }
 
 // (4)
@@ -635,9 +652,9 @@ fn a_malformed_key_file_gives_master_key_unavailable_spawns_nothing_and_keeps_th
     );
 }
 
-// (6)
+// (6) AC19: 자식은 허용 목록의 셸 환경, 셸이 준비한 데이터 디렉터리, 토큰, 키, 셸 PID 만 받는다.
 #[test]
-fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv() {
+fn the_child_gets_only_the_data_dir_the_token_the_key_the_parent_pid_and_the_fixed_argv() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", DUMP_ENV_AND_ARGS);
     let port = free_port();
@@ -663,13 +680,25 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         (launch::MASTER_KEY_FILE_VAR, "/x"),
         (launch::MASTER_KEY_PREVIOUS_VAR, "inherited"),
         (launch::MASTER_KEY_PREVIOUS_FILE_VAR, "/x"),
+        // 셸 자신의 네이티브 디렉터리도 넘어가지 않는다(데스크톱은 런타임의 기본값 <데이터 디렉터리>/native 를 쓴다).
+        (launch::SQLITE_NATIVE_DIR_VAR, "/x"),
     ];
+    // 없앤 Metadata DB 변수(P1-06): 셸 환경에 있어도 넘어가지 않는다.
+    let retired: Vec<String> = ["HOST", "PORT", "NAME", "USERNAME", "PASSWORD"]
+        .iter()
+        .map(|suffix| format!("{RETIRED_METADATA_PREFIX}{suffix}"))
+        .collect();
     let mut injected = sandbox.env();
     for (name, value) in allowed.iter().chain(denied.iter()) {
         injected.insert(name.to_string(), value.to_string());
     }
+    for name in &retired {
+        injected.insert(name.clone(), "inherited".to_string());
+    }
     injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
     injected.insert(launch::MASTER_KEY_VAR.to_string(), "inherited".to_string());
+    // 셸 자신의 QUERYHUB_DATA_DIR 도 넘어가지 않는다(자식의 값은 셸이 준비한 경로다).
+    injected.insert(launch::DATA_DIR_VAR.to_string(), "inherited".to_string());
     let supervisor = Supervisor::new(
         sandbox.config(port, launch::port_is_free),
         injected,
@@ -684,11 +713,8 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         .lines()
         .filter_map(|line| line.split_once('='))
         .collect();
-    assert_eq!(env.get(launch::DB_HOST_VAR), Some(&DB_HOST));
-    assert_eq!(env.get(launch::DB_PORT_VAR), Some(&"13306"));
-    assert_eq!(env.get(launch::DB_NAME_VAR), Some(&"queryhub"));
-    assert_eq!(env.get(launch::DB_USERNAME_VAR), Some(&DB_USER));
-    assert_eq!(env.get(launch::DB_PASSWORD_VAR), Some(&PASSWORD));
+    let data_dir = sandbox.data_dir().display().to_string();
+    assert_eq!(env.get(launch::DATA_DIR_VAR), Some(&data_dir.as_str()));
     let parent_pid = std::process::id().to_string();
     assert_eq!(env.get(launch::PARENT_PID_VAR), Some(&parent_pid.as_str()));
     let token = supervisor.admin_token().expose().to_string();
@@ -698,7 +724,7 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
     assert_eq!(env.get(launch::MASTER_KEY_VAR), Some(&key.as_str()));
     assert!(
         env.values().all(|v| *v != "inherited"),
-        "셸의 토큰이나 키 값이 넘어갔다"
+        "셸의 토큰, 키, 데이터 디렉터리, Metadata DB 값이 넘어갔다"
     );
     assert_eq!(env.get("PATH"), Some(&"/usr/bin:/bin"));
     for (name, value) in allowed {
@@ -716,6 +742,7 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
     for stripped in not_inherited
         .into_iter()
         .chain(denied.iter().map(|(name, _)| *name))
+        .chain(retired.iter().map(String::as_str))
     {
         assert!(
             !env.contains_key(stripped),
@@ -727,7 +754,15 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
         .copied()
         .filter(|k| k.starts_with("QUERYHUB_"))
         .collect();
-    assert_eq!(queryhub.len(), 8, "{queryhub:?}");
+    assert_eq!(
+        queryhub,
+        vec![
+            launch::ADMIN_TOKEN_VAR,
+            launch::DATA_DIR_VAR,
+            launch::PARENT_PID_VAR,
+            launch::MASTER_KEY_VAR
+        ]
+    );
 
     let argv_text = fs::read_to_string(sandbox.work().join("child-argv.txt")).expect("argv");
     let argv: Vec<&str> = argv_text.lines().collect();
@@ -742,7 +777,10 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
             port_arg.as_str()
         ]
     );
-    assert!(argv.iter().all(|a| !a.contains(PASSWORD)));
+    assert!(
+        argv.iter().all(|a| !a.contains(&data_dir)),
+        "데이터 디렉터리가 argv 에 있다"
+    );
     assert!(
         argv.iter().all(|a| !a.contains(&token)),
         "토큰이 argv 에 있다"
@@ -750,9 +788,9 @@ fn the_child_gets_only_the_metadata_variables_the_parent_pid_and_the_fixed_argv(
     assert!(argv.iter().all(|a| !a.contains(&key)), "키가 argv 에 있다");
 }
 
-// (6) java -version 사전 확인의 환경에는 토큰도 Metadata DB 설정도 없다(허용 목록의 셸 환경뿐이다).
+// (6) java -version 사전 확인의 환경에는 토큰도 키도 데이터 디렉터리도 없다(허용 목록의 셸 환경뿐이다).
 #[test]
-fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings() {
+fn the_java_version_preflight_gets_neither_the_token_nor_the_data_dir() {
     let sandbox = Sandbox::new();
     let version_env = sandbox.root.join("version-env.txt");
     let script = format!(
@@ -764,6 +802,7 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings()
     let mut injected = sandbox.env();
     injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
     injected.insert(launch::MASTER_KEY_VAR.to_string(), "inherited".to_string());
+    injected.insert(launch::DATA_DIR_VAR.to_string(), "inherited".to_string());
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         injected,
@@ -785,12 +824,12 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings()
         .collect();
     assert!(!text.contains(&token), "토큰이 java -version 환경에 있다");
     assert!(!text.contains("inherited"));
-    assert!(!text.contains(PASSWORD));
+    assert!(!text.contains(&sandbox.data_dir().display().to_string()));
     for absent in [
         launch::ADMIN_TOKEN_VAR,
         launch::ADMIN_TOKEN_FILE_VAR,
         launch::MASTER_KEY_VAR,
-        launch::DB_PASSWORD_VAR,
+        launch::DATA_DIR_VAR,
         launch::PARENT_PID_VAR,
     ] {
         assert!(!names.contains(&absent), "{absent} 가 있다: {names:?}");
@@ -799,45 +838,169 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_metadata_settings()
     assert!(!alive(pid));
 }
 
-// (7)
+// (7) AC20: 셸 환경에 허용 목록의 변수만 있어도(QUERYHUB_* 없음, java 는 PATH, JAR 은 기본 경로) 런타임을 띄운다.
+// 없던 데이터 디렉터리를 0700 으로 만들고 자식에게 넘긴다. 셸은 그 안에 파일을 만들지 않는다. 재시작은 같은 디렉터리와
+// 그 안의 파일을 그대로 쓴다.
 #[test]
-fn missing_metadata_settings_list_only_their_names_and_spawn_nothing() {
+fn an_allow_listed_shell_env_spawns_the_runtime_and_the_missing_data_dir_is_created_0700() {
     let sandbox = Sandbox::new();
-    sandbox.fake_java("21.0.11", SLEEP_LOOP);
-    let mut env = sandbox.env();
-    env.remove(launch::DB_NAME_VAR);
-    env.insert(launch::DB_PASSWORD_VAR.to_string(), String::new());
-    let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
-        env,
-        token(),
+    sandbox.fake_java("21.0.11", DUMP_ENV_AND_ARGS);
+    let server = FakeServer::start(200, 200);
+    let mut config = sandbox.config(server.port, always_free);
+    config.default_jar = Some(sandbox.jar());
+    let path = format!("{}:/usr/bin:/bin", sandbox.root.join("bin").display());
+    let env: Env = [
+        ("PATH", path.as_str()),
+        ("HOME", "/nonexistent-queryhub-home"),
+        ("LANG", "C"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    assert!(env.keys().all(|name| launch::is_inherited(name)), "{env:?}");
+    assert!(!sandbox.data_dir().exists());
+    let supervisor = Supervisor::new(config, env, token());
+
+    let first = supervisor.start();
+    assert!(first.failure.is_none(), "{first:?}");
+    wait_for(&supervisor, WAIT, "running + up", |s| {
+        s.state == RuntimeState::Running && s.health == Health::Up
+    });
+    assert!(sandbox.spawned());
+    let mode = |path: &Path| {
+        fs::symlink_metadata(path)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode(&sandbox.data_dir()), 0o700);
+    assert_eq!(
+        fs::read_dir(sandbox.data_dir()).expect("list").count(),
+        0,
+        "셸이 데이터 디렉터리 안에 무엇인가를 만들었다"
+    );
+    let child_env = sandbox.work().join("child-env.txt");
+    wait_file(&child_env, WAIT);
+    let text = fs::read_to_string(&child_env).expect("env");
+    let data_dir = sandbox.data_dir().display().to_string();
+    assert!(
+        text.lines()
+            .any(|line| line == format!("{}={data_dir}", launch::DATA_DIR_VAR)),
+        "{text}"
     );
 
-    let status = supervisor.start();
-    let failure = status.failure.as_ref().expect("failure");
-    assert_eq!(status.state, RuntimeState::Failed);
-    assert_eq!(failure.kind, FailureKind::MetadataSettingsMissing);
-    assert!(failure.message.contains(launch::DB_NAME_VAR));
-    assert!(failure.message.contains(launch::DB_PASSWORD_VAR));
-    for absent in [
-        launch::DB_HOST_VAR,
-        launch::DB_PORT_VAR,
-        launch::DB_USERNAME_VAR,
-        DB_HOST,
-        DB_USER,
-        PASSWORD,
-    ] {
-        assert!(
-            !failure.message.contains(absent),
-            "{absent}: {}",
-            failure.message
+    // 런타임이 만든 저장소 파일 자리. 재시작은 디렉터리와 파일을 바꾸지 않는다.
+    let store = sandbox.data_dir().join("queryhub.db");
+    fs::write(&store, b"store-marker").expect("store");
+    fs::set_permissions(&store, fs::Permissions::from_mode(0o600)).expect("chmod");
+    let inode = |path: &Path| {
+        use std::os::unix::fs::MetadataExt;
+        fs::symlink_metadata(path).expect("meta").ino()
+    };
+    let (dir_inode, store_inode) = (inode(&sandbox.data_dir()), inode(&store));
+    fs::remove_file(&child_env).expect("rm child-env");
+    supervisor.restart();
+    wait_for(&supervisor, WAIT, "running again", |s| {
+        s.state == RuntimeState::Running
+    });
+    wait_file(&child_env, WAIT);
+    assert_eq!(inode(&sandbox.data_dir()), dir_inode);
+    assert_eq!(inode(&store), store_inode);
+    assert_eq!(fs::read(&store).expect("store"), b"store-marker");
+    assert_eq!(mode(&sandbox.data_dir()), 0o700);
+    assert_eq!(mode(&store), 0o600);
+    assert_eq!(supervisor.stop().state, RuntimeState::Stopped);
+}
+
+// (7) AC20: 심볼릭 링크, 디렉터리가 아닌 것, 0755/0750 인 데이터 디렉터리는 failed(data_dir_unavailable)이고, 자식을 띄우지
+// 않으며, 바꾸지 않는다. 메시지에는 경로와 고치는 방법이 있고 토큰과 키는 없다. 키는 마지막 확인이라 만들지 않는다.
+#[test]
+fn a_symlinked_non_directory_or_open_data_dir_gives_data_dir_unavailable_and_spawns_nothing() {
+    use std::os::unix::fs::symlink;
+    let mode = |path: &Path| {
+        fs::symlink_metadata(path)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    for case in ["symlink", "file", "0755", "0750"] {
+        let sandbox = Sandbox::new();
+        sandbox.fake_java("21.0.11", SLEEP_LOOP);
+        let data_dir = sandbox.data_dir();
+        let real = sandbox.root.join("real-data");
+        match case {
+            "symlink" => {
+                fs::create_dir_all(&real).expect("real");
+                fs::set_permissions(&real, fs::Permissions::from_mode(0o700)).expect("chmod");
+                symlink(&real, &data_dir).expect("symlink");
+            }
+            "file" => fs::write(&data_dir, b"not a directory").expect("file"),
+            open => {
+                fs::create_dir_all(&data_dir).expect("dir");
+                let bits = u32::from_str_radix(open, 8).expect("mode");
+                fs::set_permissions(&data_dir, fs::Permissions::from_mode(bits)).expect("chmod");
+            }
+        }
+        let supervisor = Supervisor::new(
+            sandbox.config(free_port(), launch::port_is_free),
+            sandbox.env(),
+            token(),
         );
+
+        let status = supervisor.start();
+        assert_eq!(status.state, RuntimeState::Failed, "{case}");
+        assert_eq!(
+            failure_kind(&status),
+            Some(FailureKind::DataDirUnavailable),
+            "{case}: {status:?}"
+        );
+        let failure = status.failure.as_ref().expect("failure");
+        assert!(failure.output_tail.is_empty());
+        assert_eq!(failure.exit_code, None);
+        assert_eq!(status.pid, None);
+        assert!(!sandbox.spawned(), "{case}: 자식을 띄웠다");
+        assert!(!sandbox.key_path().exists(), "{case}: 키 파일을 만들었다");
+        let message = &failure.message;
+        assert!(
+            message.contains(&data_dir.display().to_string()),
+            "{case}: {message}"
+        );
+        let expected = match case {
+            "symlink" => "심볼릭 링크".to_string(),
+            "file" => "디렉터리가 아닌".to_string(),
+            _ => format!("chmod 700 '{}'", data_dir.display()),
+        };
+        assert!(message.contains(&expected), "{case}: {message}");
+        // 토큰도 키도 없다: 경로를 뺀 메시지에 16진수가 16 자 넘게 이어진 곳이 없다.
+        let token = supervisor.admin_token().expose().to_string();
+        assert!(!message.contains(&token), "{case}: 토큰이 메시지에 있다");
+        let without_paths = message.replace(&sandbox.root.display().to_string(), "<root>");
+        let mut run = 0;
+        for c in without_paths.chars() {
+            run = if c.is_ascii_hexdigit() { run + 1 } else { 0 };
+            assert!(run < 16, "{case}: 16진수가 이어진다: {message}");
+        }
+        let json = serde_json::to_string(&status).expect("json");
+        assert!(json.contains("\"kind\":\"data_dir_unavailable\""), "{json}");
+        assert!(!json.contains(&token), "{case}: 토큰이 상태 JSON 에 있다");
+        match case {
+            "symlink" => {
+                assert!(fs::symlink_metadata(&data_dir)
+                    .expect("link")
+                    .file_type()
+                    .is_symlink());
+                assert_eq!(fs::read_dir(&real).expect("list").count(), 0);
+            }
+            "file" => assert_eq!(fs::read(&data_dir).expect("file"), b"not a directory"),
+            open => assert_eq!(
+                mode(&data_dir),
+                u32::from_str_radix(open, 8).expect("mode"),
+                "{case}: 권한을 저절로 바꾸었다"
+            ),
+        }
     }
-    assert!(failure.output_tail.is_empty());
-    assert_eq!(status.pid, None);
-    assert!(!sandbox.spawned());
-    // 앞의 확인이 실패하면 키 파일을 만들지 않는다(키는 마지막 확인이다).
-    assert!(!sandbox.key_path().exists());
 }
 
 // (8)

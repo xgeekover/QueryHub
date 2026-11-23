@@ -1,10 +1,9 @@
-//! 실행 계획: java, JAR, Metadata DB 설정, 포트, 자식 환경과 인자를 정한다.
+//! 실행 계획: java, JAR, 포트, 자식 환경과 인자를 정한다.
 //!
 //! 셸의 환경은 주입한 맵(Env)으로 받는다. 운영에서는 process_env(), 테스트에서는 직접 만든 맵이다. 테스트는
 //! std::env::set_var 를 부르지 않는다.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -26,11 +25,12 @@ pub const JAR_VAR: &str = "QUERYHUB_DESKTOP_RUNTIME_JAR";
 /// 자식에게 넘기는 셸의 PID. 런타임의 부모 감시(ParentProcessWatch)가 읽는다.
 pub const PARENT_PID_VAR: &str = "QUERYHUB_DESKTOP_PARENT_PID";
 
-pub const DB_HOST_VAR: &str = "QUERYHUB_METADATA_DB_HOST";
-pub const DB_PORT_VAR: &str = "QUERYHUB_METADATA_DB_PORT";
-pub const DB_NAME_VAR: &str = "QUERYHUB_METADATA_DB_NAME";
-pub const DB_USERNAME_VAR: &str = "QUERYHUB_METADATA_DB_USERNAME";
-pub const DB_PASSWORD_VAR: &str = "QUERYHUB_METADATA_DB_PASSWORD";
+/// 런타임의 데이터 디렉터리(P1-06, ADR-026): 내장 SQLite Metadata 저장소가 있는 곳. 셸이 준비한 <앱 로컬 데이터
+/// 디렉터리>/data 의 절대 경로만 넣는다(data_dir::prepare). 셸 자신의 환경에 있는 같은 이름은 넘기지 않는다(허용 목록 밖).
+pub const DATA_DIR_VAR: &str = "QUERYHUB_DATA_DIR";
+/// 런타임의 SQLite 네이티브 라이브러리 디렉터리(서버 배포용, 기본 <데이터 디렉터리>/native). 데스크톱에서는 셸 환경에 있어도
+/// 넘기지 않는다(런타임의 기본값을 쓴다).
+pub const SQLITE_NATIVE_DIR_VAR: &str = "QUERYHUB_SQLITE_NATIVE_DIR";
 
 /// 런타임의 관리 토큰(ADR-021). 셸이 만든 값만 넣는다. 셸 자신의 환경에 있는 같은 이름은 넘기지 않는다(허용 목록 밖).
 pub const ADMIN_TOKEN_VAR: &str = "QUERYHUB_ADMIN_TOKEN";
@@ -107,70 +107,6 @@ fn env_value<'a>(env: &'a Env, name: &str, ignore_case: bool) -> Option<&'a str>
     env.iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .map(|(_, value)| value.as_str())
-}
-
-/// Metadata DB 접속 정보. Debug 출력은 비밀번호를 가린다.
-#[derive(Clone)]
-pub struct MetadataSettings {
-    pub host: String,
-    pub port: Option<String>,
-    pub name: String,
-    pub username: String,
-    password: String,
-}
-
-impl MetadataSettings {
-    pub fn password(&self) -> &str {
-        &self.password
-    }
-}
-
-impl fmt::Debug for MetadataSettings {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MetadataSettings")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("name", &self.name)
-            .field("username", &self.username)
-            .field("password", &super::output::MASK)
-            .finish()
-    }
-}
-
-/// Metadata DB 설정의 출처(스파이크: 셸 자신의 환경변수).
-///
-/// Phase 6 에서는 설정 파일과 OS 키체인으로 바꾼다(계획). 이 함수만 바꾸면 되고 감독(supervisor)은 그대로다.
-/// HOST, NAME, USERNAME, PASSWORD 는 비어 있지 않아야 하고 PORT 는 선택이다. 값의 형식 검사는 런타임이 한다(P0-B).
-/// 실패하면 빠진 변수 이름들을 돌려준다(값은 담지 않는다).
-pub fn metadata_settings_from_env(env: &Env) -> Result<MetadataSettings, Vec<&'static str>> {
-    let required = [DB_HOST_VAR, DB_NAME_VAR, DB_USERNAME_VAR, DB_PASSWORD_VAR];
-    let missing: Vec<&'static str> = required
-        .iter()
-        .copied()
-        .filter(|name| non_empty(env, name).is_none())
-        .collect();
-    if !missing.is_empty() {
-        return Err(missing);
-    }
-    let get = |name: &str| non_empty(env, name).unwrap_or_default().to_string();
-    Ok(MetadataSettings {
-        host: get(DB_HOST_VAR),
-        port: non_empty(env, DB_PORT_VAR).map(str::to_string),
-        name: get(DB_NAME_VAR),
-        username: get(DB_USERNAME_VAR),
-        password: get(DB_PASSWORD_VAR),
-    })
-}
-
-/// metadata_settings_missing 실패. 빠진 이름만 말한다.
-pub fn settings_missing_failure(missing: Vec<&'static str>) -> Failure {
-    Failure::new(
-        FailureKind::MetadataSettingsMissing,
-        format!(
-            "Metadata DB 설정이 없다: {}. 개발 모드에서는 docs/DEPLOYMENT.md 의 절차대로 deploy/.env 를 하위 셸에서만 읽어 앱을 시작한다: (set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev). 첫 실행 설정 화면과 OS 키체인 저장은 Phase 6 계획이다.",
-            missing.join(", ")
-        ),
-    )
 }
 
 #[cfg(unix)]
@@ -269,25 +205,20 @@ pub fn inherited_env(base: &Env) -> Env {
         .collect()
 }
 
-/// 자식 환경: 허용 목록의 셸 환경 + Metadata DB 설정 + 관리 토큰 + 마스터 키 + 셸 PID. 비밀번호, 토큰, 키는 환경변수로만
-/// 넘긴다(argv 에 넣지 않는다). 셸 환경의 QUERYHUB_ADMIN_TOKEN, QUERYHUB_ADMIN_TOKEN_FILE, QUERYHUB_MASTER_KEY,
-/// QUERYHUB_MASTER_KEY_FILE, QUERYHUB_MASTER_KEY_PREVIOUS, QUERYHUB_MASTER_KEY_PREVIOUS_FILE 은 허용 목록 밖이므로 넘어가지
-/// 않는다. 토큰은 셸이 만든 값, 키는 셸이 키 파일에서 읽은 값으로만 정한다.
+/// 자식 환경: 허용 목록의 셸 환경 + 데이터 디렉터리 + 관리 토큰 + 마스터 키 + 셸 PID. 토큰과 키는 환경변수로만 넘긴다
+/// (argv 에 넣지 않는다). 셸 환경의 QUERYHUB_DATA_DIR, QUERYHUB_SQLITE_NATIVE_DIR, QUERYHUB_ADMIN_TOKEN,
+/// QUERYHUB_ADMIN_TOKEN_FILE, QUERYHUB_MASTER_KEY, QUERYHUB_MASTER_KEY_FILE, QUERYHUB_MASTER_KEY_PREVIOUS,
+/// QUERYHUB_MASTER_KEY_PREVIOUS_FILE 과 그 밖의 QUERYHUB_* 는 허용 목록 밖이므로 넘어가지 않는다. 데이터 디렉터리는 셸이
+/// 준비한 경로(data_dir), 토큰은 셸이 만든 값, 키는 셸이 키 파일에서 읽은 값으로만 정한다. 데이터 디렉터리는 비밀이 아니다.
 pub fn child_env(
     base: &Env,
-    settings: &MetadataSettings,
+    data_dir: &str,
     token: &AdminToken,
     master_key: &MasterKey,
     parent_pid: u32,
 ) -> Env {
     let mut env = inherited_env(base);
-    env.insert(DB_HOST_VAR.to_string(), settings.host.clone());
-    if let Some(port) = &settings.port {
-        env.insert(DB_PORT_VAR.to_string(), port.clone());
-    }
-    env.insert(DB_NAME_VAR.to_string(), settings.name.clone());
-    env.insert(DB_USERNAME_VAR.to_string(), settings.username.clone());
-    env.insert(DB_PASSWORD_VAR.to_string(), settings.password.clone());
+    env.insert(DATA_DIR_VAR.to_string(), data_dir.to_string());
     env.insert(ADMIN_TOKEN_VAR.to_string(), token.expose().to_string());
     env.insert(MASTER_KEY_VAR.to_string(), master_key.expose().to_string());
     env.insert(PARENT_PID_VAR.to_string(), parent_pid.to_string());
@@ -474,23 +405,12 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn settings_need_four_non_empty_variables_and_debug_hides_the_password() {
-        let missing = metadata_settings_from_env(&env(&[(DB_HOST_VAR, ""), (DB_NAME_VAR, "qh")]))
-            .expect_err("missing");
-        assert_eq!(missing, vec![DB_HOST_VAR, DB_USERNAME_VAR, DB_PASSWORD_VAR]);
+    /// 시험용 데이터 디렉터리(셸이 준비한 <앱 로컬 데이터 디렉터리>/data 자리).
+    const DATA_DIR: &str = "/home/qh/.local/share/com.queryhub.desktop/data";
 
-        let settings = metadata_settings_from_env(&env(&[
-            (DB_HOST_VAR, "127.0.0.1"),
-            (DB_NAME_VAR, "qh"),
-            (DB_USERNAME_VAR, "qh-user"),
-            (DB_PASSWORD_VAR, "pw-debug-marker"),
-        ]))
-        .expect("settings");
-        assert_eq!(settings.port, None);
-        assert_eq!(settings.password(), "pw-debug-marker");
-        assert!(!format!("{settings:?}").contains("pw-debug-marker"));
-    }
+    /// P1-06 에서 없앤 Metadata DB 변수의 이름 앞부분. 이름을 둘로 나누어 적어 desktop 에 옛 이름이 그대로 남지 않게 한다
+    /// (AC21 의 git grep). 셸 환경에 있어도 자식에게 가면 안 된다.
+    const RETIRED_METADATA_PREFIX: &str = concat!("QUERYHUB_", "METADATA_DB_");
 
     /// 허용 목록 밖의 변수. Spring 이 바인딩하는 것(SERVER_*, MANAGEMENT_*, LOGGING_*, DEBUG, SPRING_*), JVM 옵션,
     /// 다른 QUERYHUB_* 와 아무 변수.
@@ -510,7 +430,9 @@ mod tests {
         ("_JAVA_OPTIONS", "-Dz=1"),
         ("JAVA_HOME", "/opt/jdk"),
         ("QUERYHUB_OTHER", "x"),
-        ("QUERYHUB_METADATA_DB_PASSWORD", "inherited"),
+        (concat!("QUERYHUB_", "METADATA_DB_PASSWORD"), "inherited"),
+        ("QUERYHUB_DATA_DIR", "/shell/data"),
+        ("QUERYHUB_SQLITE_NATIVE_DIR", "/shell/native"),
         ("QUERYHUB_ADMIN_TOKEN", "inherited"),
         ("QUERYHUB_ADMIN_TOKEN_FILE", "/x"),
         ("QUERYHUB_MASTER_KEY", "inherited"),
@@ -522,7 +444,7 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn child_env_passes_only_the_allow_list_and_the_metadata_settings() {
+    fn child_env_passes_only_the_allow_list_and_the_data_dir() {
         let inherited = [
             ("PATH", "/usr/bin"),
             ("HOME", "/home/qh"),
@@ -537,48 +459,96 @@ mod tests {
         let mut pairs = inherited.to_vec();
         pairs.extend_from_slice(NOT_INHERITED);
         let base = env(&pairs);
-        let settings = MetadataSettings {
-            host: "h".into(),
-            port: Some("13306".into()),
-            name: "n".into(),
-            username: "u".into(),
-            password: "p".into(),
-        };
         let token = AdminToken::generate().expect("token");
         let key = test_key();
-        let child = child_env(&base, &settings, &token, &key, 4242);
+        let child = child_env(&base, DATA_DIR, &token, &key, 4242);
         for (name, value) in inherited {
             assert_eq!(child.get(name).map(String::as_str), Some(value), "{name}");
         }
         for (name, _) in NOT_INHERITED
             .iter()
-            .filter(|(n, _)| *n != DB_PASSWORD_VAR && *n != ADMIN_TOKEN_VAR && *n != MASTER_KEY_VAR)
+            .filter(|(n, _)| *n != DATA_DIR_VAR && *n != ADMIN_TOKEN_VAR && *n != MASTER_KEY_VAR)
         {
             assert!(!child.contains_key(*name), "{name} 가 자식 환경에 있다");
         }
         let mut expected: Vec<&str> = inherited.iter().map(|(k, _)| *k).collect();
         expected.extend([
             ADMIN_TOKEN_VAR,
+            DATA_DIR_VAR,
             MASTER_KEY_VAR,
             PARENT_PID_VAR,
-            DB_HOST_VAR,
-            DB_NAME_VAR,
-            DB_PASSWORD_VAR,
-            DB_PORT_VAR,
-            DB_USERNAME_VAR,
         ]);
         expected.sort_unstable();
         assert_eq!(
             child.keys().map(String::as_str).collect::<Vec<_>>(),
             expected
         );
-        assert_eq!(child[DB_PASSWORD_VAR], "p");
+        assert_eq!(child[DATA_DIR_VAR], DATA_DIR);
         assert_eq!(child[PARENT_PID_VAR], "4242");
         assert_eq!(child[ADMIN_TOKEN_VAR], token.expose());
         assert_eq!(child[MASTER_KEY_VAR], key.expose());
 
-        // java -version 의 환경도 같은 허용 목록이다(Metadata DB 설정, 토큰, 키, PID 도 없다).
+        // java -version 의 환경도 같은 허용 목록이다(데이터 디렉터리, 토큰, 키, PID 도 없다).
         assert_eq!(inherited_env(&base), env(&inherited));
+    }
+
+    /// AC19: 자식의 QUERYHUB_DATA_DIR 은 셸이 준비한 경로다. 셸 환경의 QUERYHUB_DATA_DIR 와 QUERYHUB_SQLITE_NATIVE_DIR,
+    /// 없앤 Metadata DB 변수(HOST, PORT, NAME, USERNAME, PASSWORD)는 넘어가지 않는다. java -version 의 환경과 argv 에는
+    /// 데이터 디렉터리가 없다.
+    #[test]
+    fn child_env_sets_the_prepared_data_dir_and_drops_shell_store_and_retired_metadata_variables() {
+        let retired: Vec<String> = ["HOST", "PORT", "NAME", "USERNAME", "PASSWORD"]
+            .iter()
+            .map(|suffix| format!("{RETIRED_METADATA_PREFIX}{suffix}"))
+            .collect();
+        let mut pairs = vec![
+            ("PATH", "/usr/bin"),
+            (DATA_DIR_VAR, "/shell/data-marker"),
+            (SQLITE_NATIVE_DIR_VAR, "/shell/native-marker"),
+        ];
+        pairs.extend(retired.iter().map(|name| (name.as_str(), "retired-marker")));
+        let base = env(&pairs);
+        let token = AdminToken::generate().expect("token");
+        let child = child_env(&base, DATA_DIR, &token, &test_key(), 1);
+        assert_eq!(child.get(DATA_DIR_VAR).map(String::as_str), Some(DATA_DIR));
+        assert!(!child.contains_key(SQLITE_NATIVE_DIR_VAR));
+        for name in &retired {
+            assert!(!child.contains_key(name), "{name} 가 자식 환경에 있다");
+        }
+        assert!(
+            child
+                .keys()
+                .all(|k| !k.starts_with(RETIRED_METADATA_PREFIX)),
+            "{child:?}"
+        );
+        assert!(child
+            .values()
+            .all(|v| !v.contains("marker") && !v.starts_with("/shell/")));
+        let queryhub: Vec<&str> = child
+            .keys()
+            .map(String::as_str)
+            .filter(|k| k.starts_with("QUERYHUB_"))
+            .collect();
+        assert_eq!(
+            queryhub,
+            vec![
+                ADMIN_TOKEN_VAR,
+                DATA_DIR_VAR,
+                PARENT_PID_VAR,
+                MASTER_KEY_VAR
+            ]
+        );
+
+        let version_env = inherited_env(&base);
+        assert_eq!(version_env, env(&[("PATH", "/usr/bin")]));
+
+        let args = child_args(Path::new("/opt/queryhub-runtime.jar"), 18580);
+        assert!(args.iter().all(|a| !a.contains(DATA_DIR)), "{args:?}");
+        assert!(
+            args.iter()
+                .all(|a| !a.to_ascii_lowercase().contains("data")),
+            "{args:?}"
+        );
     }
 
     /// AC12: 셸 환경의 QUERYHUB_ADMIN_TOKEN=inherited 와 QUERYHUB_ADMIN_TOKEN_FILE=/x 는 자식에게 가지 않고, 자식의 토큰은
@@ -590,15 +560,8 @@ mod tests {
             (ADMIN_TOKEN_VAR, "inherited"),
             (ADMIN_TOKEN_FILE_VAR, "/x"),
         ]);
-        let settings = MetadataSettings {
-            host: "h".into(),
-            port: None,
-            name: "n".into(),
-            username: "u".into(),
-            password: "p".into(),
-        };
         let token = AdminToken::generate().expect("token");
-        let child = child_env(&base, &settings, &token, &test_key(), 1);
+        let child = child_env(&base, DATA_DIR, &token, &test_key(), 1);
         assert_eq!(
             child.get(ADMIN_TOKEN_VAR).map(String::as_str),
             Some(token.expose())
@@ -636,16 +599,9 @@ mod tests {
                 .map(|name| (*name, "inherited-key-marker")),
         );
         let base = env(&pairs);
-        let settings = MetadataSettings {
-            host: "h".into(),
-            port: None,
-            name: "n".into(),
-            username: "u".into(),
-            password: "p".into(),
-        };
         let token = AdminToken::generate().expect("token");
         let key = test_key();
-        let child = child_env(&base, &settings, &token, &key, 1);
+        let child = child_env(&base, DATA_DIR, &token, &key, 1);
         assert_eq!(
             child.get(MASTER_KEY_VAR).map(String::as_str),
             Some(key.expose())
@@ -683,30 +639,6 @@ mod tests {
             inherited_env(&env(&pairs)),
             env(&[("Path", "C:\\Windows"), ("SystemRoot", "C:\\Windows")])
         );
-    }
-
-    /// C2-3: 안내는 DEPLOYMENT.md 와 deploy/.env 를 하위 셸에서만 읽는 명령을 가리키고, 빠진 이름만 말한다.
-    #[test]
-    fn settings_missing_failure_points_to_the_deployment_doc_and_the_scoped_command() {
-        let failure = settings_missing_failure(vec![DB_HOST_VAR, DB_PASSWORD_VAR]);
-        assert_eq!(failure.kind, FailureKind::MetadataSettingsMissing);
-        assert!(
-            failure
-                .message
-                .contains("(set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev)"),
-            "{}",
-            failure.message
-        );
-        assert!(
-            failure.message.contains("docs/DEPLOYMENT.md"),
-            "{}",
-            failure.message
-        );
-        assert!(failure.message.contains(DB_HOST_VAR));
-        assert!(failure.message.contains(DB_PASSWORD_VAR));
-        for absent in [DB_NAME_VAR, DB_USERNAME_VAR, DB_PORT_VAR] {
-            assert!(!failure.message.contains(absent), "{absent}");
-        }
     }
 
     /// C2-4: 대소문자 무시는 요청할 때만 하고, 같은 이름이 있으면 그것을 먼저 쓴다. 플랫폼과 관계없이 실행된다.

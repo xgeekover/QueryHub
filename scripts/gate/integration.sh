@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# 통합 테스트 게이트: 실제 MariaDB(Testcontainers)에 붙는 통합 테스트를 실행하고 JUnit XML 로 결과를 판정한다.
+# 통합 테스트 게이트: 통합 테스트(runtime/<모듈>/src/integrationTest)를 실행하고 JUnit XML 로 결과를 판정한다. P1-06 부터 통합
+# 테스트는 임시 데이터 디렉터리의 내장 SQLite Metadata 저장소와 실행 JAR 자식 프로세스로 돈다(MariaDB 와 Testcontainers 를 쓰지 않는다).
 #
 # Docker 가 필요하다. Docker 가 없거나 응답하지 않으면 건너뛰지 않고 실패한다(건너뛴 게이트로는 통과할 수 없다).
+# P1-06 의 통합 테스트는 Docker 를 쓰지 않지만 사전 점검(3)은 남긴다: 다음 업무 DB Provider 작업의 테스트가 다시 Docker 를 쓴다.
 # test.sh 와 같은 거짓 통과 방어를 쓴다: 실행된 테스트 0건, 실패·오류가 있는데 exit 0, 건너뛴 테스트로 녹색, 이전 실행의 오래된 결과.
 # 단위 테스트(test 태스크)는 실행하지 않는다. 그것은 test.sh 의 몫이다.
 # 순서:
@@ -14,7 +16,7 @@
 #   6. 찾은 모든 모듈의 결과를 --require-each --newer 표식 으로 판정한다.
 #   7. Gradle 종료 코드와 판정 결과를 합쳐 마지막에 결론과 걸린 시간을 출력한다.
 #
-# 컨테이너는 Testcontainers 가 만들고 테스트 JVM 이 끝나면 Ryuk 가 지운다. 이 스크립트는 컨테이너를 직접 만들거나 지우지 않는다.
+# 이 스크립트는 컨테이너를 직접 만들거나 지우지 않는다. 통합 테스트가 남기는 임시 데이터 디렉터리는 시스템 임시 디렉터리 아래에 있다.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

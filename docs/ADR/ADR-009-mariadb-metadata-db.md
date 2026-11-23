@@ -1,8 +1,10 @@
 # ADR-009 Metadata DB 는 두 모드 모두 MariaDB
 
-- 상태: 승인됨
+- 상태: 대체됨(ADR-026)
 - 날짜: 2026-11-15
-- 구현: 일부 구현 — MariaDB 연결과 Flyway 는 구현됨 (P0-B, f913239). Desktop 의 앱 설정 입력은 계획 (Phase 6), Phase 0 의 임시 방식은 [ADR-017](ADR-017-desktop-metadata-settings-from-env.md)
+- 구현: 일부 구현 — MariaDB 연결과 Flyway 는 구현됨 (P0-B, f913239). Desktop 의 앱 설정 입력은 계획 (Phase 6), Phase 0 의 임시 방식은 [ADR-017](ADR-017-desktop-metadata-settings-from-env.md). P1-06 에서 MariaDB metadata 경로를 지웠다(아래 주)
+
+> 2026-11-23 주: 사용자가 Metadata 저장소로 「2. SQLite 내장」을 고르고 MariaDB 를 metadata 선택지로 남기지 않기로 해(「3. 권장하는 반식으로 진행」) [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) 이 이 결정을 대체했다. P1-06 은 `QUERYHUB_METADATA_DB_*` 연결, MariaDB 마이그레이션, `flyway-mysql`, `mariadb-java-client`, `deploy/compose.dev.yml` 을 지웠다. 아래 본문은 P0-B 때의 기록으로 남긴다. MariaDB 는 업무 DB 로서 계속 지원 계획이다.
 
 ## 맥락
 

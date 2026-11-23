@@ -17,6 +17,7 @@
 ## 결과
 
 - 구현됨 (P0-B): `deploy/env.example`, `deploy/compose.dev.yml`. `.gitignore` 에서 쓰이지 않게 된 `!.env.example` 부정 패턴을 뺐다.
+  - 2026-11-23 주 (P1-06, [ADR-026](ADR-026-sqlite-embedded-metadata-store.md)): 개발용 MariaDB 가 필요 없어져 `deploy/compose.dev.yml` 을 지웠다. `deploy/env.example` 은 같은 이름으로 남아, `java -jar` 로 런타임을 직접 실행할 때의 `QUERYHUB_DATA_DIR`(주석 예시), 관리자 토큰, 마스터 키 자리를 보인다(자리 표시 값만).
 - `env.example` 은 비밀 파일 패턴(`*.env`, `.env`, `.env.*`)에 걸리지 않으므로 리뷰와 게이트가 내용을 확인할 수 있다.
 - 다른 프로젝트의 관례(`.env.example`)와 이름이 다르다. 사용 절차는 [DEPLOYMENT.md](../DEPLOYMENT.md)에 있다.
 

@@ -25,6 +25,11 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 use super::output::MASK;
+use super::private_dir;
+// 아래 P1-04 시험(the_owner_and_mode_rule_is_a_pure_decision, the_effective_uid_owns_files_this_process_creates)이 공유
+// 규칙을 이 이름들로 부른다. 규칙 자체는 private_dir 에 있다(데이터 디렉터리와 같이 쓴다, P1-06).
+#[cfg(all(test, unix))]
+use super::private_dir::{effective_uid, permission_problem, PermissionProblem};
 use super::token::to_lower_hex;
 use super::{Failure, FailureKind};
 
@@ -39,12 +44,7 @@ const KEY_HEX_LEN: usize = KEY_BYTES * 2;
 pub const MAX_FILE_BYTES: usize = 4096;
 
 #[cfg(unix)]
-const DIR_MODE: u32 = 0o700;
-#[cfg(unix)]
 const FILE_MODE: u32 = 0o600;
-/// 그룹과 다른 사용자의 권한 비트. 하나라도 있으면 거부한다.
-#[cfg(unix)]
-const GROUP_OTHER_BITS: u32 = 0o077;
 
 /// 모든 거부 메시지의 끝에 붙는 안내.
 const GUIDE: &str = "docs/DEPLOYMENT.md 의 「마스터 키」 절을 본다. 키 파일을 지우거나 새로 만들면 그 키로 암호화한 비밀번호를 되살릴 수 없다";
@@ -137,52 +137,19 @@ pub fn load_or_create(
     Ok(key)
 }
 
-/// 키 디렉터리를 확인하고, 없으면 만든다(unix 0700). 있는 디렉터리의 권한은 바꾸지 않는다.
+/// 키 디렉터리를 확인하고, 없으면 만든다(unix 0700). 있는 디렉터리의 권한은 바꾸지 않는다. 규칙은 private_dir 에 있다.
 fn prepare_dir(dir: &Path) -> Result<(), Failure> {
-    match fs::symlink_metadata(dir) {
-        Ok(meta) => return check_dir(dir, &meta),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => {
-            return Err(unavailable(
-                dir,
-                format!("키 디렉터리를 확인하지 못했다: {e}"),
-            ))
-        }
-    }
-    if let Some(parent) = dir.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| unavailable(parent, format!("앱 데이터 디렉터리를 만들지 못했다: {e}")))?;
-    }
-    match create_key_dir(dir) {
-        Ok(()) => set_dir_mode(dir)?,
-        // 다른 인스턴스가 먼저 만들었다: 권한을 바꾸지 않고 확인만 한다.
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(e) => {
-            return Err(unavailable(
-                dir,
-                format!("키 디렉터리를 만들지 못했다: {e}"),
-            ))
-        }
-    }
-    let meta = fs::symlink_metadata(dir)
-        .map_err(|e| unavailable(dir, format!("키 디렉터리를 확인하지 못했다: {e}")))?;
-    check_dir(dir, &meta)
+    private_dir::prepare(dir, "키", &key_failure)
 }
 
-fn check_dir(dir: &Path, meta: &fs::Metadata) -> Result<(), Failure> {
-    if meta.file_type().is_symlink() {
-        return Err(unavailable(
-            dir,
-            "키 디렉터리가 심볼릭 링크다. 링크가 아닌 실제 디렉터리여야 한다",
-        ));
-    }
-    if !meta.is_dir() {
-        return Err(unavailable(
-            dir,
-            "키 디렉터리 자리에 디렉터리가 아닌 것이 있다",
-        ));
-    }
-    check_permissions(dir, meta, "700")
+/// private_dir 의 실패를 master_key_unavailable 로 만든다.
+fn key_failure(path: &Path, cause: String) -> Failure {
+    unavailable(path, cause)
+}
+
+/// unix: 소유자가 셸의 실효 uid 이고 그룹·기타 권한 비트가 없어야 한다(private_dir 의 규칙).
+fn check_permissions(path: &Path, meta: &fs::Metadata, fix_mode: &str) -> Result<(), Failure> {
+    private_dir::check_permissions(path, meta, fix_mode, &key_failure)
 }
 
 fn check_file(path: &Path, meta: &fs::Metadata) -> Result<(), Failure> {
@@ -285,93 +252,6 @@ fn open_for_read(path: &Path) -> io::Result<File> {
 #[cfg(not(unix))]
 fn open_for_read(path: &Path) -> io::Result<File> {
     File::open(path)
-}
-
-#[cfg(unix)]
-fn create_key_dir(dir: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new().mode(DIR_MODE).create(dir)
-}
-
-#[cfg(not(unix))]
-fn create_key_dir(dir: &Path) -> io::Result<()> {
-    fs::create_dir(dir)
-}
-
-/// 새로 만든 키 디렉터리만 0700 으로 정한다(umask 와 상관없이).
-#[cfg(unix)]
-fn set_dir_mode(dir: &Path) -> Result<(), Failure> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(dir, fs::Permissions::from_mode(DIR_MODE)).map_err(|e| {
-        unavailable(
-            dir,
-            format!("키 디렉터리의 권한을 0700 으로 정하지 못했다: {e}"),
-        )
-    })
-}
-
-#[cfg(not(unix))]
-fn set_dir_mode(_dir: &Path) -> Result<(), Failure> {
-    Ok(())
-}
-
-/// unix 의 소유자·권한 판정에서 찾은 문제.
-#[cfg(unix)]
-#[derive(Debug, PartialEq, Eq)]
-enum PermissionProblem {
-    /// 소유자가 셸의 실효 uid 가 아니다.
-    Owner { owner: u32, euid: u32 },
-    /// 그룹이나 다른 사용자의 권한 비트가 있다.
-    Mode { mode: u32 },
-}
-
-/// 소유자와 모드 판정(순수 함수, root 로 실행해도 시험 결과가 같다).
-#[cfg(unix)]
-fn permission_problem(owner: u32, mode: u32, euid: u32) -> Option<PermissionProblem> {
-    if owner != euid {
-        return Some(PermissionProblem::Owner { owner, euid });
-    }
-    if mode & GROUP_OTHER_BITS != 0 {
-        return Some(PermissionProblem::Mode {
-            mode: mode & 0o7777,
-        });
-    }
-    None
-}
-
-/// unix: 소유자가 셸의 실효 uid 이고 그룹·기타 권한 비트가 없어야 한다. 고치지 않고 명령을 안내한다.
-#[cfg(unix)]
-fn check_permissions(path: &Path, meta: &fs::Metadata, fix_mode: &str) -> Result<(), Failure> {
-    use std::os::unix::fs::MetadataExt;
-    match permission_problem(meta.uid(), meta.mode(), effective_uid()) {
-        None => Ok(()),
-        Some(PermissionProblem::Owner { owner, euid }) => Err(unavailable(
-            path,
-            format!(
-                "소유자(uid {owner})가 앱을 실행한 사용자(uid {euid})가 아니다. 소유자를 바꾼다: chown {euid} '{}'",
-                path.display()
-            ),
-        )),
-        Some(PermissionProblem::Mode { mode }) => Err(unavailable(
-            path,
-            format!(
-                "그룹이나 다른 사용자에게 권한이 있다(모드 {mode:04o}). 권한을 저절로 고치지 않는다. 권한을 줄인다: chmod {fix_mode} '{}'",
-                path.display()
-            ),
-        )),
-    }
-}
-
-/// Windows 등: 권한과 소유자를 확인하지 않는다(사용자 프로필의 ACL 에 기댄다. 미검증, PLAT-1).
-#[cfg(not(unix))]
-fn check_permissions(_path: &Path, _meta: &fs::Metadata, _fix_mode: &str) -> Result<(), Failure> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn effective_uid() -> u32 {
-    // SAFETY: geteuid(2) 는 인자가 없고 실패하지 않는다.
-    unsafe { libc::geteuid() }
 }
 
 #[cfg(test)]

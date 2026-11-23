@@ -8,13 +8,15 @@ export type FailureKind =
   | "java_not_found"
   | "java_too_old"
   | "jar_not_found"
-  | "metadata_settings_missing"
   | "port_in_use"
   | "spawn_failed"
   | "exited"
   | "startup_timeout"
   // 마스터 키 파일을 만들거나 읽지 못했다(ADR-023). message 는 키 파일 경로와 고치는 방법만 말하고 키 값은 없다.
-  | "master_key_unavailable";
+  | "master_key_unavailable"
+  // 데이터 디렉터리(<앱 로컬 데이터 디렉터리>/data, 내장 SQLite 저장소가 있는 곳)를 준비하지 못했다(P1-06). message 는 경로와
+  // 고치는 방법만 말한다.
+  | "data_dir_unavailable";
 
 export interface RuntimeFailure {
   kind: FailureKind;

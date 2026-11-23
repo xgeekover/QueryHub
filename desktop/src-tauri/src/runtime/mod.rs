@@ -1,20 +1,25 @@
 //! 런타임(Spring Boot 실행 JAR) 감독 모듈. Tauri 타입을 쓰지 않는다.
 //!
-//! - launch: 셸 환경(주입한 맵)에서 java, JAR, Metadata DB 설정, 자식 환경과 인자를 정한다.
+//! - launch: 셸 환경(주입한 맵)에서 java, JAR, 자식 환경과 인자를 정한다.
 //! - java: `java -version` 으로 주 버전을 읽는다.
 //! - health: std::net 으로 루프백 GET 의 상태 줄만 읽는다(HTTP 클라이언트 크레이트를 쓰지 않는다).
-//! - output: 자식 출력의 링 버퍼와 비밀 값(비밀번호, 관리 토큰, 마스터 키) 가리기.
+//! - output: 자식 출력의 링 버퍼와 비밀 값(관리 토큰, 마스터 키) 가리기.
 //! - token: 셸 프로세스마다 한 번 만드는 관리 토큰(ADR-021). Debug 와 Display 는 값을 보이지 않는다.
 //! - master_key: 앱 로컬 데이터 디렉터리의 마스터 키 파일(ADR-023). 처음 한 번 만들고 시작할 때마다 읽는다. 덮어쓰지 않는다.
+//! - data_dir: 앱 로컬 데이터 디렉터리의 data/(P1-06). 런타임의 내장 SQLite 저장소가 있는 곳이다. 셸은 디렉터리만 준비하고
+//!   QUERYHUB_DATA_DIR 로 넘긴다.
+//! - private_dir: 키 디렉터리와 데이터 디렉터리가 같이 쓰는 비공개 디렉터리 규칙(0700, 심볼릭 링크·소유자·권한 거부).
 //! - supervisor: 상태 기계(stopped/starting/running/failed + health), 시작·정지·재시작, 감시 스레드, Drop.
 //!
 //! UI 에 돌려주는 계약은 이 파일의 RuntimeStatus 다(camelCase 로 직렬화). desktop/src/runtime/types.ts 가 같은 모양이다.
 
+pub mod data_dir;
 pub mod health;
 pub mod java;
 pub mod launch;
 pub mod master_key;
 pub mod output;
+mod private_dir;
 pub mod supervisor;
 pub mod token;
 
@@ -65,13 +70,14 @@ pub enum FailureKind {
     JavaNotFound,
     JavaTooOld,
     JarNotFound,
-    MetadataSettingsMissing,
     PortInUse,
     SpawnFailed,
     Exited,
     StartupTimeout,
     /// 마스터 키 파일을 만들거나 읽지 못했다(ADR-023). 자식을 띄우지 않는다.
     MasterKeyUnavailable,
+    /// 데이터 디렉터리(<앱 로컬 데이터 디렉터리>/data)를 준비하지 못했다(P1-06). 자식을 띄우지 않는다.
+    DataDirUnavailable,
 }
 
 impl FailureKind {
@@ -81,12 +87,12 @@ impl FailureKind {
             FailureKind::JavaNotFound => "java_not_found",
             FailureKind::JavaTooOld => "java_too_old",
             FailureKind::JarNotFound => "jar_not_found",
-            FailureKind::MetadataSettingsMissing => "metadata_settings_missing",
             FailureKind::PortInUse => "port_in_use",
             FailureKind::SpawnFailed => "spawn_failed",
             FailureKind::Exited => "exited",
             FailureKind::StartupTimeout => "startup_timeout",
             FailureKind::MasterKeyUnavailable => "master_key_unavailable",
+            FailureKind::DataDirUnavailable => "data_dir_unavailable",
         }
     }
 
@@ -96,14 +102,14 @@ impl FailureKind {
     }
 }
 
-/// 실패 정보. message 는 한국어이고 변수 이름과 경로만 말한다. 비밀 값(비밀번호, 관리 토큰, 마스터 키)은 넣지 않는다.
+/// 실패 정보. message 는 한국어이고 변수 이름과 경로만 말한다. 비밀 값(관리 토큰, 마스터 키)은 넣지 않는다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Failure {
     pub kind: FailureKind,
     pub message: String,
     pub exit_code: Option<i32>,
-    /// 자식 출력의 마지막 줄들(비밀번호, 관리 토큰, 마스터 키는 가려져 있다). 상태를 조회할 때 채운다.
+    /// 자식 출력의 마지막 줄들(관리 토큰과 마스터 키는 가려져 있다). 상태를 조회할 때 채운다.
     pub output_tail: Vec<String>,
 }
 

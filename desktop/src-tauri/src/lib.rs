@@ -4,6 +4,9 @@
 //!   자동으로 시작한다(별도 스레드, 창을 막지 않는다). 토큰을 만들지 못하면 setup 이 실패하고 런타임은 시작하지 않는다.
 //! - 마스터 키 파일의 경로는 여기서만 정한다: <app_local_data_dir>/secrets/master.key(ADR-023). 감독이 시작할 때마다 읽고,
 //!   없을 때만 한 번 만든다. 키는 런타임 자식의 환경변수로만 넘기고 커맨드로 돌려주지 않는다.
+//! - 데이터 디렉터리의 경로도 여기서만 정한다: <app_local_data_dir>/data(P1-06, ADR-026). 감독이 시작할 때마다 0700 으로
+//!   준비하고 QUERYHUB_DATA_DIR 로 넘긴다. 런타임은 그 안에 내장 SQLite 저장소(queryhub.db)를 만든다. 그래서 앱은 환경변수
+//!   없이 시작한다.
 //! - 커맨드 다섯 개(commands.rs): runtime_status, runtime_start, runtime_stop, runtime_restart, admin_token.
 //! - RunEvent::Exit: 런타임을 정지한다(SIGTERM, 10 초 뒤 SIGKILL). 셸이 SIGKILL 로 죽으면 런타임의 부모 감시
 //!   (QUERYHUB_DESKTOP_PARENT_PID)가 약 5 초 안에 런타임을 끝낸다.
@@ -16,7 +19,7 @@ pub mod runtime;
 
 use tauri::{Manager, RunEvent};
 
-use runtime::{launch, master_key, AdminToken, Supervisor, SupervisorConfig};
+use runtime::{data_dir, launch, master_key, AdminToken, Supervisor, SupervisorConfig};
 
 /// Tauri 앱을 만들고 실행한다. 창이 모두 닫히면 돌아오지 않고 프로세스를 끝낸다.
 pub fn run() {
@@ -38,8 +41,11 @@ pub fn run() {
             let master_key_path = work_dir
                 .join(master_key::KEY_DIR_NAME)
                 .join(master_key::KEY_FILE_NAME);
+            // 데이터 디렉터리(P1-06). macOS ~/Library/Application Support/com.queryhub.desktop/data, Linux
+            // ~/.local/share/com.queryhub.desktop/data, Windows %LOCALAPPDATA%\com.queryhub.desktop\data(둘은 미검증).
+            let data_dir_path = work_dir.join(data_dir::DATA_DIR_NAME);
             let supervisor = Supervisor::new(
-                SupervisorConfig::desktop(work_dir, master_key_path),
+                SupervisorConfig::desktop(work_dir, master_key_path, data_dir_path),
                 launch::process_env(),
                 token,
             );

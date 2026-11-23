@@ -1,36 +1,33 @@
 package com.queryhub.app.config.metadata;
 
-import static com.queryhub.app.config.metadata.MetadataDatabaseProperties.ENV_HOST;
-import static com.queryhub.app.config.metadata.MetadataDatabaseProperties.ENV_NAME;
-import static com.queryhub.app.config.metadata.MetadataDatabaseProperties.ENV_PASSWORD;
-import static com.queryhub.app.config.metadata.MetadataDatabaseProperties.ENV_PORT;
-import static com.queryhub.app.config.metadata.MetadataDatabaseProperties.ENV_USERNAME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
-import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
+import com.queryhub.adapter.metadata.store.MetadataStoreException;
+import com.queryhub.adapter.metadata.store.StoreLayout;
 import com.queryhub.app.QueryHubApplication;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
 import com.queryhub.app.support.TestMasterKey;
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.sql.SQLException;
-import java.time.Duration;
+import com.queryhub.app.support.TestSqlite;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -42,441 +39,251 @@ import org.springframework.context.ApplicationListener;
 import org.springframework.context.ConfigurableApplicationContext;
 
 /**
- * AC-06, AC-08, AC-09: Metadata DB 설정이 없거나 틀리면, DB 에 닿지 않으면, 비밀번호가 명령행·시스템 속성(그 둘로 넘긴
- * spring.application.json 포함)으로 오면, Hikari 접속 키가 명령행으로 오면 기동은 웹 서버가 포트를 열기 전에 실패한다. Flyway 를 끈 경우의
- * 연결 확인도 같다. spring.flyway.url·user·password 가 있어도 Flyway 는 검사한 주 풀로 연결하므로 실패는 검사한 대상에서 난다(R10).
- * Docker 없이 돈다.
+ * P1-06 AC5, AC9, AC11, AC14 (단위, Docker 없이): Metadata 저장소(SQLite) 문제는 기동을 웹 서버가 포트를 열기 전에 멈춘다.
  *
- * <p>실제 QueryHubApplication 을 Metadata DB 제외 없이 띄운다(servlet, desktop, 127.0.0.1, 포트 0). 컴포넌트 스캔에서
- * 테스트 전용 빈만 뺀다({@link TestComponentScanExclusion}). 접속 값은 기본 속성(defaultProperties)으로 넣는다. 명령행과 시스템
- * 속성은 비밀번호 거부 규칙의 대상이기 때문이다. 모든 경우를 일반 초기화와 lazy 초기화로 확인한다. 회귀로 기동이 성공해도 루프백의 임의 포트에만 열고 바로 닫는다.
+ * <ul>
+ *   <li>데이터 디렉터리가 없거나(빈 값, 상대 경로, '?') 잘못되면 desktop 과 server 프로파일 모두 실패하고 메시지가 QUERYHUB_DATA_DIR 와
+ *       queryhub.data-dir 를 말한다. 일반 초기화와 lazy 초기화 모두 확인한다.
+ *   <li>같은 데이터 디렉터리의 두 번째 런타임은 queryhub.lock 때문에 거부된다. 첫 런타임이 끝나면 다시 뜬다.
+ *   <li>SQLite 설정을 data-source-properties 로 바꾸면 거부하고, connection-init-sql 로 바꾸면 풀 연결 확인이 거부한다.
+ *   <li>spring.datasource.hikari.jdbc-url 로 다른 파일을 가리켜도 풀은 검사한 파일에 남는다. Flyway 를 꺼도 나쁜 저장소는 거부된다.
+ *   <li>V1 의 체크섬이 다른 저장소는 Flyway 검증이 거부한다.
+ * </ul>
+ *
+ * <p>실제 QueryHubApplication 을 Metadata 저장소 제외 없이 띄운다(servlet, 127.0.0.1, 포트 0). 데이터 디렉터리는 테스트마다 새
+ * 임시 디렉터리다(잠금 때문에 컨텍스트마다 따로 둔다). 데이터 디렉터리는 비밀이 아니므로 명령행 인자로 넘긴다. 출력에는 관리자 토큰과 마스터 키가 없어야 한다.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class MetadataStartupFailureTest {
 
-  /** 비밀번호 자리의 표식. 예외 메시지와 출력 어디에도 나오면 안 된다. */
-  private static final String PASSWORD_MARKER = "secret-marker-unit-7c41d2";
+  @TempDir private Path tmp;
 
-  private static final Duration STARTUP_LIMIT = Duration.ofSeconds(30);
+  @BeforeAll
+  static void loadNative() throws Exception {
+    TestSqlite.loadNativeOnce();
+  }
 
-  /*
-   * 거부 메시지에서 출처에 따라 바뀌는 부분. 비밀번호 메시지의 고정 문구("명령행 인자나 JVM 시스템 속성(spring.application.json 포함)")
-   * 에는 이 문자열들이 없으므로, 출처를 잘못 말하면 이 검사가 실패한다.
-   */
-  private static final String FROM_COMMAND_LINE = "가 명령행 인자로 넘어와";
-  private static final String FROM_SYSTEM_PROPERTIES = "가 JVM 시스템 속성(-D)로 넘어와";
-  private static final String FROM_COMMAND_LINE_JSON = "가 명령행 인자의 spring.application.json로 넘어와";
-  private static final String FROM_SYSTEM_PROPERTIES_JSON =
-      "가 JVM 시스템 속성(-D)의 spring.application.json로 넘어와";
+  @ParameterizedTest(name = "lazy={0} profile={1}")
+  @CsvSource({"false, desktop", "true, desktop", "false, server", "true, server"})
+  void missingDataDirectoryFailsBeforeTheWebServerStarts(
+      boolean lazy, String profile, CapturedOutput output) {
+    StartupAttempt attempt = start(lazy, profile, List.of());
 
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void missingVariablesFailBeforeTheWebServerStarts(boolean lazy) {
-    StartupAttempt attempt = start(lazy, Map.of());
-
-    assertThat(attempt.failure()).as("설정 없이 기동하면 실패해야 한다").isNotNull();
+    assertThat(attempt.failure()).as("데이터 디렉터리 없이 기동하면 실패해야 한다").isNotNull();
     assertThat(attempt.failure())
         .rootCause()
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(ENV_HOST)
-        .hasMessageContaining(ENV_NAME)
-        .hasMessageContaining(ENV_USERNAME)
-        .hasMessageContaining(ENV_PASSWORD)
-        .message()
-        .doesNotContain(ENV_PORT);
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining("QUERYHUB_DATA_DIR")
+        .hasMessageContaining("queryhub.data-dir");
     assertThat(attempt.webServerStarted()).as("포트를 열기 전에 실패해야 한다").isFalse();
+    assertNoSecretInOutput(output);
   }
 
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void onlyTheMissingPasswordIsNamed(boolean lazy) {
-    Map<String, Object> properties = validProperties(3306);
-    properties.remove("queryhub.metadata.db.password");
-
-    StartupAttempt attempt = start(lazy, properties);
+  @ParameterizedTest(name = "{0} profile={1}")
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "' '                       | desktop",
+        "relative/data             | desktop",
+        "relative/data             | server",
+        "/tmp/queryhub?mode=ro     | desktop",
+        "/tmp/queryhub?mode=ro     | server"
+      })
+  void invalidDataDirectoryValuesFailBeforeTheWebServerStarts(String value, String profile) {
+    StartupAttempt attempt = start(false, profile, List.of("--queryhub.data-dir=" + value));
 
     assertThat(attempt.failure())
         .rootCause()
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(ENV_PASSWORD)
-        .message()
-        .doesNotContain(ENV_HOST, ENV_PORT, ENV_NAME, ENV_USERNAME);
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining("QUERYHUB_DATA_DIR")
+        .hasMessageContaining("queryhub.data-dir");
     assertThat(attempt.webServerStarted()).isFalse();
   }
 
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void unreachableDatabaseFailsBeforeTheWebServerStarts(boolean lazy, CapturedOutput output)
-      throws IOException {
-    int closedPort = closedLoopbackPort();
+  @Test
+  void secondRuntimeOnTheSameDataDirectoryIsRefusedUntilTheFirstStops(CapturedOutput output) {
+    Path dataDir = tmp.resolve("data");
 
-    StartupAttempt attempt =
-        assertTimeoutPreemptively(STARTUP_LIMIT, () -> start(lazy, validProperties(closedPort)));
+    try (ConfigurableApplicationContext first = run(dataDir)) {
+      assertThat(first.isActive()).isTrue();
 
-    assertThat(attempt.failure()).as("닫힌 포트의 DB 로는 기동할 수 없어야 한다").isNotNull();
-    assertThat(causes(attempt.failure()))
-        .as("원인에 JDBC 연결 실패가 있어야 한다")
-        .anySatisfy(cause -> assertThat(cause).isInstanceOf(SQLException.class));
-    assertThat(attempt.webServerStarted()).isFalse();
-    assertNoPasswordLeak(attempt, output);
-  }
+      StartupAttempt second = start(false, "desktop", dataDirArgs(dataDir));
 
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void passwordOnTheCommandLineIsRejected(boolean lazy, CapturedOutput output) throws IOException {
-    Map<String, Object> properties = validProperties(closedLoopbackPort());
-    properties.remove("queryhub.metadata.db.password");
-
-    StartupAttempt attempt =
-        start(lazy, properties, "--queryhub.metadata.db.password=" + PASSWORD_MARKER);
-
-    assertThat(attempt.failure())
-        .rootCause()
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(ENV_PASSWORD)
-        .hasMessageContaining(FROM_COMMAND_LINE);
-    assertThat(attempt.webServerStarted()).isFalse();
-    assertNoPasswordLeak(attempt, output);
-  }
-
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void passwordInSystemPropertiesIsRejected(boolean lazy, CapturedOutput output)
-      throws IOException {
-    Map<String, Object> properties = validProperties(closedLoopbackPort());
-    properties.remove("queryhub.metadata.db.password");
-    String previous = System.getProperty(MetadataDatabaseProperties.PASSWORD_PROPERTY);
-    assertThat(previous).as("테스트 JVM 에 원래 값이 없어야 한다").isNull();
-
-    StartupAttempt attempt;
-    System.setProperty(MetadataDatabaseProperties.PASSWORD_PROPERTY, PASSWORD_MARKER);
-    try {
-      attempt = start(lazy, properties);
-    } finally {
-      System.clearProperty(MetadataDatabaseProperties.PASSWORD_PROPERTY);
+      assertThat(second.failure())
+          .rootCause()
+          .isInstanceOf(MetadataStoreException.class)
+          .hasMessageContaining(dataDir.toString())
+          .hasMessageContaining("queryhub.lock");
+      assertThat(second.webServerStarted()).isFalse();
+      assertThat(first.isActive()).as("거부된 두 번째 런타임이 첫 런타임을 건드리지 않는다").isTrue();
     }
 
+    try (ConfigurableApplicationContext third = run(dataDir)) {
+      assertThat(third.isActive()).as("첫 런타임이 끝나면 같은 디렉터리로 다시 뜬다").isTrue();
+    }
+    assertNoSecretInOutput(output);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"journal_mode=DELETE", "synchronous=OFF", "busy_timeout=0"})
+  void dataSourcePropertiesThatChangeTheStoreSettingsAreRefused(String setting) {
+    String key = setting.substring(0, setting.indexOf('='));
+    Path dataDir = tmp.resolve("data");
+
+    StartupAttempt attempt =
+        start(
+            false,
+            "desktop",
+            withDataDir(dataDir, "--spring.datasource.hikari.data-source-properties." + setting));
+
     assertThat(attempt.failure())
         .rootCause()
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(ENV_PASSWORD)
-        .hasMessageContaining(FROM_SYSTEM_PROPERTIES);
+        .hasMessageContaining("spring.datasource.hikari.data-source-properties." + key)
+        .hasMessageContaining("런타임이 정하는 값");
     assertThat(attempt.webServerStarted()).isFalse();
-    assertNoPasswordLeak(attempt, output);
   }
 
-  /** R12: Boot 는 느슨한 바인딩의 다른 표기(spring.Application.JSON)도 펼친다. 그 표기도 거부해야 한다. */
-  @ParameterizedTest(name = "lazy={0} {1}")
-  @CsvSource({
-    "false, spring.application.json",
-    "true, spring.application.json",
-    "false, spring.Application.JSON",
-    "true, spring.Application.JSON"
-  })
-  void passwordInSpringApplicationJsonOnTheCommandLineIsRejected(
-      boolean lazy, String key, CapturedOutput output) throws IOException {
-    Map<String, Object> properties = validProperties(closedLoopbackPort());
-    properties.remove("queryhub.metadata.db.password");
-
-    StartupAttempt attempt = start(lazy, properties, "--" + key + "=" + passwordJson());
-
-    assertRejectedBeforeAnyConnection(attempt, ENV_PASSWORD, FROM_COMMAND_LINE_JSON);
-    assertNoPasswordLeak(attempt, output);
-  }
-
-  @ParameterizedTest(name = "lazy={0} {1}")
-  @CsvSource({
-    "false, spring.application.json",
-    "true, spring.application.json",
-    "false, spring.APPLICATION.json",
-    "true, spring.APPLICATION.json"
-  })
-  void passwordInSpringApplicationJsonSystemPropertyIsRejected(
-      boolean lazy, String key, CapturedOutput output) throws IOException {
-    Map<String, Object> properties = validProperties(closedLoopbackPort());
-    properties.remove("queryhub.metadata.db.password");
-    assertThat(System.getProperty(key)).as("테스트 JVM 에 원래 값이 없어야 한다").isNull();
-
-    StartupAttempt attempt;
-    System.setProperty(key, passwordJson());
-    try {
-      attempt = start(lazy, properties);
-    } finally {
-      System.clearProperty(key);
-    }
-
-    assertRejectedBeforeAnyConnection(attempt, ENV_PASSWORD, FROM_SYSTEM_PROPERTIES_JSON);
-    assertNoPasswordLeak(attempt, output);
-  }
-
-  @ParameterizedTest(name = "lazy={0} {1}")
-  @CsvSource({
-    "false, spring.datasource.hikari.password",
-    "true, spring.datasource.hikari.password",
-    "false, spring.datasource.hikari.jdbc-url",
-    "true, spring.datasource.hikari.jdbc-url"
-  })
-  void hikariPasswordOrJdbcUrlOnTheCommandLineIsRejected(
-      boolean lazy, String key, CapturedOutput output) throws IOException {
-    int port = closedLoopbackPort();
-    String value =
-        key.endsWith("password")
-            ? PASSWORD_MARKER
-            : "jdbc:mariadb://127.0.0.1:" + port + "/queryhub?password=" + PASSWORD_MARKER;
-
-    StartupAttempt attempt = start(lazy, validProperties(port), "--" + key + "=" + value);
-
-    assertRejectedBeforeAnyConnection(attempt, key, FROM_COMMAND_LINE);
-    assertThat(attempt.failure()).rootCause().hasMessageContaining("QUERYHUB_METADATA_DB_*");
-    assertNoPasswordLeak(attempt, output);
-  }
-
-  /** R2(a): Flyway 를 끄면 기동 검사가 연결 하나를 열어 확인한다. 닫힌 포트면 그 확인이 기동을 멈춘다. */
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void withFlywayDisabledTheStartupCheckStillFailsOnAnUnreachableDatabase(
-      boolean lazy, CapturedOutput output) throws IOException {
-    int closedPort = closedLoopbackPort();
+  @ParameterizedTest(name = "flyway.enabled={0}")
+  @ValueSource(booleans = {true, false})
+  void connectionInitSqlThatWeakensThePragmasIsCaughtOnPoolConnections(boolean flywayEnabled)
+      throws Exception {
+    Path dataDir = tmp.resolve("data");
 
     StartupAttempt attempt =
-        assertTimeoutPreemptively(
-            STARTUP_LIMIT,
-            () -> start(lazy, validProperties(closedPort), "--spring.flyway.enabled=false"));
+        start(
+            false,
+            "desktop",
+            withDataDir(
+                dataDir,
+                "--spring.datasource.hikari.connection-init-sql=PRAGMA synchronous=OFF",
+                "--spring.flyway.enabled=" + flywayEnabled));
 
-    assertThat(attempt.failure()).as("Flyway 를 꺼도 닫힌 포트로는 기동할 수 없어야 한다").isNotNull();
-    List<Throwable> causes = causes(attempt.failure());
-    assertThat(causes)
-        .as("원인에 JDBC 연결 실패가 있어야 한다")
-        .anySatisfy(cause -> assertThat(cause).isInstanceOf(SQLException.class));
-    assertThat(causes)
-        .as("실패한 빈은 기동 검사다")
-        .anySatisfy(
-            cause ->
-                assertThat(cause)
-                    .isInstanceOfSatisfying(
-                        BeanCreationException.class,
-                        creation ->
-                            assertThat(creation.getBeanName())
-                                .isEqualTo("metadataDatabaseStartupCheck")));
-    assertThat(causes)
-        .as("Flyway 경로가 아니라 연결 확인 경로여야 한다")
-        .noneSatisfy(
-            cause ->
-                assertThat(cause)
-                    .isInstanceOfSatisfying(
-                        BeanCreationException.class,
-                        creation ->
-                            assertThat(creation.getBeanName()).containsIgnoringCase("flyway")));
-    assertThat(causes)
-        .as("연결 확인은 MetadataDatabaseStartupCheck.afterPropertiesSet 에서 일어난다")
-        .anySatisfy(
-            cause ->
-                assertThat(cause.getStackTrace())
-                    .anySatisfy(
-                        frame -> {
-                          assertThat(frame.getClassName())
-                              .isEqualTo(MetadataDatabaseStartupCheck.class.getName());
-                          assertThat(frame.getMethodName()).isEqualTo("afterPropertiesSet");
-                        }));
+    assertThat(attempt.failure())
+        .rootCause()
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining("풀 연결 1/4 (Flyway 전)")
+        .hasMessageContaining("synchronous=0");
     assertThat(attempt.webServerStarted()).isFalse();
-    assertNoPasswordLeak(attempt, output);
+    assertThat(tables(dataDir)).as("약해진 연결로는 마이그레이션하지 않는다").doesNotContain("app_setting");
   }
 
   /**
-   * R10: 명령행의 spring.flyway.user·password 는 Flyway 연결에 쓰이지 않는다. Flyway 는 검사한 주 Hikari 풀로 마이그레이션하므로,
-   * 닫힌 포트에서 그 풀의 첫 연결이 웹 서버가 뜨기 전에 기동을 멈춘다.
+   * R3(a): spring.datasource.hikari.jdbc-url 로 다른 SQLite 파일(같은 PRAGMA)을 가리켜도 풀은 검사한 파일에 남고 그 파일은
+   * 생기지 않는다. 풀 연결 검사가 PRAGMA database_list 로 파일을 확인하므로, 이 설정이 풀을 옮기게 되면 기동이 멈춘다
+   * (MetadataPoolConnectionCheckTest).
    */
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void flywayUserAndPasswordOnTheCommandLineDoNotReplaceTheCheckedConnection(
-      boolean lazy, CapturedOutput output) throws IOException {
-    int closedPort = closedLoopbackPort();
+  @Test
+  void hikariJdbcUrlPointingAtAnotherSqliteFileNeitherMovesThePoolNorCreatesThatFile()
+      throws Exception {
+    Path dataDir = tmp.resolve("data");
+    Path other = tmp.resolve("other.db");
+    String otherUrl = "jdbc:sqlite:" + other + "?" + StoreLayout.URL_OPTIONS;
 
-    StartupAttempt attempt =
-        assertTimeoutPreemptively(
-            STARTUP_LIMIT,
-            () ->
-                start(
-                    lazy,
-                    validProperties(closedPort),
-                    "--spring.flyway.user=migrator",
-                    "--spring.flyway.password=" + PASSWORD_MARKER));
-
-    assertFailedOnTheCheckedTargetThroughTheMainPool(attempt, closedPort);
-    assertNoPasswordLeak(attempt, output);
-  }
-
-  /**
-   * R10: -D 의 spring.flyway.url 은 Flyway 연결에 쓰이지 않는다. 그 URL 의 포트에는 연결을 받는 덫을 두고 연결이 하나도 오지 않았음을
-   * 확인한다. 실패는 검사한 대상(닫힌 포트)에서 주 Hikari 풀로 난다.
-   */
-  @ParameterizedTest(name = "lazy={0}")
-  @ValueSource(booleans = {false, true})
-  void flywayUrlInSystemPropertiesDoesNotReplaceTheCheckedConnection(
-      boolean lazy, CapturedOutput output) throws IOException {
-    int closedPort = closedLoopbackPort();
-    String key = "spring.flyway.url";
-    assertThat(System.getProperty(key)).as("테스트 JVM 에 원래 값이 없어야 한다").isNull();
-
-    StartupAttempt attempt;
-    try (ConnectionTrap trap = ConnectionTrap.open()) {
-      System.setProperty(
-          key,
-          "jdbc:mariadb://127.0.0.1:"
-              + trap.port()
-              + "/otherdb?allowLocalInfile=true&password="
-              + PASSWORD_MARKER);
-      try {
-        attempt =
-            assertTimeoutPreemptively(
-                STARTUP_LIMIT, () -> start(lazy, validProperties(closedPort)));
-      } finally {
-        System.clearProperty(key);
+    try (ConfigurableApplicationContext context =
+        application(false, "desktop", new AtomicBoolean())
+            .run(
+                arguments(
+                    withDataDir(dataDir, "--spring.datasource.hikari.jdbc-url=" + otherUrl)))) {
+      try (Connection connection = context.getBean(DataSource.class).getConnection();
+          Statement statement = connection.createStatement();
+          var rs = statement.executeQuery("PRAGMA database_list")) {
+        assertThat(rs.next()).isTrue();
+        assertThat(rs.getString("name")).isEqualTo("main");
+        assertThat(Files.isSameFile(Path.of(rs.getString("file")), dataDir.resolve("queryhub.db")))
+            .as("풀은 검사한 DB 파일을 연다")
+            .isTrue();
       }
-      assertThat(trap.connections()).as("Flyway 의 URL(포트 %d)로는 연결하지 않는다", trap.port()).isZero();
+      assertThat(tables(dataDir)).contains("app_setting");
     }
-
-    assertFailedOnTheCheckedTargetThroughTheMainPool(attempt, closedPort);
-    assertNoPasswordLeak(attempt, output);
+    assertThat(other).as("다른 파일을 만들지 않는다").doesNotExist();
   }
 
-  /**
-   * 기동이 웹 서버 전에 JDBC 연결 실패로 멈췄고, 그 연결은 검사한 대상(127.0.0.1:port)으로 주 Hikari 풀을 거쳐 열렸다. Flyway 가 따로 만드는
-   * SimpleDriverDataSource 는 거치지 않았다.
-   */
-  private static void assertFailedOnTheCheckedTargetThroughTheMainPool(
-      StartupAttempt attempt, int checkedPort) {
-    assertThat(attempt.failure()).as("닫힌 포트의 DB 로는 기동할 수 없어야 한다").isNotNull();
-    List<Throwable> causes = causes(attempt.failure());
-    assertThat(causes)
-        .as("원인에 JDBC 연결 실패가 있어야 한다")
-        .anySatisfy(cause -> assertThat(cause).isInstanceOf(SQLException.class));
-    assertThat(causes)
-        .as("연결 대상은 검사한 접속 정보의 포트다")
-        .anySatisfy(
-            cause ->
-                assertThat(String.valueOf(cause.getMessage()))
-                    .contains("127.0.0.1:" + checkedPort));
-    assertThat(causes)
-        .as("연결은 주 Hikari 풀(HikariDataSource.getConnection)에서 열린다")
-        .anySatisfy(
-            cause ->
-                assertThat(cause.getStackTrace())
-                    .anySatisfy(
-                        frame ->
-                            assertThat(frame.getClassName())
-                                .isEqualTo("com.zaxxer.hikari.HikariDataSource")));
-    assertThat(causes)
-        .as("Flyway 전용 DataSource(SimpleDriverDataSource)는 쓰이지 않는다")
-        .allSatisfy(
-            cause ->
-                assertThat(cause.getStackTrace())
-                    .noneSatisfy(
-                        frame ->
-                            assertThat(frame.getClassName())
-                                .isIn(
-                                    "org.springframework.jdbc.datasource.SimpleDriverDataSource",
-                                    "org.springframework.jdbc.datasource"
-                                        + ".AbstractDriverBasedDataSource")));
+  /** R3(b): Flyway 를 꺼도 저장소 검사는 그대로 돌아 나쁜 저장소는 포트를 열기 전에 거부된다(DATABASE_SUPPORT). */
+  @ParameterizedTest(name = "lazy={0}")
+  @ValueSource(booleans = {false, true})
+  void withFlywayDisabledABadStoreIsStillRefusedBeforeTheWebServerStarts(boolean lazy)
+      throws Exception {
+    Path dataDir = Files.createDirectory(tmp.resolve("data"));
+    Files.setPosixFilePermissions(dataDir, PosixFilePermissions.fromString("rwx------"));
+    Path db = dataDir.resolve("queryhub.db");
+    Files.writeString(db, "this is a plain text file, not a database\n");
+    Files.setPosixFilePermissions(db, PosixFilePermissions.fromString("rw-------"));
+    byte[] before = Files.readAllBytes(db);
+
+    StartupAttempt attempt =
+        start(lazy, "desktop", withDataDir(dataDir, "--spring.flyway.enabled=false"));
+
+    assertThat(attempt.failure())
+        .rootCause()
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining("SQLite DB 파일이 아니다")
+        .hasMessageContaining(db.toString());
     assertThat(attempt.webServerStarted()).as("포트를 열기 전에 실패해야 한다").isFalse();
+    assertThat(Files.readAllBytes(db)).as("거부한 파일은 그대로다").isEqualTo(before);
   }
 
-  /**
-   * 루프백의 임의 포트에서 연결을 받자마자 닫고 수를 센다. 수를 먼저 세고 닫으므로, 클라이언트가 연결 끊김을 보았다면 그 연결은 이미 세어졌다. 닫힌 연결을 받은
-   * 클라이언트(드라이버)는 곧바로 실패하므로 회귀가 있어도 테스트가 오래 걸리지 않는다.
-   */
-  private static final class ConnectionTrap implements AutoCloseable {
-
-    private final ServerSocket server;
-    private final AtomicInteger connections = new AtomicInteger();
-    private final Thread acceptor;
-
-    private ConnectionTrap(ServerSocket server) {
-      this.server = server;
-      this.acceptor = new Thread(this::acceptUntilClosed, "flyway-url-trap");
-      this.acceptor.setDaemon(true);
+  @Test
+  void storeWhoseV1ChecksumDiffersIsRefusedByFlywayValidation() throws Exception {
+    Path dataDir = tmp.resolve("data");
+    try (ConfigurableApplicationContext first = run(dataDir)) {
+      assertThat(first.isActive()).isTrue();
+    }
+    try (Connection connection =
+            DriverManager.getConnection("jdbc:sqlite:" + dataDir.resolve("queryhub.db"));
+        Statement statement = connection.createStatement()) {
+      assertThat(
+              statement.executeUpdate(
+                  "UPDATE flyway_schema_history SET checksum = checksum + 1 WHERE version = '1'"))
+          .isEqualTo(1);
     }
 
-    static ConnectionTrap open() throws IOException {
-      ConnectionTrap trap =
-          new ConnectionTrap(new ServerSocket(0, 50, InetAddress.getLoopbackAddress()));
-      trap.acceptor.start();
-      return trap;
-    }
+    StartupAttempt attempt = start(false, "desktop", dataDirArgs(dataDir));
 
-    int port() {
-      return server.getLocalPort();
-    }
+    assertThat(attempt.failure()).as("체크섬이 다른 V1 로는 기동할 수 없다").isNotNull();
+    assertThat(causes(attempt.failure()))
+        .anySatisfy(
+            cause ->
+                assertThat(cause.getClass().getName())
+                    .isEqualTo("org.flywaydb.core.api.exception.FlywayValidateException"));
+    assertThat(String.valueOf(attempt.failure()))
+        .as("Flyway 검증 실패")
+        .containsIgnoringCase("checksum");
+    assertThat(attempt.webServerStarted()).isFalse();
+  }
 
-    int connections() {
-      return connections.get();
-    }
-
-    private void acceptUntilClosed() {
-      while (!server.isClosed()) {
-        try {
-          Socket accepted = server.accept();
-          connections.incrementAndGet();
-          accepted.close();
-        } catch (IOException closed) {
-          return;
-        }
+  private static List<String> tables(Path dataDir) throws Exception {
+    List<String> tables = new ArrayList<>();
+    try (Connection connection =
+            DriverManager.getConnection("jdbc:sqlite:" + dataDir.resolve("queryhub.db"));
+        Statement statement = connection.createStatement();
+        var rs = statement.executeQuery("SELECT name FROM sqlite_master WHERE type = 'table'")) {
+      while (rs.next()) {
+        tables.add(rs.getString(1));
       }
     }
-
-    @Override
-    public void close() throws IOException {
-      server.close();
-      try {
-        // Thread.join(long) 은 Java 17 에 있다 (join(Duration) 은 Java 19 부터다, ADR-025). 제한은 같은 5 초다.
-        acceptor.join(5_000L);
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-      }
-    }
+    return tables;
   }
 
-  private static String passwordJson() {
-    return "{\"queryhub\":{\"metadata\":{\"db\":{\"password\":\"" + PASSWORD_MARKER + "\"}}}}";
+  private static void assertNoSecretInOutput(CapturedOutput output) {
+    assertThat(output.getAll())
+        .doesNotContain(TestAdminToken.VALUE)
+        .doesNotContainIgnoringCase(TestMasterKey.VALUE);
   }
 
-  /** 거부는 접속 정보 빈을 만들 때 일어난다. JDBC 연결을 시도하기 전이고 웹 서버도 뜨지 않는다. */
-  private static void assertRejectedBeforeAnyConnection(
-      StartupAttempt attempt, String named, String sourceDescription) {
-    assertThat(attempt.failure())
-        .rootCause()
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(named)
-        .hasMessageContaining(sourceDescription);
-    assertThat(causes(attempt.failure()))
-        .as("연결을 시도하기 전에 거부해야 한다")
-        .noneSatisfy(cause -> assertThat(cause).isInstanceOf(SQLException.class));
-    assertThat(attempt.webServerStarted()).as("포트를 열기 전에 실패해야 한다").isFalse();
+  private static List<String> dataDirArgs(Path dataDir) {
+    return List.of("--queryhub.data-dir=" + dataDir);
   }
 
-  private static void assertNoPasswordLeak(StartupAttempt attempt, CapturedOutput output) {
-    assertThat(causes(attempt.failure()))
-        .allSatisfy(
-            cause ->
-                assertThat(String.valueOf(cause.getMessage())).doesNotContain(PASSWORD_MARKER));
-    assertThat(output.getAll()).as("로그와 출력").doesNotContain(PASSWORD_MARKER);
+  private static List<String> withDataDir(Path dataDir, String... extra) {
+    List<String> args = new ArrayList<>(dataDirArgs(dataDir));
+    args.addAll(List.of(extra));
+    return args;
   }
 
-  private static Map<String, Object> validProperties(int port) {
-    Map<String, Object> properties = new HashMap<>();
-    properties.put("queryhub.metadata.db.host", "127.0.0.1");
-    properties.put("queryhub.metadata.db.port", String.valueOf(port));
-    properties.put("queryhub.metadata.db.name", "queryhub");
-    properties.put("queryhub.metadata.db.username", "queryhub");
-    properties.put("queryhub.metadata.db.password", PASSWORD_MARKER);
-    return properties;
-  }
-
-  /** 루프백에서 방금 비운 포트. 아무것도 듣고 있지 않으므로 연결은 곧바로 거부된다. */
-  private static int closedLoopbackPort() throws IOException {
-    try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
-      return socket.getLocalPort();
-    }
+  private static ConfigurableApplicationContext run(Path dataDir) {
+    assertThat(Files.exists(dataDir.getParent())).isTrue();
+    return application(false, "desktop", new AtomicBoolean()).run(arguments(dataDirArgs(dataDir)));
   }
 
   private static List<Throwable> causes(@Nullable Throwable failure) {
@@ -489,34 +296,38 @@ class MetadataStartupFailureTest {
     return causes;
   }
 
-  private static StartupAttempt start(
-      boolean lazy, Map<String, Object> defaultProperties, String... extraArgs) {
-    AtomicBoolean webServerStarted = new AtomicBoolean();
+  private static SpringApplication application(
+      boolean lazy, String profile, AtomicBoolean webServerStarted) {
     ApplicationListener<ApplicationEvent> webServerListener =
         event -> {
           if (event instanceof WebServerInitializedEvent) {
             webServerStarted.set(true);
           }
         };
-    SpringApplication application =
-        new SpringApplicationBuilder(QueryHubApplication.class)
-            .web(WebApplicationType.SERVLET)
-            .lazyInitialization(lazy)
-            .profiles("desktop")
-            .properties(defaultProperties)
-            // 관리자 토큰 검사가 아니라 Metadata DB 검사가 기동을 멈추는지 본다.
-            .properties(TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
-            .initializers(TestComponentScanExclusion::register)
-            .listeners(webServerListener)
-            .build();
-    List<String> args = new ArrayList<>(List.of("--server.address=127.0.0.1", "--server.port=0"));
-    args.addAll(List.of(extraArgs));
+    return new SpringApplicationBuilder(QueryHubApplication.class)
+        .web(WebApplicationType.SERVLET)
+        .lazyInitialization(lazy)
+        .profiles(profile)
+        // 관리자 토큰 검사가 아니라 Metadata 저장소 검사가 기동을 멈추는지 본다.
+        .properties(TestAdminToken.PROPERTY, TestMasterKey.PROPERTY)
+        .initializers(TestComponentScanExclusion::register)
+        .listeners(webServerListener)
+        .build();
+  }
 
+  private static String[] arguments(List<String> extraArgs) {
+    List<String> args = new ArrayList<>(List.of("--server.address=127.0.0.1", "--server.port=0"));
+    args.addAll(extraArgs);
+    return args.toArray(String[]::new);
+  }
+
+  private static StartupAttempt start(boolean lazy, String profile, List<String> extraArgs) {
+    AtomicBoolean webServerStarted = new AtomicBoolean();
+    SpringApplication application = application(lazy, profile, webServerStarted);
     Throwable failure =
         catchThrowable(
             () -> {
-              try (ConfigurableApplicationContext context =
-                  application.run(args.toArray(String[]::new))) {
+              try (ConfigurableApplicationContext context = application.run(arguments(extraArgs))) {
                 assertThat(context.isActive()).isTrue();
               }
             });

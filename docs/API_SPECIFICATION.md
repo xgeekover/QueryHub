@@ -8,9 +8,9 @@
 
 | 메서드·경로 | 응답 |
 |---|---|
-| `GET /actuator/health` | 200 `{"status":"UP", ...}` (인증 없음, 상세 정보 없음). P0-B 부터 Metadata DB(`db`) 상태를 포함한다. DB 에 닿지 않으면 503 `DOWN` |
+| `GET /actuator/health` | 200 `{"status":"UP", ...}` (인증 없음, 상세 정보 없음). P0-B 부터 Metadata 저장소(`db`) 상태를 포함한다. 저장소에 닿지 않으면 503 `DOWN` 이다. P1-06 부터 저장소는 내장 SQLite 다([ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md)) |
 | `GET /actuator/health/liveness` | 200 `{"status":"UP"}` |
-| `GET /actuator/health/readiness` | 200 `{"status":"UP"}`. Metadata DB 를 포함하지 않는다(넣을지는 계획) |
+| `GET /actuator/health/readiness` | 200 `{"status":"UP"}`. Metadata 저장소를 포함하지 않는다(넣을지는 계획) |
 | `GET /admin/api/v1/runtime` | 200 런타임 상태 (아래 예) |
 | 그 밖의 모든 경로 (다른 actuator 엔드포인트, `/api/v1/**` 포함) | 404 `NOT_FOUND` |
 

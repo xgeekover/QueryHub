@@ -2,11 +2,16 @@ package com.queryhub.app.config.metadata;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.queryhub.app.support.TestSqlite;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.BeanWrapperImpl;
@@ -31,42 +36,49 @@ import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.jdbc.datasource.SimpleDriverDataSource;
 
 /**
- * R10: Flyway 는 spring.flyway.url·user·password 가 어느 속성 소스에 있든 검사한 접속 정보로 만든 주 DataSource(Hikari
- * 풀)로 마이그레이션한다. {@link MetadataFlywayConnectionDetails} 빈이 Boot 의 PropertiesFlywayConnectionDetails
- * 를 이기기 때문이다.
+ * R10, P1-06 AC13 (단위): Flyway 는 spring.flyway.url·user·password 가 어느 속성 소스에 있든 검사한 저장소의 주
+ * DataSource(Hikari 풀)로 마이그레이션한다(ADR-012). {@link MetadataFlywayConnectionDetails} 빈이 Boot 의
+ * PropertiesFlywayConnectionDetails 를 이기기 때문이다.
  *
- * <p>DB 없이 돈다. 마이그레이션 전략을 아무것도 하지 않는 것으로 바꿔 연결을 열지 않고, Boot 가 만든 Flyway 의 DataSource 를 본다. 자동 구성은
- * 일부러 Flyway 를 맨 앞에 적는다. 순서는 Boot 의 정렬(before/after)이 정한다.
+ * <p>실제 SQLite 저장소(임시 데이터 디렉터리)를 연다. 마이그레이션 전략을 아무것도 하지 않는 것으로 바꾸고, Boot 가 만든 Flyway 의 DataSource 를
+ * 본다. spring.flyway.url 이 가리키는 다른 SQLite 파일은 생기지 않는다. 자동 구성은 일부러 Flyway 를 맨 앞에 적는다. 순서는 Boot 의
+ * 정렬(before/after)이 정한다.
  */
 class MetadataFlywayConnectionTest {
 
   private static final String PASSWORD_MARKER = "secret-marker-flyway-3d8a51";
 
-  /** 검사한 접속 대상과 다른 포트, 다른 DB, 켠 LOCAL INFILE, URL 안의 비밀번호. */
-  private static final String FLYWAY_URL =
-      "jdbc:mariadb://127.0.0.1:2/otherdb?allowLocalInfile=true&password=" + PASSWORD_MARKER;
-
   private static final String FLYWAY_USER = "migrator";
 
-  private static final String CHECKED_URL_PREFIX = "jdbc:mariadb://127.0.0.1:1/queryhub?";
+  @TempDir private Path tmp;
 
-  private final ApplicationContextRunner runner =
-      new ApplicationContextRunner()
-          .withConfiguration(
-              AutoConfigurations.of(
-                  FlywayAutoConfiguration.class,
-                  JdbcClientAutoConfiguration.class,
-                  JdbcTemplateAutoConfiguration.class,
-                  DataSourceAutoConfiguration.class,
-                  MetadataDatabaseAutoConfiguration.class))
-          .withBean(Clock.class, Clock::systemUTC)
-          .withBean(FlywayMigrationStrategy.class, () -> flyway -> {})
-          .withPropertyValues(
-              "queryhub.metadata.db.host=127.0.0.1",
-              "queryhub.metadata.db.port=1",
-              "queryhub.metadata.db.name=queryhub",
-              "queryhub.metadata.db.username=queryhub",
-              "queryhub.metadata.db.password=" + PASSWORD_MARKER);
+  @BeforeAll
+  static void loadNative() throws Exception {
+    TestSqlite.loadNativeOnce();
+  }
+
+  /** 검사한 저장소와 다른 SQLite 파일. 생기면 안 된다. */
+  private String flywayUrl() {
+    return "jdbc:sqlite:" + tmp.resolve("other.db") + "?journal_mode=DELETE";
+  }
+
+  private Path dataDir() {
+    return tmp.resolve("data");
+  }
+
+  private ApplicationContextRunner runner() {
+    return new ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                FlywayAutoConfiguration.class,
+                JdbcClientAutoConfiguration.class,
+                JdbcTemplateAutoConfiguration.class,
+                DataSourceAutoConfiguration.class,
+                MetadataDatabaseAutoConfiguration.class))
+        .withBean(Clock.class, Clock::systemUTC)
+        .withBean(FlywayMigrationStrategy.class, () -> flyway -> {})
+        .withPropertyValues("queryhub.data-dir=" + dataDir());
+  }
 
   @ParameterizedTest(name = "{0}")
   @ValueSource(
@@ -78,14 +90,15 @@ class MetadataFlywayConnectionTest {
         "configFile"
       })
   void flywayMigratesThroughTheCheckedMainDataSourceWhateverTheFlywayKeysSay(String source) {
-    runner
-        .withInitializer(context -> addFlywayKeys(context, source))
+    String flywayUrl = flywayUrl();
+    runner()
+        .withInitializer(context -> addFlywayKeys(context, source, flywayUrl))
         .run(
             context -> {
               assertThat(context).hasNotFailed();
               assertThat(context.getEnvironment().getProperty("spring.flyway.url"))
                   .as("Boot 는 %s 의 spring.flyway.url 을 본다", source)
-                  .isEqualTo(FLYWAY_URL);
+                  .isEqualTo(flywayUrl);
               assertThat(context.getEnvironment().getProperty("spring.flyway.user"))
                   .isEqualTo(FLYWAY_USER);
 
@@ -102,13 +115,18 @@ class MetadataFlywayConnectionTest {
               DataSource main = context.getBean(DataSource.class);
               assertThat(main.getClass().getName()).isEqualTo("com.zaxxer.hikari.HikariDataSource");
               assertThat((String) new BeanWrapperImpl(main).getPropertyValue("jdbcUrl"))
-                  .as("주 풀은 검사한 접속 정보로 만들어진다")
-                  .startsWith(CHECKED_URL_PREFIX)
-                  .endsWith("allowLocalInfile=false");
+                  .as("주 풀은 검사한 저장소의 URL 로 만들어진다")
+                  .isEqualTo(
+                      "jdbc:sqlite:"
+                          + dataDir().resolve("queryhub.db")
+                          + "?journal_mode=WAL&synchronous=FULL&foreign_keys=true"
+                          + "&busy_timeout=5000&transaction_mode=IMMEDIATE");
               assertThat(context.getBean(Flyway.class).getConfiguration().getDataSource())
                   .as("Flyway 는 주 풀로 마이그레이션한다")
                   .isSameAs(main);
             });
+    assertThat(tmp.resolve("other.db")).as("Flyway 의 URL 이 가리키는 파일은 생기지 않는다").doesNotExist();
+    assertThat(Files.isRegularFile(dataDir().resolve("queryhub.db"))).isTrue();
   }
 
   /** 대조: 이 빈이 없으면 Boot 는 spring.flyway.url 로 따로 DataSource 를 만든다. 위 테스트가 그 차이를 잡는다는 증거다. */
@@ -119,8 +137,8 @@ class MetadataFlywayConnectionTest {
             AutoConfigurations.of(FlywayAutoConfiguration.class, DataSourceAutoConfiguration.class))
         .withBean(FlywayMigrationStrategy.class, () -> flyway -> {})
         .withPropertyValues(
-            "spring.datasource.url=" + CHECKED_URL_PREFIX + "allowLocalInfile=false",
-            "spring.flyway.url=" + FLYWAY_URL,
+            "spring.datasource.url=jdbc:sqlite:" + tmp.resolve("main.db"),
+            "spring.flyway.url=" + flywayUrl(),
             "spring.flyway.user=" + FLYWAY_USER)
         .run(
             context -> {
@@ -132,7 +150,7 @@ class MetadataFlywayConnectionTest {
               assertThat(migration)
                   .isNotSameAs(context.getBean(DataSource.class))
                   .isInstanceOf(SimpleDriverDataSource.class);
-              assertThat(((SimpleDriverDataSource) migration).getUrl()).isEqualTo(FLYWAY_URL);
+              assertThat(((SimpleDriverDataSource) migration).getUrl()).isEqualTo(flywayUrl());
             });
   }
 
@@ -140,19 +158,20 @@ class MetadataFlywayConnectionTest {
    * spring.flyway.url·user·password 를 주어진 종류의 속성 소스에 넣는다. 실제 JVM 시스템 속성과 환경변수는 건드리지 않고 그 자리의 소스를
    * 바꾼다.
    */
-  private static void addFlywayKeys(ConfigurableApplicationContext context, String source) {
+  private static void addFlywayKeys(
+      ConfigurableApplicationContext context, String source, String flywayUrl) {
     ConfigurableEnvironment environment = context.getEnvironment();
     MutablePropertySources sources = environment.getPropertySources();
     Map<String, Object> keys =
         Map.of(
-            "spring.flyway.url", FLYWAY_URL,
+            "spring.flyway.url", flywayUrl,
             "spring.flyway.user", FLYWAY_USER,
             "spring.flyway.password", PASSWORD_MARKER);
     switch (source) {
       case "commandLineArgs" ->
           sources.addFirst(
               new SimpleCommandLinePropertySource(
-                  "--spring.flyway.url=" + FLYWAY_URL,
+                  "--spring.flyway.url=" + flywayUrl,
                   "--spring.flyway.user=" + FLYWAY_USER,
                   "--spring.flyway.password=" + PASSWORD_MARKER));
       case "systemProperties" ->
@@ -163,7 +182,7 @@ class MetadataFlywayConnectionTest {
       case "commandLineJson" -> {
         String json =
             "{\"spring\":{\"flyway\":{\"url\":\""
-                + FLYWAY_URL
+                + flywayUrl
                 + "\",\"user\":\""
                 + FLYWAY_USER
                 + "\",\"password\":\""
@@ -181,7 +200,7 @@ class MetadataFlywayConnectionTest {
               new SystemEnvironmentPropertySource(
                   StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
                   Map.of(
-                      "SPRING_FLYWAY_URL", FLYWAY_URL,
+                      "SPRING_FLYWAY_URL", flywayUrl,
                       "SPRING_FLYWAY_USER", FLYWAY_USER,
                       "SPRING_FLYWAY_PASSWORD", PASSWORD_MARKER)));
       case "configFile" ->

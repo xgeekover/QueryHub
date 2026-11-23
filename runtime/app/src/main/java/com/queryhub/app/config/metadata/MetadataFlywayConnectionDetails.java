@@ -11,7 +11,7 @@ import org.springframework.boot.flyway.autoconfigure.FlywayConnectionDetails;
  * 만든다({@code @ConditionalOnMissingBean(FlywayConnectionDetails.class)}). 마이그레이션 DataSource 를 고를
  * 때(FlywayConfiguration.getMigrationDataSource) URL 이 있으면 그 URL 로, 사용자만 있으면 주 DataSource 에서 파생해
  * SimpleDriverDataSource 를 새로 만들고, 둘 다 없으면 주 DataSource 를 그대로 쓴다. 이 빈은 둘 다 비워 두므로 Flyway 는 항상 검사한
- * 접속 정보({@link MetadataJdbcConnectionDetails})로 만든 Hikari 풀로 마이그레이션한다. 그래서
+ * 접속 정보({@link MetadataJdbcConnectionDetails}, SQLite 저장소)로 만든 Hikari 풀로 마이그레이션한다. 그래서
  * spring.flyway.url·user·password 는 어느 속성 소스에서 오든 접속에 쓰이지 않는다.
  */
 final class MetadataFlywayConnectionDetails implements FlywayConnectionDetails {

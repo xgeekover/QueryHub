@@ -260,6 +260,25 @@ describe("RuntimePanel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("data_dir_unavailable 실패는 종류와 안내 문장을 보여 주고 출력 꼬리는 없다", async () => {
+    const message =
+      "데이터 디렉터리를 쓸 수 없어 런타임을 시작하지 않는다 (/home/qh/.local/share/com.queryhub.desktop/data): 그룹이나 다른 사용자에게 권한이 있다(모드 0755). 권한을 저절로 고치지 않는다. 권한을 줄인다: chmod 700 '/home/qh/.local/share/com.queryhub.desktop/data'. docs/DEPLOYMENT.md 의 「데이터 디렉터리」 절을 본다.";
+    mockShell(
+      status("failed", {
+        failure: { kind: "data_dir_unavailable", message, exitCode: null, outputTail: [] },
+      }),
+    );
+    render(<RuntimePanel dev={false} />);
+
+    const card = await screen.findByTestId("runtime-failure");
+    expect(card).toHaveTextContent("실패: data_dir_unavailable");
+    expect(card).toHaveTextContent("chmod 700");
+    expect(card).toHaveTextContent("/home/qh/.local/share/com.queryhub.desktop/data");
+    expect(card).toHaveTextContent("종료 코드 없음");
+    expect(card.querySelector("pre")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("Tauri 밖에서는 안내만 보이고 invoke 를 부르지 않는다", async () => {
     isTauriMock.mockReturnValue(false);
     render(<RuntimePanel />);

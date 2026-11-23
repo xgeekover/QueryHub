@@ -1,8 +1,10 @@
 # ADR-017 Phase 0 Desktop 은 Metadata DB 설정을 셸 환경변수에서 읽는다
 
-- 상태: 제안
+- 상태: 대체됨(ADR-026)
 - 날짜: 2026-11-19
-- 구현: 구현됨 (P0-C, f84c628) — 첫 실행 화면과 OS 키체인은 계획 (Phase 6)
+- 구현: 구현됨 (P0-C, f84c628). P1-06 에서 지웠다(아래 주)
+
+> 2026-11-23 주: [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) 이 대체했다. P1-06 의 셸은 Metadata DB 변수를 읽지도 넘기지도 않는다. `metadata_settings_missing` 은 없어졌고, 셸은 `<앱 로컬 데이터 디렉터리>/data` 를 준비해 `QUERYHUB_DATA_DIR` 로 넘긴다(문제가 있으면 `data_dir_unavailable`). 그래서 Finder 에서 연 앱도 환경변수 없이 시작한다. Metadata DB 접속 화면과 그 비밀번호의 키체인 저장(Phase 6 계획)은 필요 없어졌다. 아래 본문은 P0-C 때의 기록으로 남긴다.
 
 ## 맥락
 

@@ -3,7 +3,7 @@ package com.queryhub.application.setting;
 import java.util.Optional;
 
 /**
- * 런타임 설정(키-값)의 저장소 포트. 메타데이터 DB 의 app_setting 테이블이 구현의 기준이다.
+ * 런타임 설정(키-값)의 저장소 포트. Metadata 저장소(내장 SQLite)의 app_setting 테이블이 구현의 기준이다.
  *
  * <p>계약 (모든 구현이 지킨다):
  *
@@ -18,7 +18,7 @@ import java.util.Optional;
  */
 public interface AppSettingRepository {
 
-  /** 키의 최대 길이(코드 포인트 수). app_setting.setting_key 의 VARCHAR(100) 과 같다. */
+  /** 키의 최대 길이(코드 포인트 수). app_setting.setting_key 의 길이 검사(1-100)와 같다. */
   int MAX_KEY_LENGTH = 100;
 
   /** 키의 값을 돌려준다. 키가 없으면 빈 Optional 이다. */

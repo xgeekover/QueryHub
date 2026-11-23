@@ -1,8 +1,10 @@
 # ADR-011 Metadata DB 비밀 값은 환경변수로만 받고, 프로세스에 보이는 출처는 거부한다
 
-- 상태: 승인됨
+- 상태: 대체됨(ADR-026)
 - 날짜: 2026-11-18
-- 구현: 구현됨 (P0-B, f913239)
+- 구현: 구현됨 (P0-B, f913239). P1-06 에서 지웠다(아래 주)
+
+> 2026-11-23 주: [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) 으로 Metadata 저장소가 내장 SQLite 가 되어 접속 정보와 비밀번호가 없어졌다. P1-06 은 `QUERYHUB_METADATA_DB_*` 변수, `queryhub.metadata.db.password`·`spring.datasource.hikari.password`·`jdbc-url`·`data-source-properties` 거부를 지웠다. 프로세스에 보이는 출처 검사(`runtime/app/src/main/java/com/queryhub/app/config/ProcessVisibleSources.java`)는 관리자 토큰([ADR-021](ADR-021-admin-token-bearer.md))과 마스터 키([ADR-023](ADR-023-master-key-delivery.md))를 위해 남는다. SQLite 설정을 `data-source-properties` 로 바꾸는 것은 이제 출처와 상관없이 거부하고 풀 연결의 PRAGMA 를 확인한다(ADR-026 결정 9). 아래 본문은 P0-B 때의 기록으로 남긴다.
 
 ## 맥락
 

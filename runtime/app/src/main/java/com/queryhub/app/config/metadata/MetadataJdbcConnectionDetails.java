@@ -1,25 +1,24 @@
 package com.queryhub.app.config.metadata;
 
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
 
 /**
- * 검사를 통과한 Metadata DB 접속 정보. Boot 의 DataSource 자동 구성은 이 빈으로 Hikari 풀을 만든다(그래서
+ * 검사를 통과한 Metadata 저장소(SQLite)의 접속 정보. Boot 의 DataSource 자동 구성은 이 빈으로 Hikari 풀을 만든다(그래서
  * spring.datasource.hikari.* 설정, Flyway, JdbcClient, db health 가 그대로 동작한다).
  *
- * <p>{@link MetadataDatabaseProperties#toConnectionDetails()} 만 만든다. 드라이버 클래스 이름은 URL({@code
- * jdbc:mariadb:})로 정해진다(기본 구현). {@link #toString()} 은 비밀번호를 가린다.
+ * <p>URL 은 런타임이 만든다({@code jdbc:sqlite:<데이터 디렉터리>/queryhub.db?journal_mode=WAL&...}). 파일 DB 라서 사용자와
+ * 비밀번호가 없다. 드라이버는 이름으로만 적는다(ArchUnit R6).
  */
 public final class MetadataJdbcConnectionDetails implements JdbcConnectionDetails {
 
-  private final String jdbcUrl;
-  private final String username;
-  private final String password;
+  static final String DRIVER_CLASS_NAME = "org.sqlite.JDBC";
 
-  MetadataJdbcConnectionDetails(String jdbcUrl, String username, String password) {
+  private final String jdbcUrl;
+
+  MetadataJdbcConnectionDetails(String jdbcUrl) {
     this.jdbcUrl = Objects.requireNonNull(jdbcUrl, "jdbcUrl");
-    this.username = Objects.requireNonNull(username, "username");
-    this.password = Objects.requireNonNull(password, "password");
   }
 
   @Override
@@ -28,21 +27,22 @@ public final class MetadataJdbcConnectionDetails implements JdbcConnectionDetail
   }
 
   @Override
-  public String getUsername() {
-    return username;
+  public @Nullable String getUsername() {
+    return null;
   }
 
   @Override
-  public String getPassword() {
-    return password;
+  public @Nullable String getPassword() {
+    return null;
+  }
+
+  @Override
+  public String getDriverClassName() {
+    return DRIVER_CLASS_NAME;
   }
 
   @Override
   public String toString() {
-    return "MetadataJdbcConnectionDetails[jdbcUrl="
-        + jdbcUrl
-        + ", username="
-        + username
-        + ", password=******]";
+    return "MetadataJdbcConnectionDetails[jdbcUrl=" + jdbcUrl + "]";
   }
 }

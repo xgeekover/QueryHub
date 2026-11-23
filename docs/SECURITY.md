@@ -13,14 +13,14 @@
 | 5 | SQL Injection 방지 | 파라미터는 PreparedStatement 바인딩만. 문자열 치환 금지. 인젝션 문자열이 값으로만 바인딩됨을 4개 DB 에서 확인 | 계획 | 2 |
 | 6 | API Key 인증 | `X-API-Key` 헤더([API_SPECIFICATION.md](API_SPECIFICATION.md)) | 계획 | 4 |
 | 7 | API Key 원문 미저장, Hash 저장 | HMAC-SHA-256 해시 + prefix 저장, 원문은 생성 응답에서 한 번만([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)) | 계획 | 4 |
-| 8 | DB 비밀번호 암호화 저장 | 업무 DB 비밀번호는 AES-256-GCM, 마스터 키는 셸이 만드는 키 파일(Desktop, 설계의 OS 키체인 대신, [ADR-023](ADR/ADR-023-master-key-delivery.md)) 또는 환경변수·시크릿 파일(Server)([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md), 형식은 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)). 키와 암호는 P1-04 에서 구현했고, 비밀번호 저장은 연결 저장 태스크다. Metadata DB 비밀번호는 저장하지 않고 환경변수로만 받는다([ADR-011](ADR/ADR-011-metadata-secrets-env-only.md), 구현됨) | 일부 구현 (P1-04: 마스터 키와 암호. 업무 DB 비밀번호 저장은 계획) | 1 |
+| 8 | DB 비밀번호 암호화 저장 | 업무 DB 비밀번호는 AES-256-GCM, 마스터 키는 셸이 만드는 키 파일(Desktop, 설계의 OS 키체인 대신, [ADR-023](ADR/ADR-023-master-key-delivery.md)) 또는 환경변수·시크릿 파일(Server)([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md), 형식은 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)). 키와 암호는 P1-04 에서 구현했고, 비밀번호 저장은 연결 저장 태스크다. 암호문은 내장 SQLite 저장소에 둔다(P1-06, [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md)). P1-05 까지 있던 Metadata DB 비밀번호는 저장소가 내장 SQLite 가 되어 없어졌다 | 일부 구현 (P1-04: 마스터 키와 암호. 업무 DB 비밀번호 저장은 계획) | 1 |
 | 9 | API별 접근 권한 관리 | `api_key_permission` 으로 API 별 권한([ERD.md](ERD.md)) | 계획 | 4, 7 |
-| 10 | 요청·응답 로그의 민감정보 마스킹 | 요청·응답 로그에 비밀 값과 SQL 원문을 기본으로 남기지 않는다. 지금 구현된 것: 오류 응답과 기동 메시지에 비밀 값을 넣지 않고, Desktop 셸 출력의 비밀번호, 관리자 토큰, 마스터 키를 가린다(아래) | 일부 구현 (P0-B, P0-C, P1-03, P1-04) | 7 |
+| 10 | 요청·응답 로그의 민감정보 마스킹 | 요청·응답 로그에 비밀 값과 SQL 원문을 기본으로 남기지 않는다. 지금 구현된 것: 오류 응답과 기동 메시지에 비밀 값을 넣지 않고, Desktop 셸 출력의 관리자 토큰과 마스터 키를 가린다(아래. P1-05 까지는 Metadata DB 비밀번호도) | 일부 구현 (P0-B, P0-C, P1-03, P1-04, P1-06) | 7 |
 | 11 | Query Timeout | `Statement.setQueryTimeout` | 계획 | 4, 7 |
 | 12 | API Timeout | API 별 `timeoutSeconds`, 초과 시 504 `QUERY_TIMEOUT` | 계획 | 4, 7 |
 | 13 | 최대 조회 건수 제한 | `Statement.setMaxRows(maxRows + 1)`([ADR-005](ADR/ADR-005-streaming-single-path.md)) | 계획 | 4 |
 | 14 | 동시 실행 수 제한 | 동시 실행 한도 초과 시 429 `RATE_LIMITED` | 계획 | 7 |
-| 15 | Connection Pool 제한 | 연결마다 `maxPoolSize`([ERD.md](ERD.md)). Metadata 풀은 Boot 기본 크기다 | 계획 | 1 |
+| 15 | Connection Pool 제한 | 연결마다 `maxPoolSize`([ERD.md](ERD.md)). Metadata 풀은 `maximum-pool-size: 4` 다(P1-06) | 계획 | 1 |
 | 16 | API 호출 Rate Limit | 속도 한도 초과 시 429 `RATE_LIMITED` | 계획 | 7 |
 | 17 | 오류 발생 시 DB 상세 정보 외부 노출 금지 | 오류 응답에 예외 메시지, 클래스 이름, 스택 트레이스, SQL, DB 정보를 넣지 않는다. 상세는 `requestId` 로 서버 로그에서 찾는다 | 구현됨 (P0-A). 데이터 API 의 `QUERY_FAILED` 는 Phase 4 에서 다시 검증 | 0, 4 |
 
@@ -33,19 +33,19 @@
 | 루프백 기본 바인딩과 모드 판정 | 공통 기본값과 desktop 은 `127.0.0.1`, 모든 인터페이스는 `server` 프로파일만. 프로파일이 정확히 하나가 아니면 포트를 열기 전에 실패 | `runtime/app/src/main/resources/application.yml`, `application-desktop.yml`, `application-server.yml`, `runtime/app/src/main/java/com/queryhub/app/config/RuntimeModeResolver.java` |
 | actuator 노출 제한 | `health` 만 공개, `show-details: never`. 나머지 actuator 는 404 | `application.yml` 의 `management.endpoints.web.exposure.include` |
 | 내부 정보 없는 오류 응답 | 공통 오류 형식, Boot 기본 오류 속성 `include-stacktrace: never` 등 | `runtime/adapter-web/src/main/java/com/queryhub/adapter/web/common/error/GlobalExceptionHandler.java`, `QueryHubErrorController.java`, `application.yml` 의 `spring.web.error` |
-| Metadata 비밀 값 가드 | 아래 「Metadata DB 비밀 값 규칙」([ADR-011](ADR/ADR-011-metadata-secrets-env-only.md)) | `runtime/app/src/main/java/com/queryhub/app/config/metadata/MetadataDatabaseAutoConfiguration.java` |
+| Metadata 저장소 파일 규칙 | 아래 「Metadata 저장소 파일」([ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md)). P0-B 의 「Metadata DB 비밀 값 규칙」(ADR-011)은 P1-06 에서 지웠다 | `runtime/adapter-metadata/src/main/java/com/queryhub/adapter/metadata/store/`, `runtime/app/src/main/java/com/queryhub/app/config/metadata/MetadataDatabaseAutoConfiguration.java`, `MetadataPoolCheck.java` |
 | Flyway 연결 고정 | 마이그레이션은 검사한 메인 풀로만([ADR-012](ADR/ADR-012-flyway-connection-pin.md)) | `MetadataFlywayConnectionDetails.java` |
-| LOCAL INFILE 차단과 드라이버 버전 | URL 에 `allowLocalInfile=false`, Connector/J 3.5.11(GHSA-fhx5-2xqw-2cgm, [ADR-018](ADR/ADR-018-mariadb-connector-j-override.md)) | `MetadataDatabaseProperties.java` 의 `URL_OPTIONS`, `runtime/gradle/libs.versions.toml` |
-| 비밀 값은 환경변수로만 | 셸은 Metadata DB 변수와 관리자 토큰(`QUERYHUB_ADMIN_TOKEN`)을 자식 런타임에 환경변수로만 넘기고 명령행 인자에는 넣지 않는다. 런타임은 프로세스에 보이는 출처(명령행, `-D`, 그 두 곳의 `spring.application.json`)의 토큰과 Metadata DB 비밀 값을 거부한다 | `desktop/src-tauri/src/runtime/launch.rs` 의 `child_env`, `child_args`, `runtime/app/src/main/java/com/queryhub/app/config/ProcessVisibleSources.java` |
+| 드라이버 버전 | P1-06 부터 MariaDB Connector/J 는 클래스패스에 없다. Provider 태스크가 다시 더할 때 3.5.11(GHSA-fhx5-2xqw-2cgm)을 받도록 덮어쓰기 줄을 남겼다([ADR-018](ADR/ADR-018-mariadb-connector-j-override.md)). Metadata URL 의 `allowLocalInfile=false` 는 MariaDB URL 과 함께 없어졌다 | `runtime/build.gradle`, `runtime/gradle/libs.versions.toml` |
+| 비밀 값은 환경변수로만 | 셸은 관리자 토큰(`QUERYHUB_ADMIN_TOKEN`)과 마스터 키(`QUERYHUB_MASTER_KEY`)를 자식 런타임에 환경변수로만 넘기고 명령행 인자에는 넣지 않는다. 런타임은 프로세스에 보이는 출처(명령행, `-D`, 그 두 곳의 `spring.application.json`)의 토큰과 키를 거부한다. 데이터 디렉터리(`QUERYHUB_DATA_DIR`)는 비밀 값이 아니다 | `desktop/src-tauri/src/runtime/launch.rs` 의 `child_env`, `child_args`, `runtime/app/src/main/java/com/queryhub/app/config/ProcessVisibleSources.java` |
 | 자식 환경 허용 목록 | 아래 「Desktop 셸의 자식 환경」([ADR-013](ADR/ADR-013-desktop-child-env-allowlist.md)) | `launch.rs` 의 `INHERITED_NAMES`, `INHERITED_PREFIX`, `child_env` |
-| 출력 가림 | 셸이 보관하는 출력(200줄)과 실패 카드의 마지막 40줄, 디버그 stderr 에서 출력에 그대로 나온 비밀번호와 관리자 토큰 값을 `********` 로 바꾼다(여러 번의 읽기에 나뉘어 와도 줄 단위로 모아 가린다). 인코딩되거나 변형된 형태(URL 인코딩, JSON 이스케이프 등)는 가리지 않는다 | `desktop/src-tauri/src/runtime/output.rs` 의 `mask_secrets`, `MASK`, `supervisor.rs` 의 `output_lines`, `status_tail_lines` |
+| 출력 가림 | 셸이 보관하는 출력(200줄)과 실패 카드의 마지막 40줄, 디버그 stderr 에서 출력에 그대로 나온 관리자 토큰과 마스터 키 값을 `********` 로 바꾼다(P1-06 부터 이 둘만. 데이터 디렉터리 경로는 가리지 않는다)(여러 번의 읽기에 나뉘어 와도 줄 단위로 모아 가린다). 인코딩되거나 변형된 형태(URL 인코딩, JSON 이스케이프 등)는 가리지 않는다 | `desktop/src-tauri/src/runtime/output.rs` 의 `mask_secrets`, `MASK`, `supervisor.rs` 의 `output_lines`, `status_tail_lines` |
 | 관리 API CORS 범위 | desktop 프로파일에서만, Tauri 출처 두 개, GET 과 요청 헤더 `Authorization` 만, 자격 증명 없음, P1-03 부터 관리 보안 체인 안. 출처 값이 잘못되면 기동 실패. 규칙 전체는 [API_SPECIFICATION.md](API_SPECIFICATION.md)([ADR-015](ADR/ADR-015-desktop-fixed-port-and-cors.md)) | `runtime/adapter-web/src/main/java/com/queryhub/adapter/web/admin/cors/AdminCorsConfiguration.java`, `AdminCorsProperties.java` |
 | 관리자 토큰 | 아래 「관리자 토큰」([ADR-021](ADR/ADR-021-admin-token-bearer.md), [ADR-022](ADR/ADR-022-admin-token-implementation.md)) | `runtime/adapter-web/src/main/java/com/queryhub/adapter/web/admin/security/`, `runtime/app/src/main/java/com/queryhub/app/config/admin/`, `desktop/src-tauri/src/runtime/token.rs`, `desktop/src/runtime/adminApi.ts` |
 | desktop 관리 API 의 루프백 전용과 Host 허용 목록 | 아래 「관리자 토큰」 | `AdminNetworkGuardFilter.java`, `LoopbackAddresses.java`, `HostHeaderPolicy.java` |
 | WebView CSP | 운영 CSP 는 `connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:18580` 이고 `'unsafe-eval'` 이 없다. `frame-src 'none'`, `object-src 'none'`, `form-action 'none'` | `desktop/src-tauri/tauri.conf.json` 의 `app.security.csp` |
 | Tauri 커맨드 권한 | `build.rs` 의 앱 매니페스트가 커맨드 다섯 개를 등록하고, main 창(로컬 출처, `remote` 없음)에 `allow-runtime-status`, `allow-runtime-start`, `allow-runtime-stop`, `allow-runtime-restart`, `allow-admin-token` 만 준다(core 권한, 플러그인 권한 없음). cargo 시험이 매니페스트, `generate_handler!`, capability 파일이 같은지 확인한다 | `desktop/src-tauri/capabilities/default.json`, `desktop/src-tauri/build.rs` |
 | 테스트 JVM 격리 | 테스트 JVM 은 셸의 `QUERYHUB_*` 환경변수를 물려받지 않는다 | `runtime/build.gradle` |
-| 개발용 DB | 포트는 `127.0.0.1` 에만 열고, root 비밀번호는 무작위다. 비밀 값은 git 이 무시하는 `deploy/.env` 에 둔다([DEPLOYMENT.md](DEPLOYMENT.md)) | `deploy/compose.dev.yml` |
+| 로컬 비밀 값 파일 | `java -jar` 실행용 비밀 값(관리자 토큰, 마스터 키)은 git 이 무시하는 `deploy/.env` 에 둔다. 예시 `deploy/env.example` 은 자리 표시 값만 담는다. P0-B 의 개발용 MariaDB compose 는 P1-06 에서 지웠다([DEPLOYMENT.md](DEPLOYMENT.md)) | `deploy/env.example` |
 
 ### 관리자 토큰 (구현됨, P1-03, 2698115)
 
@@ -74,27 +74,32 @@
   - 키 파일을 지키는 것은 파일 권한뿐이다. unix 에서 셸은 디렉터리 0700, 파일 0600 과 소유자를 확인하고, 맞지 않으면 거부한다. 있는 파일의 권한을 저절로 바꾸지는 않는다.
   - Windows 는 `%LOCALAPPDATA%` 사용자 프로필의 기본 ACL 에만 기댄다. 셸은 권한과 소유자를 확인하지 않는다(미검증, PLAT-1).
   - 같은 사용자로 도는 모든 프로세스, 관리자와 root 는 키 파일을 읽을 수 있다. 실행 중에는 런타임 자식의 환경변수에서도 읽을 수 있다(macOS `ps -E`, Linux `/proc/<pid>/environ`. 관리자 토큰과 같다).
-  - 데이터 디렉터리의 백업(예: Time Machine)과 복사본에는 키 파일이 들어 있다. 같은 백업에 Metadata DB 덤프도 있으면 암호화한 비밀번호를 풀 수 있다. 키 파일과 Metadata DB 백업은 따로 보관한다([DEPLOYMENT.md](DEPLOYMENT.md) 「마스터 키」).
+  - 앱 로컬 데이터 디렉터리의 백업(예: Time Machine)과 복사본에는 키 파일(`secrets/`)과 저장소(`data/queryhub.db`, P1-06)가 함께 들어 있다. 그런 백업을 읽는 사람은 암호화한 비밀번호를 풀 수 있으므로 그 백업을 키와 같은 비밀 값으로 다룬다. 저장소와 키는 함께 백업하고 함께 되살려야 한다(아래 「Metadata 저장소 파일」, [DEPLOYMENT.md](DEPLOYMENT.md) 「백업·복구」).
   - 키체인처럼 앱마다 접근 동의를 받는 단계가 없다.
 - 런타임 JVM 의 Environment 에 키 문자열이 남으므로 힙 덤프에는 키가 들어 있다. actuator 는 health 만 노출하고, 관리 체인이 `/actuator/**` 를 지킨다.
 
-### Metadata DB 비밀 값 규칙 (구현됨, P0-B)
+### Metadata 저장소 파일 (구현됨, P1-06)
 
-접속 정보는 환경변수 `QUERYHUB_METADATA_DB_*` 로만 받는다. 변수 표는 [DEPLOYMENT.md](DEPLOYMENT.md)에 있다.
+Metadata 저장소는 내장 SQLite 파일이다([ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md)). 접속 정보와 비밀번호가 없으므로 P0-B 의 「Metadata DB 비밀 값 규칙」([ADR-011](ADR/ADR-011-metadata-secrets-env-only.md), 대체됨)은 P1-06 에서 지웠다. 그 대신 저장소를 지키는 것은 파일 권한이다. 저장소는 앞으로 연결 정보, 마스터 키로 암호화한 업무 DB 비밀번호, API Key 해시를 담는다(다음 태스크부터). 설정과 절차는 [DEPLOYMENT.md](DEPLOYMENT.md)의 「데이터 디렉터리」와 「백업·복구」에 있다.
 
-- **비밀번호는 명령행 인자(`--queryhub.metadata.db.password=...`)나 JVM 시스템 속성(`-D...`)으로 넘기지 않는다.** 프로세스 목록에 보이기 때문이다. 그렇게 넘기면 런타임은 기동을 거부하고 `QUERYHUB_METADATA_DB_PASSWORD` 를 쓰라고 안내한다(값은 출력하지 않는다).
-- 명령행 인자나 `-D` 로 넘긴 `spring.application.json`(`SPRING_APPLICATION_JSON`) 안의 비밀번호도 같이 거부한다. OS 환경변수 `SPRING_APPLICATION_JSON` 은 허용한다.
-- 비밀 값이나 드라이버 옵션을 담는 `spring.datasource.hikari.password`, `spring.datasource.hikari.jdbc-url`, `spring.datasource.hikari.data-source-properties.*` 도 명령행 인자, `-D`, 그 두 곳의 `spring.application.json` 으로 넘기면 거부한다. 메시지는 키 이름만 말하고 `QUERYHUB_METADATA_DB_*` 를 쓰라고 안내한다. Spring Boot 4.1.2 는 바인딩 뒤에 Hikari 의 `jdbc-url`·`password` 를 검사한 접속 정보로 되돌리므로 이 둘은 실제 접속에 쓰이지 않지만, 값이 프로세스 목록에 보이므로 방어적으로 거부한다. 그 밖의 `spring.datasource.hikari.*` 설정(풀 크기 등)은 운영자 설정이다.
-- Flyway 는 항상 검사한 접속 정보로 만든 연결 풀로 마이그레이션한다. `spring.flyway.url`, `spring.flyway.user`, `spring.flyway.password` 는 어디서 넘겨도(명령행, `-D`, `spring.application.json`, 환경변수, 설정 파일) 접속에 쓰이지 않는다. 마이그레이션 사용자는 `QUERYHUB_METADATA_DB_USERNAME` 이다.
-- 기동 실패 메시지는 문제가 있는 변수 이름만 말하고 비밀번호 값을 넣지 않는다.
+- **권한 (unix):** 런타임은 데이터 디렉터리와 네이티브 디렉터리를 0700, `queryhub.db`·`-wal`·`-shm`·`queryhub.lock` 을 0600 으로 만든다. `queryhub.db` 는 어떤 JDBC 연결보다 먼저 `CREATE_NEW` 와 0600 으로 만들므로 SQLite 가 umask 기본값(보통 0644)으로 만들지 않는다. 있는 디렉터리와 파일은 심볼릭 링크가 아니고(링크를 따라가지 않고 본다), 종류가 맞고, 런타임 사용자가 소유하고, 그룹·기타 권한 비트가 없어야 한다. 아니면 포트를 열기 전에 기동을 거부하고 `chmod 700`·`chmod 600` 을 안내한다. 권한을 저절로 고치지 않고, 거부한 파일을 바꾸거나 지우지 않는다: 내용 검사(`quick_check`)는 읽기 전용 연결이라 거부한 `queryhub.db`, `-wal`, `-journal` 은 바이트 하나 바뀌지 않는다(P1-06 리뷰 R1, 살아 있는 WAL 이 있는 손상 저장소로 시험한다). 데이터가 없는 WAL 색인 `-shm` 은 SQLite 가 읽기 전용 연결에서도 만들거나(0600) 고쳐 쓴다. DB 파일이 없거나 비었는데 `-wal`·`-journal` 에 데이터가 있으면 연결을 열기 전에 거부한다(SQLite 는 빈 DB 옆의 WAL 을 지운다). desktop 셸도 `<앱 로컬 데이터 디렉터리>/data` 에 같은 규칙을 따로 적용한다(`data_dir_unavailable`).
+- **Windows:** 권한과 소유자를 확인하지 않는다. 사용자 프로필(`%LOCALAPPDATA%`)의 기본 ACL 에만 기댄다(마스터 키와 같다, 미검증 PLAT-1).
+- **위협 모델:** 같은 사용자로 도는 모든 프로세스, 관리자와 root 는 저장소 파일을 읽고 바꿀 수 있다. 암호화한 비밀번호는 키 없이는 풀 수 없지만, 같은 사용자는 키 파일(desktop)이나 런타임의 환경변수도 읽을 수 있다(위 「마스터 키」).
+- **네이티브 라이브러리:** sqlite-jdbc 가 실행할 네이티브 코드를 푸는 곳을 공용 `java.io.tmpdir`(다른 사용자가 같은 이름의 파일을 미리 놓거나 바꿔칠 수 있다) 대신 런타임 사용자의 0700 디렉터리(`<data-dir>/native` 또는 `QUERYHUB_SQLITE_NATIVE_DIR`)로 정한다. 그 디렉터리에도 위 규칙이 적용된다. 운영 코드는 `org.sqlite` 클래스를 참조하지 않는다(ArchUnit R6).
+- **한 런타임:** `queryhub.lock` 배타 잠금으로 같은 데이터 디렉터리를 두 런타임이 함께 쓰지 못하게 한다(파일 손상 방지). 같은 JVM 안의 두 번째 시도는 잠금 파일을 열기 전에 거부한다(JVM 전체의 표, 열쇠는 장치와 inode). 파일 기술자를 열었다 닫기만 해도 POSIX 잠금이 풀리기 때문이다(P1-06 리뷰 R2). 로컬 디스크만 쓴다. 네트워크 파일 시스템 감지는 최선 노력이다(아래 「알려진 빈 곳」).
+- **SQLite 설정:** `journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON`, `busy_timeout=5000`, `transaction_mode=IMMEDIATE` 는 런타임이 정하고 모든 풀 연결에서 확인한다. `spring.datasource.hikari.data-source-properties` 로 그 이름을 주면 출처(명령행, `-D`, 환경변수, 설정 파일)와 상관없이 거부한다. `connection-init-sql` 로 바꾼 값은 PRAGMA 확인이 잡는다.
+- **풀 고정:** 기동 검사는 풀 연결마다 `PRAGMA database_list` 로 연 파일이 검사한 `queryhub.db` 인지 본다(장치와 inode 로 비교). `spring.datasource.hikari.jdbc-url` 로 다른 파일을 가리키면 지금은 Boot 가 무시하고(시험한다), 풀이 다른 파일을 열게 되더라도 이 검사가 기동을 멈춘다. 다만 그때는 SQLite 가 그 파일을 이미 만들었을 수 있다.
+- **Flyway 고정:** 마이그레이션은 검사한 메인 풀로만 한다. `spring.flyway.url`·`user`·`password` 는 어디서 넘겨도 접속에 쓰이지 않는다([ADR-012](ADR/ADR-012-flyway-connection-pin.md)).
+- **메시지:** 거부 메시지는 설정 이름, 경로(비밀 값이 아니다), 고치는 법만 말한다. 관리자 토큰과 마스터 키는 담지 않는다(P1-06 의 통합 시험이 실행 JAR 자식 프로세스의 출력에서 확인한다).
+- **백업의 민감도:** `queryhub.db` 의 사본에는 암호화한 비밀번호가 들어 있다(연결 저장 태스크부터). 저장소와 마스터 키는 같은 시점에 함께 백업하고 함께 되살려야 한다. 키 없이 되살린 저장소의 비밀번호는 되살릴 수 없다. 반대로 둘이 같은 백업에 있으면 그 백업을 읽는 사람은 비밀번호를 풀 수 있으므로 그 백업 전체를 키와 같은 비밀 값으로 다룬다. 키 사본은 조직이 통제하는 비밀 보관소에 따로 둘 수 있다. 사본은 0600 으로 만든다(`umask 077`). 쓰고 있는 WAL 저장소의 `queryhub.db` 하나만 복사한 사본은 데이터를 잃거나 앞뒤가 맞지 않으므로 백업으로 치지 않는다([DEPLOYMENT.md](DEPLOYMENT.md) 「백업·복구」).
 
 ### Desktop 셸의 자식 환경 (구현됨, P0-C)
 
 - 셸은 `java -version` 확인과 런타임을 빈 환경에서 띄우고, 자기 환경에서 허용 목록의 변수만 물려준다: `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TMPDIR`. Windows 는 `PATH`, `SYSTEMROOT`, `WINDIR`, `TEMP`, `TMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PATHEXT`, `COMPUTERNAME` 이고 대소문자를 무시한다(미검증).
-- `java -version` 은 이 허용 목록의 변수만 받는다(`launch.rs` 의 `inherited_env`). Metadata DB 변수(비밀번호 포함), 관리자 토큰 `QUERYHUB_ADMIN_TOKEN`, 마스터 키 `QUERYHUB_MASTER_KEY`(P1-04), `QUERYHUB_DESKTOP_PARENT_PID` 는 런타임 자식의 환경에만 더한다(`child_env`). 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_ADMIN_TOKEN_FILE` 은 넘기지 않는다.
+- `java -version` 은 이 허용 목록의 변수만 받는다(`launch.rs` 의 `inherited_env`). 데이터 디렉터리 `QUERYHUB_DATA_DIR`(P1-06, 셸이 준비한 경로), 관리자 토큰 `QUERYHUB_ADMIN_TOKEN`, 마스터 키 `QUERYHUB_MASTER_KEY`(P1-04), `QUERYHUB_DESKTOP_PARENT_PID` 는 런타임 자식의 환경에만 더한다(`child_env`). 셸 자신의 환경에 있는 `QUERYHUB_ADMIN_TOKEN`, `QUERYHUB_ADMIN_TOKEN_FILE`, `QUERYHUB_DATA_DIR`, `QUERYHUB_SQLITE_NATIVE_DIR` 과 P1-05 까지 쓰던 `QUERYHUB_METADATA_DB_*` 는 넘기지 않는다.
 - 목적: Spring Boot 는 OS 환경변수를 `application-desktop.yml` 보다 앞세우므로, 셸의 환경(`SERVER_ADDRESS`, `MANAGEMENT_*`, `LOGGING_*`, `DEBUG`, `SPRING_*`, `JAVA_TOOL_OPTIONS` 같은 JVM 옵션 변수 등)이 런타임의 바인딩 주소, 엔드포인트 노출, 로깅, 프로파일을 바꾸지 못하게 한다. 허용 목록의 이름은 Spring 속성에 바인딩되지 않는다. 이것이 P0-C 리뷰 1회차 지적 R1 의 수정이다.
 - 셸은 환경을 로그에 남기지 않고 로그 파일을 쓰지 않는다.
-- `java -version` 사전 점검의 환경은 P1-03 부터 가짜 java 가 남긴 환경 파일로 확인한다: 관리자 토큰, Metadata DB 비밀번호, 부모 PID 가 없다([BACKLOG.md](BACKLOG.md) P0C-C2-2 닫힘, [TEST_PLAN.md](TEST_PLAN.md)).
+- `java -version` 사전 점검의 환경은 P1-03 부터 가짜 java 가 남긴 환경 파일로 확인한다: 관리자 토큰, 데이터 디렉터리(P1-06. P1-05 까지는 Metadata DB 비밀번호), 부모 PID 가 없다([BACKLOG.md](BACKLOG.md) P0C-C2-2 닫힘, [TEST_PLAN.md](TEST_PLAN.md)).
 
 ### CI 워크플로 (정의됨·미실행, P0-D)
 
@@ -116,18 +121,21 @@
 | 내용 | BACKLOG | 목표 |
 |---|---|---|
 | 바인딩 가드가 없다. JAR 을 desktop 프로파일로 직접 실행하면서 바인딩 주소를 넓혀도(예: `--server.address=0.0.0.0`) 기동을 거부하지 않는다. 관리 API 는 관리자 토큰과 루프백 검사(소켓 원격 주소)로 막히지만, health 와 앞으로의 데이터 API 는 그 주소에서 열린다. 셸이 띄운 런타임은 주소 인자를 받지 않고 `SERVER_ADDRESS` 도 물려받지 않는다(「Desktop 셸의 자식 환경」) | P103-1 | Phase 1 |
-| 관리자 토큰은 런타임 자식의 환경변수에 있으므로 같은 사용자의 프로세스와 root 는 읽을 수 있다(macOS `ps -E`, Linux `/proc/<pid>/environ`). 설계 §1.2 와 [ADR-011](ADR/ADR-011-metadata-secrets-env-only.md)이 받아들인 경로다 | — | 정하지 않음 |
+| 관리자 토큰은 런타임 자식의 환경변수에 있으므로 같은 사용자의 프로세스와 root 는 읽을 수 있다(macOS `ps -E`, Linux `/proc/<pid>/environ`). 설계 §1.2 가 받아들인 경로다(P0-B 의 [ADR-011](ADR/ADR-011-metadata-secrets-env-only.md)도 같았다. 지금은 대체됨) | — | 정하지 않음 |
 | WebView 의 최상위 탐색을 막지 않는다(`on_navigation` 없음). `admin_token` 권한은 `remote` 키가 없는 capability 라 앱에 묶인 로컬 출처에만 주어진다(Tauri 2 의 규칙. 외부 페이지로 탐색해 시험하지는 않았다) | P103-2 | Phase 6 |
 | 서블릿 컨테이너가 먼저 거부하는 깨진 요청 대상(`%2F`, `%00`, `{`·`}`, 절대 형식 등)과 깨진 Host(대괄호 없는 IPv6(`::1`), zone id(`[::1%25lo0]`), userinfo(`user@localhost`), 숫자가 아닌 포트(`localhost:abc`), Host 헤더 둘, HTTP/1.1 의 Host 없음)는 Tomcat 의 평문 400 이고 공통 오류 형식과 `X-Request-Id` 가 없다. 애플리케이션 코드는 실행되지 않는다 | P103-4 | 정하지 않음 |
 | Windows·Linux 의 셸(토큰 생성, 자식 환경, capability)은 미검증이다 | PLAT-1 | CI-1 첫 실행 |
 | desktop 의 마스터 키 파일은 파일 권한만 지킨다. 같은 사용자의 프로세스, 관리자와 root, 데이터 디렉터리의 백업과 복사본이 키를 읽을 수 있다(위 「마스터 키」) | P104-2 | 정하지 않음 (키체인 통합을 다시 정할 때) |
 | Windows·Linux 의 키 파일 경로, `create_new`, 권한 동작은 미검증이다. Windows 는 키 파일의 DACL 을 따로 좁히지 않는다 | PLAT-1, P104-7 | CI-1 첫 실행 |
 | 이전 키 입력과 일괄 재암호화가 없다. `QUERYHUB_MASTER_KEY` 를 바꾸면 기존 암호문이 `UNKNOWN_KEY` 가 된다(지금은 저장된 암호문이 없다) | P104-4 | 연결 저장 태스크 |
-| `spring.datasource.hikari.catalog` 와 `connection-init-sql` 을 프로세스에 보이는 출처에서 막을지 정하지 않았다. catalog 는 연결 DB 를, connection-init-sql 은 UTC 세션 설정을 바꿀 수 있다 | P0B-H1 | Phase 1 |
-| `spring.autoconfigure.exclude` 로 `MetadataDatabaseAutoConfiguration` 을 빼면 가드, 검사한 연결 정보, Flyway 고정이 함께 사라진다 | P0B-R14 | Phase 1 |
-| `spring.flyway.url`·`user`·`password` 와 `spring.datasource.url`·`password` 를 명령행이나 `-D` 로 주면 무시되지만 거부도 경고도 없다. 값은 프로세스 목록에 보인다 | P0B-R15 | Phase 1 |
-| Metadata DB 연결이 평문이다. 원격 DB 용 TLS 는 계획이다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)) | — | Phase 1 또는 6 |
-| Testcontainers 가 테스트용 MariaDB 포트를 모든 호스트 인터페이스에 연다(테스트가 도는 약 20 초). P0-D 는 runtime 을 바꾸지 않아 미뤘다([ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)) | P0B-R6 | Phase 1 |
+| `spring.datasource.hikari.*` 의 다른 키(예: `catalog`)를 막을지 정하지 않았다. P1-06 부터 SQLite 설정을 바꾸는 `data-source-properties` 는 이름으로 거부하고 `connection-init-sql` 로 바꾼 PRAGMA 는 풀 연결 확인이 잡는다 | P0B-H1 | Phase 1 |
+| `spring.autoconfigure.exclude` 로 `MetadataDatabaseAutoConfiguration` 을 빼면 저장소 검사(디렉터리·파일 규칙, 잠금, 네이티브 디렉터리, PRAGMA), 검사한 연결 정보, Flyway 고정이 함께 사라진다. P1-06 은 이 경로를 시험하지 않았다 | P0B-R14 | Phase 1 |
+| `spring.flyway.url`·`user`·`password` 와 `spring.datasource.url`·`password` 를 명령행이나 `-D` 로 주면 무시되지만 거부도 경고도 없다 | P0B-R15 | Phase 1 |
+| 네트워크 파일 시스템 감지는 최선 노력이다. 알려진 형식만 거부하고 모르는 형식(목록 밖 FUSE 등)은 받는다. Windows UNC 경로는 거부하지만 네트워크 드라이브에 매핑한 드라이브 문자는 잡지 못한다. 실제 마운트로는 시험하지 않았다 | P106-4 | 정하지 않음 |
+| sqlite-jdbc 3.53.4.0 의 네이티브 라이브러리 찾는 순서: `org.sqlite.lib.path`·`org.sqlite.lib.name` 시스템 속성, 그다음 `org.sqlite.tmpdir`(런타임이 정하는 비공개 네이티브 디렉터리)로 풀기, 그다음 `java.library.path`(macOS 에서는 작업 디렉터리 `.` 와 `~/Library/Java/Extensions` 가 들어 있다), 마지막으로 `System.loadLibrary`. 풀기가 실패하면(예: `noexec`) 작업 디렉터리나 사용자 확장 디렉터리의 `libsqlitejdbc` 를 비공개 디렉터리 규칙 없이 불러올 수 있고, `-Dorg.sqlite.lib.path` 를 주면 네이티브 디렉터리를 아예 건너뛴다. 둘 다 운영자나 같은 사용자가 정하는 값이다(P1-06 리뷰 R6, javap 로 확인) | P106-9 | 정하지 않음 |
+| Windows 에서는 데이터 디렉터리와 저장소 파일의 권한·소유자를 확인하지 않는다 | PLAT-1 | CI-1 첫 실행 |
+| SQLite 네이티브는 Mac/aarch64 만 실행했다. 나머지 19개, `noexec` 마운트, Windows 백신은 미검증이다 | P106-3, PLAT-1 | CI-1 첫 실행 / Phase 8 |
+| 내장 백업 명령이 없다. 운영자가 `sqlite3` 나 멈추고 복사로 백업하고, 사본의 권한과 보관을 직접 관리한다 | P106-2 | 정하지 않음 |
 | `.gitignore` 의 `*.key`, `*.p12`, `*.pem` 이 경로 고정 없이 걸려 정상 파일도 커밋에서 말없이 빠진다 | P0A-N4 | Phase 1 |
 | `desktop/pnpm-workspace.yaml` 의 `minimumReleaseAgeExclude` 에 `lucide-react@1.74.0` 예외가 남아 있다 | P0C-R5 | Phase 6 |
 | `JAVA_HOME` 은 java 를 고르는 데만 쓰고 자식에게 넘기지 않는다. 고른 java 가 macOS 의 `/usr/bin/java` 스텁이면 기본 JDK 가 뜬다 | P0C-C2-3 | Phase 8 |

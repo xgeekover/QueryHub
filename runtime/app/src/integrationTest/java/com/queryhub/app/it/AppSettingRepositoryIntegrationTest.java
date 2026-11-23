@@ -17,9 +17,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
- * AC-15: AppSettingRepository 의 실제 MariaDB 왕복. 시각은 DB 의 원시 값을 문자열로 비교한다(드라이버의 변환을 거치지 않는다).
+ * AC-15, P1-06 AC4: AppSettingRepository 의 실제 SQLite 저장소 왕복(운영과 같은 조립의 컨텍스트). 시각은 저장된 TEXT 값을 그대로
+ * 비교한다(드라이버의 변환을 거치지 않는다).
  *
- * <p>테스트 JVM 의 기본 시간대는 Asia/Seoul 이고 서버 기본 시간대는 +09:00 이다. 저장 값이 UTC 벽시계가 아니면 9 시간 차이로 드러난다.
+ * <p>테스트 JVM 의 기본 시간대는 Asia/Seoul 이다. 저장 값이 UTC 가 아니면 9 시간 차이로 드러난다.
  */
 @QueryHubIntegrationTest
 class AppSettingRepositoryIntegrationTest extends MetadataDatabaseIntegrationTest {
@@ -55,7 +56,7 @@ class AppSettingRepositoryIntegrationTest extends MetadataDatabaseIntegrationTes
 
     assertThat(contextRepository.findValue("runtime.sample")).contains(UNICODE_VALUE);
     assertThat(rawTimestamps("runtime.sample"))
-        .containsExactly("2026-01-02 03:04:05.123456", "2026-01-02 03:04:05.123456");
+        .containsExactly("2026-01-02T03:04:05.123456Z", "2026-01-02T03:04:05.123456Z");
   }
 
   @Test
@@ -65,7 +66,7 @@ class AppSettingRepositoryIntegrationTest extends MetadataDatabaseIntegrationTes
 
     assertThat(contextRepository.findValue("runtime.sample")).contains(UNICODE_VALUE);
     assertThat(rawTimestamps("runtime.sample"))
-        .containsExactly("2026-01-02 03:04:05.123456", "2026-01-02 04:04:05.123456");
+        .containsExactly("2026-01-02T03:04:05.123456Z", "2026-01-02T04:04:05.123456Z");
     assertThat(rowCount("runtime.sample")).isEqualTo(1);
   }
 
@@ -94,9 +95,7 @@ class AppSettingRepositoryIntegrationTest extends MetadataDatabaseIntegrationTes
 
   private List<String> rawTimestamps(String key) {
     return jdbcClient
-        .sql(
-            "SELECT CAST(created_at AS CHAR) AS created_at, CAST(updated_at AS CHAR) AS updated_at"
-                + " FROM app_setting WHERE setting_key = :key")
+        .sql("SELECT created_at, updated_at FROM app_setting WHERE setting_key = :key")
         .param("key", key)
         .query((rs, rowNum) -> List.of(rs.getString(1), rs.getString(2)))
         .single();
