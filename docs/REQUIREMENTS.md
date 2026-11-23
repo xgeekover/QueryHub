@@ -713,8 +713,8 @@ XLSX의 최대 행 제한을 고려하고, 초과 시 명확한 오류 또는 �
 
 | 결정 | 승인된 내용 | 대체하는 원문 | 문서 |
 |---|---|---|---|
-| D1 | Spring Boot 4.1 + Java 21 | 원문 3절 Backend 의 「Java 17 이상」, 「Spring Boot 3.x」 | [ADR-010](ADR/ADR-010-spring-boot-4-java-21.md) |
-| D2 | Metadata DB 는 Desktop Mode 와 Server Mode 모두 MariaDB 하나다. 내장 DB(H2)를 쓰자는 제안은 반려됐다 | 원문 3절 Metadata Database 의 「MariaDB」를 두 모드 모두에 적용한다는 확인이다. 원문과 충돌하지 않고, 모드별로 다른 DB 를 쓰는 안을 배제한다 | [ADR-009](ADR/ADR-009-mariadb-metadata-db.md) |
+| D1 | Spring Boot 4.1 + Java 21. **Java 21 부분은 [AR-2](#ar-2-java-17-에서-실행-승인-2026-11-23) / [ADR-025](ADR/ADR-025-java-17-baseline.md) 가 대체했다 (2026-11-23): Spring Boot 4.1 은 그대로이고 Java 17 로 컴파일·테스트·실행한다** | 원문 3절 Backend 의 「Java 17 이상」, 「Spring Boot 3.x」 | [ADR-010](ADR/ADR-010-spring-boot-4-java-21.md), [ADR-025](ADR/ADR-025-java-17-baseline.md) |
+| D2 | Metadata DB 는 Desktop Mode 와 Server Mode 모두 MariaDB 하나다. 내장 DB(H2)를 쓰자는 제안은 반려됐다. **계획 (P1-06): 사용자가 2026-11-23 에 「SQLite 내장」을 골라 이 결정을 P1-06 에서 다시 정한다([AR-2](#ar-2-java-17-에서-실행-승인-2026-11-23) 2·3항). 지금 구현은 아직 MariaDB 하나다** | 원문 3절 Metadata Database 의 「MariaDB」를 두 모드 모두에 적용한다는 확인이다. 원문과 충돌하지 않고, 모드별로 다른 DB 를 쓰는 안을 배제한다 | [ADR-009](ADR/ADR-009-mariadb-metadata-db.md) |
 | D3 | HTTP 포트는 하나다. 관리 API 와 데이터 API 는 경로로 나눈다. 포트 분리는 「나중에 필요하면 그 때」 정한다 | 원문에는 포트에 관한 문장이 없다. 새로 정한 것이다 | [ADR-002](ADR/ADR-002-single-http-port.md) |
 | D4 | Phase 0 에 Desktop 셸 스파이크(Tauri 에서 런타임 기동·중지·헬스 표시)를 넣는다. UI 본 구현은 Phase 6 그대로다 | 원문 11절 「Phase 0. 프로젝트 기반 구축」 목록(Desktop 없음)과 「Phase 6. Desktop Application」의 「Tauri 연동」 | [ARCHITECTURE.md 의 Phase 계획](ARCHITECTURE.md#phase-계획) |
 
@@ -745,3 +745,27 @@ XLSX의 최대 행 제한을 고려하고, 초과 시 명확한 오류 또는 �
 | OM-7 | **보안.** 지표 이름, 태그, 로그 창에 SQL 원문, 파라미터 값, 비밀 값, API Key 를 넣지 않는다. 태그 값의 종류 수(카디널리티)는 API ID 와 풀 이름처럼 개수가 정해진 것으로 제한한다. 로그 창은 계속 가린 채 보이고, Phase 7 의 마스킹 정책(원문 9절 10항 「요청 및 응답 로그의 민감정보 마스킹」)을 따른다. | 계획 (Phase 6, Phase 7) |
 
 **Phase 배치와 순서.** 화면은 Phase 6 Dashboard 에 넣는다(OM-1..OM-5 를 보여 주는 운영 지표 화면). 지표 수집과 관리 API 엔드포인트는 Phase 7 모니터링에 넣는다(OM-1..OM-7). Phase 6 이 Phase 7 보다 먼저이므로, Phase 7 전에는 데이터가 없는 패널을 「아직 수집하지 않음」으로 보여야 한다. 이 순서는 Phase 6 을 계획할 때 다시 검토한다. 배치는 사용자가 승인한 그대로 둔다. Phase 표는 [ARCHITECTURE.md 의 Phase 계획](ARCHITECTURE.md#phase-계획)에 있다.
+
+### AR-2 Java 17 에서 실행 (승인 2026-11-23)
+
+**요청.** 2026-11-23 에 사용자가 다음과 같이 적었다.
+
+> 「Java OpenJDK 17 환경에서 사용할 수 있어야 해. Metadata DB는 꼭 필요한가요? SQLLite 등의 내부DB나 설정파일 기반으로 동작할 수 있어야 할 것 같아요.」
+
+**승인.** Queen 은 P1-04 커밋, P1-05 Java 17, P1-06 내장 metadata 저장소, 그다음 DB Provider 순서를 제안했다. 사용자는 2026-11-23 에 다음과 같이 답했다(줄바꿈과 글자를 원문 그대로 둔다).
+
+> 「1. 진행
+> 2. SQLite 내장
+> 3. 권장하는 반식으로 진행
+> 4. 병합 및 승인 (키ID 방식은 나중에 도입)」
+
+**항목별 대응.**
+
+| 항목 | 뜻 | 상태 | 문서 |
+|---|---|---|---|
+| 1. 진행 | P1-05: Spring Boot 4.1 은 그대로 두고 Java 17 로 컴파일·테스트·실행한다. AR-0 D1 의 Java 21 부분을 대체한다. Gradle toolchain 은 정확히 17 이고 로컬에 설치된 JDK 17 만 쓴다(JDK 를 내려받지 않는다). desktop 셸은 Java 17 이상을 받고 16 이하는 `java_too_old` 로 거부한다. CI 는 Java 17 을 준비한다. Java 18 이상의 API 와 언어 기능은 쓰지 않는다 | 구현됨 (P1-05, 커밋 전). 테스트는 Java 17 에서 돌았다. Java 21 이상에서는 이 변경 뒤에 다시 돌리지 않았다. CI 는 정의됨·미실행(CI-1), Windows·Linux 는 미검증(PLAT-1) | [ADR-025](ADR/ADR-025-java-17-baseline.md) |
+| 2. SQLite 내장 | P1-06: Metadata 저장소를 SQLite 내장 방식으로 바꾼다. AR-0 D2(Metadata DB 는 MariaDB 하나)를 P1-06 에서 다시 정한다 | 계획 (P1-06). 지금은 MariaDB 하나다 | [ADR-009](ADR/ADR-009-mariadb-metadata-db.md) (P1-06 에서 새 ADR 로 다시 정한다) |
+| 3. 권장하는 반식으로 진행 | P1-06 을 Queen 이 권한 방식으로 진행한다: MariaDB 를 metadata 저장소 선택지로 남기지 않는다 | 계획 (P1-06) | P1-06 에서 정한다 |
+| 4. 병합 및 승인 (키ID 방식은 나중에 도입) | P1-04 커밋(037385b, 2026-11-23)을 승인했다. 「키ID 방식은 나중에 도입」은 P1-04 리뷰 지적 R7(kid 를 AES 키 자체로 만든 HMAC-SHA256 으로 얻는다)에 대한 답이다: 지금의 kid 유도를 그대로 두고 나중에 다시 본다 | P1-04 구현됨 (037385b). kid 유도 변경은 정하지 않음 | [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md), [BACKLOG.md](BACKLOG.md) P104-R7 |
+
+[편집자 주: 3항의 「반식」은 사용자가 적은 글자 그대로다(「방식」의 오타로 읽는다). 「SQLLite」도 원문 그대로다. 이 주는 인용문의 일부가 아니다.]

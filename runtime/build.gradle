@@ -28,8 +28,10 @@ subprojects {
 
     java {
         toolchain {
-            // Gradle 런처는 JDK 17 에서 돌 수 있다. 컴파일과 테스트는 Java 21 toolchain 으로 한다.
-            languageVersion = JavaLanguageVersion.of(21)
+            // 기준선은 Java 17 이다 (ADR-025). 컴파일, 단위·통합 테스트, 통합 테스트가 띄우는 실행 JAR 자식 프로세스 모두
+            // 로컬에 설치된 JDK 17 로 돈다. JDK 는 내려받지 않는다 (gradle.properties 의 auto-download=false).
+            // JDK 17 이 없으면 첫 JavaCompile 태스크가 Gradle 의 toolchain 오류로 실패한다 (docs/DEPLOYMENT.md 준비물).
+            languageVersion = JavaLanguageVersion.of(17)
         }
     }
 

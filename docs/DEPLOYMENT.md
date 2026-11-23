@@ -2,13 +2,24 @@
 
 런타임 JAR 을 빌드하고 desktop·server 프로파일로 실행하는 방법, Metadata DB 변수, 개발용 DB, Desktop 셸의 실행 방법을 적는다. 지금 확인된 플랫폼은 macOS 뿐이다. Windows·Linux 는 **미검증**이다([BACKLOG.md](BACKLOG.md) PLAT-1). 설치본과 Docker 이미지는 계획(Phase 8)이다.
 
-## 준비물 (구현됨, P0-A·P0-B)
+## 준비물 (구현됨, P0-A·P0-B. Java 17 은 P1-05)
 
-- **빌드**: JDK 17 이상 하나면 된다. Gradle 은 이 JDK 로 실행되고, 컴파일·테스트에 쓰는 Java 21 toolchain 은 Gradle 이 자동으로 준비한다(foojay resolver, `~/.gradle/jdks` 에 캐시). Gradle 9.7.1 도 wrapper 가 내려받는다.
-- **실행**: 실행 JAR 은 Java 21 용으로 컴파일된다. `java -jar` 에는 **Java 21 이상 런타임**이 필요하다. JDK 17 로 실행하면 `UnsupportedClassVersionError` 로 실패한다. Java 21 이 따로 없으면 Gradle 이 내려받은 toolchain 의 `bin/java` 를 쓸 수 있다(예: macOS 에서는 `~/.gradle/jdks/<배포판 디렉터리>/Contents/Home/bin/java`).
+- **빌드**: 로컬에 설치된 **JDK 17** 이 있어야 한다. 컴파일·단위 테스트·통합 테스트는 Gradle Java toolchain 으로 하고, 그 언어 버전은 정확히 17 이다(`runtime/build.gradle`, [ADR-025](ADR/ADR-025-java-17-baseline.md)). Gradle 은 설치된 JDK 를 자동으로 찾는다(Gradle 을 실행한 JVM, `JAVA_HOME`, macOS 의 java_home 이 아는 JDK, `~/.gradle/jdks` 등). **JDK 는 내려받지 않는다**: foojay resolver 가 없고 `runtime/gradle.properties` 에 `org.gradle.java.installations.auto-download=false` 가 있다. 언어 버전은 정확히 맞아야 하므로 다른 버전의 JDK(예: 예전에 Gradle 이 `~/.gradle/jdks` 에 받아 둔 더 높은 버전)만 있으면 17 대신 쓰이지 않고 빌드가 실패한다. JDK 17 이 자동 감지되지 않는 곳에 있으면 `~/.gradle/gradle.properties` 에 `org.gradle.java.installations.paths=<JDK 17 홈 디렉터리>` 를 적어 Gradle 에 알려 준다. 어떤 JDK 가 보이는지는 `sh runtime/gradlew -p runtime javaToolchains` 가 보여 준다(`Auto-download: Disabled` 로 나와야 한다). Gradle 9.7.1 은 wrapper 가 내려받는다. 의존성과 wrapper 가 캐시에 있으면 `--offline` 으로 빌드된다(P1-05 에서 확인).
+  - JDK 17 이 없을 때의 실패 (P1-05 에서 Gradle 9.7.1 이 macOS 에서 실제로 낸 메시지. `~/.gradle/jdks` 의 더 높은 버전 JDK 위에서 Gradle 을 돌리고 자동 감지를 꺼서 JDK 17 이 없는 장비를 흉내 냈다. 태스크 이름은 처음 실행되는 `JavaCompile` 태스크에 따라 다르다):
+
+    ```text
+    * What went wrong:
+    Could not determine the dependencies of task ':domain:compileJava'.
+    > Could not resolve all dependencies for configuration ':domain:compileClasspath'.
+       > Failed to calculate the value of task ':domain:compileJava' property 'javaCompiler'.
+          > Cannot find a Java installation on your machine (Mac OS X 27.2 aarch64) matching: {languageVersion=17, vendor=any vendor, implementation=vendor-specific, nativeImageCapable=false}. Toolchain auto-provisioning is not enabled.
+    ```
+
+    고치는 법: JDK 17 을 설치하거나, 설치된 JDK 17 의 홈 디렉터리를 `org.gradle.java.installations.paths` 로 알려 준다. 아무것도 내려받지 않는다. 명령행에서 toolchain 설정을 줄 때는 `-D` 형식(예: `-Dorg.gradle.java.installations.paths=...`)을 쓴다. P1-05 에서 `-Porg.gradle.java.installations.auto-detect=false` 를 주었을 때 Gradle 9.7.1 은 project property 형식이 deprecated 이고 Gradle 10 에서 없어진다고 경고했다.
+- **실행**: 실행 JAR 은 Java 17 용으로 컴파일된다(클래스 파일 주 버전 61). `java -jar` 에는 **Java 17 이상 런타임**이 필요하다. 게이트의 단위·통합 테스트와 통합 테스트가 띄우는 실행 JAR 은 Java 17 에서 돈다(`BootJarIntegrationTest` 가 `using Java 17.` 기동 줄을 확인한다). 더 높은 Java 버전에서는 P1-05 뒤에 다시 시험하지 않았다.
 - **Metadata DB**: 런타임은 MariaDB 에 연결할 수 없으면 기동하지 않는다(아래 「Metadata DB 변수」, [DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)). 개발용 DB 는 `deploy/compose.dev.yml` 로 띄운다.
 - **Docker**: 통합 테스트 게이트(`integration.sh`)와 개발용 DB 에 필요하다. `build.sh`, `test.sh`, `lint.sh` 는 Docker 없이 돈다.
-- **네트워크**: 첫 빌드에는 Maven Central 접근이 필요하다. Java 21 이 캐시에 없으면 foojay/Adoptium 접근도 필요하다. `mariadb:12.3` 이미지가 없으면 첫 통합 테스트가 Docker Hub 에서 내려받는다.
+- **네트워크**: 첫 빌드에는 Maven Central 접근이 필요하다. JDK 는 내려받지 않는다(위 「빌드」). `mariadb:12.3` 이미지가 없으면 첫 통합 테스트가 Docker Hub 에서 내려받는다.
 - **셸**: 게이트 스크립트는 bash 3.2(macOS 기본) 이상과 POSIX 도구(find, awk, grep, mktemp)만 쓴다. 게이트 명령과 판정은 [TEST_PLAN.md](TEST_PLAN.md)에 있다.
 
 ## Metadata DB 변수 (구현됨, P0-B)
@@ -100,7 +111,7 @@ bash scripts/gate/build.sh
 - 속성 이름과 상관없이, 포트를 열기 전에 Tomcat 의 필터 매핑(`springSecurityFilterChain` 이 `/*` 와 dispatcher 다섯 가지로 매핑된 DelegatingFilterProxy 인지, 그 앞에 허용 목록 밖의 필터가 없는지)과, `allow-remote=false` 일 때 파이프라인의 valve 를 검사한다.
 - **자기 점검:** 포트를 연 직후, readiness 가 200 이 되기 전에 런타임이 자기 포트로 토큰 없는 요청 여섯 개(관리 API, `/actuator/env`, `/actuator/beans`, health 세 경로)를 보낸다. 관리 체인의 401/403 이나 health 응답이 아니거나 health 경로가 5 초 안에 답하지 않으면(메타데이터 DB 가 멈춰 health 점검이 끝나지 않는 경우 등) 이유를 ERROR 로그에 남기고 기동을 멈춘다. 정리가 멈춰도 프로세스는 그 뒤 15 초쯤 안에 종료 코드 1 로 끝난다(`Runtime.halt`). 손으로 실행할 때 기동이 멈추면 로그의 `관리 체인 자기 점검` 줄을 먼저 본다.
 
-## 마스터 키 (구현됨, P1-04 커밋 전)
+## 마스터 키 (구현됨, P1-04, 037385b (2026-11-23))
 
 런타임은 업무 DB 비밀번호를 암호화하는 256 비트 마스터 키가 있어야 기동한다(두 프로파일). 결정은 [ADR-023](ADR/ADR-023-master-key-delivery.md)에, 형식과 교체는 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)에 있다. 키는 16진수 64 자다. 키를 잃으면 그 키로 암호화한 비밀번호는 되살릴 수 없다.
 
@@ -181,7 +192,7 @@ Windows(미검증)에서는 `%LOCALAPPDATA%\com.queryhub.desktop\secrets\master.
 ### 준비물 (desktop)
 
 - Node 24, pnpm 11.9.0(`desktop/package.json` 의 `packageManager`), Rust 1.97 과 rustfmt·clippy, Xcode Command Line Tools(macOS).
-- **JDK 21**(런타임 실행용). 셸은 `<java> -version` 의 주 버전이 21 미만이면 `java_too_old` 로 거부한다. 기본 `java` 가 17 이면 거부되므로 `QUERYHUB_DESKTOP_JAVA` 에 JDK 21 의 `bin/java` 를 지정한다(예: Gradle toolchain `~/.gradle/jdks/<배포판 디렉터리>/Contents/Home/bin/java`). macOS 의 `/usr/bin/java` 스텁이 아니라 실제 JDK 의 `bin/java` 를 가리켜야 한다([BACKLOG.md](BACKLOG.md) P0C-C2-3).
+- **JDK 17 이상**(런타임 실행용, [ADR-025](ADR/ADR-025-java-17-baseline.md)). 셸은 `<java> -version` 의 주 버전이 17 미만이면 `java_too_old` 로 거부한다(`desktop/src-tauri/src/runtime/java.rs` 의 `MIN_MAJOR`). 고르는 순서는 `QUERYHUB_DESKTOP_JAVA`, `JAVA_HOME/bin/java`, `PATH` 의 `java` 다. 정해진 JDK 를 쓰려면 `QUERYHUB_DESKTOP_JAVA` 에 그 `bin/java` 를 지정한다(예: macOS 의 Temurin 17 은 `/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home/bin/java`). macOS 의 `/usr/bin/java` 스텁이 아니라 실제 JDK 의 `bin/java` 를 가리켜야 한다([BACKLOG.md](BACKLOG.md) P0C-C2-3).
 - 실행 중인 Metadata DB(개발용 compose)와 런타임 JAR.
 
 ### 실행 (개발 모드)
@@ -189,7 +200,7 @@ Windows(미검증)에서는 `%LOCALAPPDATA%\com.queryhub.desktop\secrets\master.
 ```sh
 docker compose -f deploy/compose.dev.yml up -d --wait   # 메인 체크아웃에서. 중지는 위 "개발용 DB" 의 stop
 sh runtime/gradlew -p runtime :app:bootJar              # 런타임 JAR (bash scripts/gate/build.sh 도 만든다)
-export QUERYHUB_DESKTOP_JAVA="$HOME/.gradle/jdks/<배포판 디렉터리>/Contents/Home/bin/java"
+export QUERYHUB_DESKTOP_JAVA="/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home/bin/java"   # JDK 17 이상의 bin/java
 pnpm --dir desktop install
 (set -a; . deploy/.env; set +a; pnpm --dir desktop tauri dev)   # Metadata DB 변수는 이 하위 셸에만
 ```

@@ -428,7 +428,8 @@ class MetadataStartupFailureTest {
     public void close() throws IOException {
       server.close();
       try {
-        acceptor.join(Duration.ofSeconds(5));
+        // Thread.join(long) 은 Java 17 에 있다 (join(Duration) 은 Java 19 부터다, ADR-025). 제한은 같은 5 초다.
+        acceptor.join(5_000L);
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
       }

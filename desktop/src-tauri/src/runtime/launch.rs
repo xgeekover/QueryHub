@@ -10,6 +10,8 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+// 메시지의 최소 버전은 java.rs 의 MIN_MAJOR 에서 온다 (숫자를 따로 적지 않는다, ADR-025).
+use super::java::MIN_MAJOR;
 use super::master_key::MasterKey;
 use super::token::AdminToken;
 use super::{Failure, FailureKind};
@@ -195,7 +197,7 @@ pub fn resolve_java(env: &Env) -> Result<PathBuf, Failure> {
         }
         return Err(Failure::new(
             FailureKind::JavaNotFound,
-            format!("{JAVA_VAR} 가 가리키는 java 를 실행할 수 없다: {explicit}. JDK 21 이상의 bin/java 경로를 지정한다."),
+            format!("{JAVA_VAR} 가 가리키는 java 를 실행할 수 없다: {explicit}. JDK {MIN_MAJOR} 이상의 bin/java 경로를 지정한다."),
         ));
     }
     if let Some(home) = non_empty(env, "JAVA_HOME") {
@@ -218,7 +220,7 @@ pub fn resolve_java(env: &Env) -> Result<PathBuf, Failure> {
     }
     Err(Failure::new(
         FailureKind::JavaNotFound,
-        format!("Java 를 찾지 못했다({JAVA_VAR}, JAVA_HOME/bin/java, PATH 순서로 찾는다). {JAVA_VAR} 에 JDK 21 이상의 java 경로를 지정한다."),
+        format!("Java 를 찾지 못했다({JAVA_VAR}, JAVA_HOME/bin/java, PATH 순서로 찾는다). {JAVA_VAR} 에 JDK {MIN_MAJOR} 이상의 java 경로를 지정한다."),
     ))
 }
 

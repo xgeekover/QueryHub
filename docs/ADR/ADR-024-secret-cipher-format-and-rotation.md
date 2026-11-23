@@ -2,7 +2,7 @@
 
 - 상태: 제안
 - 날짜: 2026-11-23
-- 구현: 일부 구현 (P1-04, 커밋 전). 형식 v1, 키 id, 여러 키 복호화, `needsReencryption`, `reencrypt` 는 구현했다. 이전 키 입력과 일괄 재암호화는 계획이다([BACKLOG](../BACKLOG.md) P104-4)
+- 구현: 일부 구현 (P1-04, 037385b (2026-11-23)). 형식 v1, 키 id, 여러 키 복호화, `needsReencryption`, `reencrypt` 는 구현했다. 이전 키 입력과 일괄 재암호화는 계획이다([BACKLOG](../BACKLOG.md) P104-4)
 
 ## 맥락
 

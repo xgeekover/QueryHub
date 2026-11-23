@@ -63,7 +63,7 @@
 - **행동 변화:** StrictHttpFirewall 이 `;`, `//`, `/./` 같은 경로를 400 으로 거부하고, 관리 체인 경로의 퍼센트 인코딩은 모두 400 이다. 일부 깨진 경로와 형식이 깨진 Host 는 Tomcat 이 애플리케이션보다 먼저 평문 400 으로 거부한다(공통 오류 형식과 `X-Request-Id` 없음, 애플리케이션 코드 실행 없음). `/actuator` 탐색과 health 하위 경로는 더는 제공하지 않는다. 거부된 CORS 요청은 여전히 Spring 의 403 본문이다.
 - **검증 범위:** macOS 에서 runtime 시험, 통합 시험, cargo test, vitest 로 확인했다. Windows·Linux 의 셸은 미검증이다(PLAT-1). CI 는 정의됨·미실행이다(CI-1).
 
-### 마스터 키 (구현됨, P1-04 커밋 전)
+### 마스터 키 (구현됨, P1-04, 037385b (2026-11-23))
 
 업무 DB 비밀번호를 암호화하는 256 비트 키다([ADR-023](ADR/ADR-023-master-key-delivery.md)). 형식과 교체는 [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md)에 있다. 비밀번호를 저장하는 기능은 아직 없다(연결 저장은 다음 태스크다).
 

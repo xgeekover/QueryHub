@@ -1,6 +1,6 @@
 //! Java 버전 확인: `<java> -version` 의 stderr 에서 처음 나오는 따옴표 안 버전을 읽는다.
 //!
-//! "1.x" 형식(Java 8 이하)은 x 가 주 버전이다. 런타임 JAR 은 Java 21 용으로 컴파일되어 있다.
+//! "1.x" 형식(Java 8 이하)은 x 가 주 버전이다. 런타임 JAR 은 Java 17 용으로 컴파일되어 있다(ADR-025).
 
 use std::io::Read;
 use std::path::Path;
@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use super::launch::Env;
 use super::{Failure, FailureKind};
 
-/// 런타임 실행에 필요한 최소 주 버전.
-pub const MIN_MAJOR: u32 = 21;
+/// 런타임 실행에 필요한 최소 주 버전 (ADR-025: 런타임은 Java 17 용으로 컴파일된다).
+pub const MIN_MAJOR: u32 = 17;
 
 /// 버전 출력에서 읽는 최대 바이트.
 const VERSION_OUTPUT_LIMIT: u64 = 64 * 1024;
@@ -33,6 +33,11 @@ pub fn parse_major(version: &str) -> Option<u32> {
         return None;
     }
     major.parse().ok()
+}
+
+/// 이 주 버전의 java 로 런타임을 실행할 수 있는가: MIN_MAJOR 이상이다. check 가 이 판정만 쓴다.
+pub fn is_supported(major: u32) -> bool {
+    major >= MIN_MAJOR
 }
 
 /// java 를 실행해 버전을 확인하고 주 버전을 돌려준다. 실패하면 java_not_found 또는 java_too_old 다.
@@ -60,7 +65,7 @@ pub fn check(java: &Path, env: &Env, timeout: Duration) -> Result<u32, Failure> 
             format!("Java 버전 \"{version}\" 을(를) 해석하지 못했다 ({shown})."),
         )
     })?;
-    if major < MIN_MAJOR {
+    if !is_supported(major) {
         return Err(Failure::new(
             FailureKind::JavaTooOld,
             format!(
@@ -121,6 +126,8 @@ mod tests {
     fn parses_major_versions() {
         assert_eq!(parse_major("21.0.11"), Some(21));
         assert_eq!(parse_major("17.0.2"), Some(17));
+        assert_eq!(parse_major("17.0.19"), Some(17));
+        assert_eq!(parse_major("16.0.2"), Some(16));
         assert_eq!(parse_major("1.8.0_402"), Some(8));
         assert_eq!(parse_major("25-ea"), Some(25));
         assert_eq!(parse_major("21"), Some(21));
@@ -140,5 +147,26 @@ mod tests {
         );
         assert_eq!(quoted_version("no quotes"), None);
         assert_eq!(quoted_version("unterminated \"21"), None);
+    }
+
+    // 플랫폼과 무관한 경계 검사 (P1-05, ADR-025). tests.rs 의 감독 테스트는 unix 에서만 컴파일된다.
+    #[test]
+    fn the_minimum_supported_major_is_17() {
+        assert_eq!(MIN_MAJOR, 17);
+    }
+
+    #[test]
+    fn java_16_and_below_are_rejected_and_17_and_above_are_accepted() {
+        assert!(!is_supported(16));
+        assert!(!is_supported(8));
+        assert!(!is_supported(0));
+        assert!(is_supported(17));
+        assert!(is_supported(21));
+        assert!(is_supported(25));
+        // 파싱부터 판정까지: "16.0.2" 는 거부, "17.0.19" 와 "21.0.11" 은 허용.
+        assert_eq!(parse_major("16.0.2").map(is_supported), Some(false));
+        assert_eq!(parse_major("1.8.0_402").map(is_supported), Some(false));
+        assert_eq!(parse_major("17.0.19").map(is_supported), Some(true));
+        assert_eq!(parse_major("21.0.11").map(is_supported), Some(true));
     }
 }

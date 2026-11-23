@@ -68,6 +68,9 @@ class BootJarIntegrationTest {
 
   @Test
   void bootJarStartsWithEnvironmentVariablesAndMigratesAFreshDatabase() throws Exception {
+    // P1-05 (ADR-025): 자식은 이 JVM 의 java 로 뜬다. 이 JVM 이 Java 17 이어야 아래 'using Java 17.' 이 실행 JAR 이
+    // Java 17 에서 돈다는 증거가 된다. 기대값을 일부러 고정한다: 결정 없이 toolchain 을 바꾸면 이 테스트가 실패한다.
+    assertThat(Runtime.version().feature()).as("통합 테스트 JVM 의 Java 주 버전").isEqualTo(17);
     MetadataMariaDb.createEmptyDatabase(FRESH_DATABASE);
     int port = freeLoopbackPort();
     Path log = workDir.resolve("healthy.log");
@@ -117,7 +120,9 @@ class BootJarIntegrationTest {
         .doesNotContain(MetadataMariaDb.PASSWORD)
         .doesNotContain(IntegrationHttp.ADMIN_TOKEN)
         .doesNotContainIgnoringCase(IntegrationHttp.MASTER_KEY)
-        .contains("마스터 키를 읽었다");
+        .contains("마스터 키를 읽었다")
+        // P1-05 (ADR-025): Boot StartupInfoLogger 의 'Starting … using Java <버전> with PID …' 줄.
+        .contains("using Java 17.");
   }
 
   @Test
@@ -301,7 +306,7 @@ class BootJarIntegrationTest {
     }
   }
 
-  /** 지금 JVM 의 java 실행 파일(Gradle toolchain 의 Java 21). */
+  /** 지금 JVM 의 java 실행 파일(Gradle toolchain 의 Java 17, ADR-025). */
   private static String javaExecutable() {
     return ProcessHandle.current()
         .info()

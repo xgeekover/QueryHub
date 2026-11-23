@@ -1,6 +1,6 @@
 # ADR-010 Spring Boot 4.1 + Java 21
 
-- 상태: 승인됨
+- 상태: 승인됨 (Java 21 부분은 [ADR-025](ADR-025-java-17-baseline.md) 가 대체, 2026-11-23)
 - 날짜: 2026-11-15
 - 구현: 구현됨 (P0-A, ee00165)
 
@@ -16,6 +16,7 @@
 ## 결과
 
 - 구현됨 (P0-A): `runtime/gradle/libs.versions.toml` 의 `spring-boot = "4.1.2"`, `runtime/build.gradle` 의 Java toolchain `JavaLanguageVersion.of(21)`, Gradle wrapper 9.7.1(`runtime/gradle/wrapper/gradle-wrapper.properties`).
+  - 2026-11-23 주: toolchain 은 [ADR-025](ADR-025-java-17-baseline.md) 가 `JavaLanguageVersion.of(17)` 로 바꿨다(P1-05). Spring Boot 4.1.2 와 Gradle wrapper 9.7.1 은 그대로다. 위 줄은 P0-A 때의 기록으로 남긴다.
 - Boot 4 의 기본 Jackson 은 Jackson 3 이다. Boot 4.1.2 고유의 동작은 [ADR-011](ADR-011-metadata-secrets-env-only.md) 과 [ADR-012](ADR-012-flyway-connection-pin.md) 에 적었다.
 - Boot 3.5 의 OSS 지원 종료일은 외부 자료 기준, 미확인이다. 이 결정의 근거로 쓰지 않는다.
 

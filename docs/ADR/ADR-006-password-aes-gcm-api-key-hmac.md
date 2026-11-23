@@ -2,7 +2,7 @@
 
 - 상태: 승인됨
 - 날짜: 2026-11-15
-- 구현: 일부 구현 — 마스터 키와 비밀번호 암호(`SecretCipher`, AES-256-GCM)는 구현됨 (P1-04, 커밋 전, [ADR-023](ADR-023-master-key-delivery.md), [ADR-024](ADR-024-secret-cipher-format-and-rotation.md)). 연결 저장은 Phase 1 계획, API Key 는 Phase 4
+- 구현: 일부 구현 — 마스터 키와 비밀번호 암호(`SecretCipher`, AES-256-GCM)는 구현됨 (P1-04, 037385b (2026-11-23), [ADR-023](ADR-023-master-key-delivery.md), [ADR-024](ADR-024-secret-cipher-format-and-rotation.md)). 연결 저장은 Phase 1 계획, API Key 는 Phase 4
 
 ## 맥락
 

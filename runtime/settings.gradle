@@ -1,8 +1,3 @@
-plugins {
-    // 로컬에는 JDK 17 만 있을 수 있다. Java 21 toolchain 이 없으면 foojay 로 내려받는다.
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
-}
-
 dependencyResolutionManagement {
     // 저장소는 여기 한 곳에서만 선언한다. 모듈 build.gradle 에 repositories 를 두면 빌드가 실패한다.
     repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS

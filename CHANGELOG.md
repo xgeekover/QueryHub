@@ -8,9 +8,31 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다.
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. 다음 태스크 P1-06(SQLite 내장 metadata 저장소)은 계획이다.
 
-#### P1-04 마스터 키와 SecretCipher (커밋 전)
+#### P1-05 Java 17 (커밋 전)
+
+사용자 요청(2026-11-23)에 따른 태스크다. 결정은 [ADR-025](docs/ADR/ADR-025-java-17-baseline.md)(승인됨)에 있다. Spring Boot 4.1.2 는 그대로이고, [ADR-010](docs/ADR/ADR-010-spring-boot-4-java-21.md)(사용자 결정 D1)의 Java 21 부분을 대체한다. 설계 §0·§2 와 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 12, 사용자 문구와 항목별 대응은 [REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-2 에 있다.
+
+##### 추가
+
+- runtime: `JavaBaselineTest`(단위). 단위 테스트 JVM 이 Java 17 이고 domain, application, adapter-web, adapter-metadata, adapter-crypto, app 의 main 클래스가 클래스 파일 주 버전 61 인지 확인한다. 기대값은 일부러 17/61 로 고정했다.
+- runtime: `BootJarClassVersionIntegrationTest`(통합, Docker 불필요). 실행 JAR 의 Boot 로더, `BOOT-INF/classes`, `BOOT-INF/lib/*.jar` 안의 모든 클래스가 주 버전 61 이하이고(멀티 릴리스 JAR 의 `META-INF/versions/18+` 만 뺀다) `com/queryhub` 클래스는 정확히 61 인지 확인한다. 어긋나면 JAR 과 항목을 모두 적는다. 검사기 자체의 음성 시험도 있다.
+- desktop 셸: `java::is_supported`(순수 함수)와 플랫폼과 무관한 경계 시험(16 거부, 17·21 허용, `MIN_MAJOR == 17`, `parse_major("16.0.2") == Some(16)`). 감독 시험: 가짜 java 17.0.19 가 버전 확인을 통과하고 런타임을 띄운다.
+- 문서: ADR-025, REQUIREMENTS AR-2 와 AR-0 D1·D2 의 주, ARCHITECTURE 「설계와 다른 구현」 12, [BACKLOG](docs/BACKLOG.md) P104-R1–P104-R7(P1-04 리뷰 1회차 지적. R7 은 사용자 문구 「키ID 방식은 나중에 도입」).
+
+##### 변경
+
+- runtime: Java toolchain 을 `JavaLanguageVersion.of(21)` 에서 `JavaLanguageVersion.of(17)` 로 바꿨다. 컴파일(`-Xlint:all -Werror -parameters` 그대로), 단위·통합 테스트, 통합 테스트가 띄우는 실행 JAR 이 JDK 17 에서 돈다.
+- runtime: `runtime/settings.gradle` 에서 foojay resolver 플러그인을 뺐고 `runtime/gradle.properties` 에 `org.gradle.java.installations.auto-download=false` 를 더했다. JDK 를 내려받지 않고 로컬에 설치된 JDK 17 을 자동 감지로 찾는다. JDK 17 이 없으면 Gradle 의 toolchain 오류로 실패한다(실제 메시지는 [DEPLOYMENT.md](docs/DEPLOYMENT.md) 준비물).
+- runtime 시험: `MetadataStartupFailureTest` 의 `Thread.join(Duration)`(Java 19)을 `Thread.join(long)` 으로 바꿨다(같은 5 초). `BootJarIntegrationTest` 는 통합 테스트 JVM 이 17 이고 실행 JAR 의 기동 줄에 `using Java 17.` 이 있는지도 확인한다. 주석의 Java 21 을 17 로 고쳤다(`ParentProcessWatch` 의 javadoc 포함, 동작 변경 없음).
+- desktop 셸: `MIN_MAJOR` 21 → 17. 16 이하는 `java_too_old` 다. `launch.rs` 의 안내 문구 두 곳은 숫자를 `MIN_MAJOR` 에서 가져온다. 감독 시험 (9) 는 가짜 java 16.0.2 가 `java_too_old` 이고 메시지가 16.0.2, java 경로, `QUERYHUB_DESKTOP_JAVA`, 17 을 말하는지 본다(예전에는 17.0.2 를 거부했다).
+- CI: `.github/workflows/ci.yml` 의 `setup-java` 단계 이름과 `java-version` 을 17 로 바꿨다. 정의됨·미실행 그대로다(CI-1).
+- 문서: `README.md`, `docs/DEPLOYMENT.md`(준비물, desktop 준비물, `QUERYHUB_DESKTOP_JAVA` 예시), `docs/ARCHITECTURE.md`, `docs/TEST_PLAN.md`, ADR-001, ADR-010(상태 줄과 결과 줄의 주), ADR-020, `docs/ADR/README.md`. P1-04 를 아직 커밋하지 않은 것으로 적던 곳을 037385b (2026-11-23) 로 바꿨다(`README.md`, `CHANGELOG.md`, `docs/DEPLOYMENT.md`, `docs/SECURITY.md`, `docs/TEST_PLAN.md`, ADR-006, ADR-023, ADR-024, `docs/ADR/README.md`). `README.md` 의 「지금은 인증이 없다」를 P1-03 의 관리자 토큰에 맞게 고쳤다.
+
+테스트(macOS 로컬의 게이트 실행, Java 17.0.19): runtime 단위 871, 통합 28, vitest 43, cargo test 71, 모두 통과, 건너뜀 0. `selftest.sh` 는 279 시나리오다. Java 21 이상에서는 이 변경 뒤에 다시 돌리지 않았다. CI 의 수는 없다(미실행). Windows·Linux 는 미검증이다(PLAT-1).
+
+#### P1-04 마스터 키와 SecretCipher — 037385b (2026-11-23)
 
 Phase 1 범위의 둘째 태스크다. 결정은 [ADR-023](docs/ADR/ADR-023-master-key-delivery.md)(제안. 키체인을 쓰지 않는다는 것은 2026-11-23 사용자 결정)과 [ADR-024](docs/ADR/ADR-024-secret-cipher-format-and-rotation.md)(제안)에 있다. 설계 §1.2·§7 과 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 11 이다.
 

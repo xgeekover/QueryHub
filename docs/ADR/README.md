@@ -31,7 +31,7 @@ QueryHub 의 기술 결정을 결정 하나에 파일 하나로 남긴다. 다�
 | [ADR-007](ADR-007-spring-jdbc-metadata.md) | 메타데이터 접근은 Spring JDBC (JPA 미사용) | 승인됨 | 구현됨 (P0-B, f913239) | 2026-11-15 |
 | [ADR-008](ADR-008-openapi-ts-client.md) | 관리 API 의 OpenAPI 에서 TS 클라이언트 생성 | 승인됨 | 계획 (Phase 1, 6) | 2026-11-15 |
 | [ADR-009](ADR-009-mariadb-metadata-db.md) | Metadata DB 는 두 모드 모두 MariaDB | 승인됨 | 일부 구현 (P0-B) | 2026-11-15 |
-| [ADR-010](ADR-010-spring-boot-4-java-21.md) | Spring Boot 4.1 + Java 21 | 승인됨 | 구현됨 (P0-A, ee00165) | 2026-11-15 |
+| [ADR-010](ADR-010-spring-boot-4-java-21.md) | Spring Boot 4.1 + Java 21 | 승인됨 (Java 21 부분은 ADR-025 가 대체, 2026-11-23) | 구현됨 (P0-A, ee00165) | 2026-11-15 |
 | [ADR-011](ADR-011-metadata-secrets-env-only.md) | Metadata DB 비밀 값은 환경변수로만 받고, 프로세스에 보이는 출처는 거부 | 승인됨 | 구현됨 (P0-B, f913239) | 2026-11-18 |
 | [ADR-012](ADR-012-flyway-connection-pin.md) | Flyway 는 검사한 메인 DataSource 로만 마이그레이션 | 승인됨 | 구현됨 (P0-B, f913239) | 2026-11-18 |
 | [ADR-013](ADR-013-desktop-child-env-allowlist.md) | Desktop 셸은 자식 런타임에 허용 목록의 환경변수만 넘긴다 | 승인됨 | 구현됨 (P0-C, f84c628) | 2026-11-18 |
@@ -44,8 +44,9 @@ QueryHub 의 기술 결정을 결정 하나에 파일 하나로 남긴다. 다�
 | [ADR-020](ADR-020-ci-runs-gate-scripts.md) | CI 는 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다 | 제안 | 일부 구현 — 정의됨 (P0-D), 실행은 미검증 | 2026-11-20 |
 | [ADR-021](ADR-021-admin-token-bearer.md) | 관리 API 는 Bearer 관리자 토큰으로 인증하고, desktop 은 루프백과 Host 허용 목록으로 좁힌다 | 승인됨 | 구현됨 (P1-03, 2698115) | 2026-11-22 |
 | [ADR-022](ADR-022-admin-token-implementation.md) | 관리자 토큰의 구현: Spring Security 관리 체인 하나, 토큰 형식, 셸에서 WebView 로의 전달 | 제안 | 구현됨 (P1-03, 2698115) | 2026-11-22 |
-| [ADR-023](ADR-023-master-key-delivery.md) | 마스터 키 전달: server 는 환경변수나 시크릿 파일, desktop 은 셸이 만드는 키 파일(키체인 대신, 설계 §1.2·§7 과 다름) | 제안 (키체인 제외는 사용자 결정 2026-11-23) | 구현됨 (P1-04, 커밋 전) — Windows·Linux 미검증 | 2026-11-23 |
-| [ADR-024](ADR-024-secret-cipher-format-and-rotation.md) | 비밀 값 암호 형식 v1(AES-256-GCM, AAD, 키 id)과 키 교체 | 제안 | 일부 구현 (P1-04, 커밋 전) — 이전 키 입력과 일괄 재암호화는 계획 | 2026-11-23 |
+| [ADR-023](ADR-023-master-key-delivery.md) | 마스터 키 전달: server 는 환경변수나 시크릿 파일, desktop 은 셸이 만드는 키 파일(키체인 대신, 설계 §1.2·§7 과 다름) | 제안 (키체인 제외는 사용자 결정 2026-11-23) | 구현됨 (P1-04, 037385b) — Windows·Linux 미검증 | 2026-11-23 |
+| [ADR-024](ADR-024-secret-cipher-format-and-rotation.md) | 비밀 값 암호 형식 v1(AES-256-GCM, AAD, 키 id)과 키 교체 | 제안 | 일부 구현 (P1-04, 037385b) — 이전 키 입력과 일괄 재암호화는 계획 | 2026-11-23 |
+| [ADR-025](ADR-025-java-17-baseline.md) | Java 기준선은 17 이다 (Spring Boot 4.1 은 그대로, ADR-010 의 Java 버전 결정을 대체) | 승인됨 | 구현됨 (P1-05, 커밋 전) — CI 미실행, Windows·Linux 미검증 | 2026-11-23 |
 
 제안 상태인 ADR-015, ADR-017, ADR-018, ADR-020, ADR-022, ADR-023, ADR-024 는 사용자가 받아들이면 승인됨으로 바꾼다.
 

@@ -156,7 +156,7 @@ class ParentProcessWatchTest {
     return helper;
   }
 
-  /** 지금 JVM 의 java 실행 파일(Gradle toolchain 의 Java 21). */
+  /** 지금 JVM 의 java 실행 파일(Gradle toolchain 의 Java 17, ADR-025). */
   private static String javaExecutable() {
     return ProcessHandle.current()
         .info()

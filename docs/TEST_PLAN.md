@@ -128,7 +128,7 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 
 | 작업 | 러너 | 단계 (차례대로) |
 |---|---|---|
-| `gates` | `ubuntu-24.04` | checkout(`persist-credentials: false`), `test "$(id -u)" -ne 0`, WebKitGTK 패키지(`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf`), Temurin 21, pnpm 11.9.0, Node 24.16.0, rustup 1.97.1(rustfmt, clippy), cargo registry 캐시, `bash scripts/gate/selftest.sh --no-skip`, `bash scripts/gate/build.sh`, `bash scripts/gate/test.sh`, `bash scripts/gate/lint.sh`, `bash scripts/gate/integration.sh`, 깨끗한 작업 트리 확인 |
+| `gates` | `ubuntu-24.04` | checkout(`persist-credentials: false`), `test "$(id -u)" -ne 0`, WebKitGTK 패키지(`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf`), Temurin 17, pnpm 11.9.0, Node 24.16.0, rustup 1.97.1(rustfmt, clippy), cargo registry 캐시, `bash scripts/gate/selftest.sh --no-skip`, `bash scripts/gate/build.sh`, `bash scripts/gate/test.sh`, `bash scripts/gate/lint.sh`, `bash scripts/gate/integration.sh`, 깨끗한 작업 트리 확인 |
 | `desktop` | matrix `macos-15`, `windows-2025` (`fail-fast: false`, 셸 bash) | checkout, pnpm, Node, rustup, cargo registry 캐시, `bash scripts/gate/build.sh --desktop-only`, `bash scripts/gate/test.sh --desktop-only`, `bash scripts/gate/lint.sh --desktop-only`. Java, Gradle, Docker 단계는 없다 |
 
 - **같은 명령:** `gates` 작업의 네 줄은 팩토리 게이트 명령과 글자 그대로 같고 인자가 없다. 게이트 스크립트 밖에서 gradle, pnpm, cargo 를 부르지 않는다. 그러므로 junit-check, cargo-test-check, selftest 의 거짓 통과 방어도 로컬과 같다. `workflow-check.sh` 가 이 네 줄이 단계의 한 줄짜리 run 값으로 있는지(다음 줄에 이어지는 더 깊은 줄 없이), 그리고 `continue-on-error`, `if:`, bash 가 아닌 `shell:`, 단계 밖의 `run:`, 같은 매핑의 같은 키가 없는지 lint 단계에서 확인한다(P1-01).
@@ -152,7 +152,8 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 | P1-01 | 99040c0 | 300 | 23 | 30 | 32 |
 | P1-02 | 9fc70db (2026-11-22) | 300 | 23 | 30 | 38 |
 | P1-03 | 2698115 (2026-11-22) | 703 | 24 | 42 | 50 |
-| P1-04 | 커밋 전 | 868 | 26 | 43 | 68 |
+| P1-04 | 037385b (2026-11-23) | 868 | 26 | 43 | 68 |
+| P1-05 | 커밋 전 | 871 | 28 | 43 | 71 |
 
 - P0-D 의 수는 macOS 로컬의 게이트 실행에서 센 값이다. cargo test 의 새 테스트 2건은 모든 플랫폼에서 돈다. `#[cfg(windows)]` 테스트 1건은 macOS 에서 컴파일되지 않아 32 에 들어 있지 않고 미검증이다. `selftest.sh` 는 93 시나리오(P0-D 전 35, 새로 58)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
 - P1-01 의 수도 macOS 로컬의 게이트 실행에서 센 값이다. 게이트 스크립트, 문서와 주석만 바꿨으므로 runtime·통합·vitest·cargo test 수는 P0-D 와 같다. `selftest.sh` 는 227 시나리오(P0-D 의 93, 새로 134)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
@@ -165,6 +166,7 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 
 - P1-04 의 수도 macOS 로컬의 게이트 실행에서 센 값이다. runtime 단위 868 은 모듈별로 adapter-crypto 77(새 모듈), adapter-metadata 18, adapter-web 249, app 481, application 32, domain 11 이다. app 의 새 시험은 키 출처(`MasterKeySourceTest`), 두 프로파일의 기동 거부(`MasterKeyStartupTest`), 누출(`MasterKeyLeakTest`), ArchUnit R10 과 자체 검증, 중단 알림의 ASCII 표식이다. 통합 26 은 `BootJarIntegrationTest` 의 키 없는 JAR 과 argv 의 키 거부 2건을 더한 수다. vitest 43 은 `master_key_unavailable` 실패 화면 1건을 더한 수다. cargo test 68 은 `master_key.rs` 15건(그중 unix 전용 6건), `launch.rs` 1건, 감독 시험 2건(첫 시작이 키 파일을 한 번 만들고 재시작이 다시 쓴다, 형식이 틀린 키 파일은 자식을 띄우지 않는다)을 더한 수다. 실제 앱 데이터 디렉터리는 쓰지 않는다(모든 시험이 임시 디렉터리의 키 경로를 준다). 게이트 스크립트는 바꾸지 않았고 `selftest.sh` 는 279 시나리오다. CI 의 수는 없다(미실행).
 - P1-04 의 수동 확인(AC28, macOS, Queen 이 한다. 대화상자는 없다): 첫 실행 전에 `~/Library/Application Support/com.queryhub.desktop/secrets/master.key` 가 없다. 첫 실행 뒤 런타임이 running 이고 파일이 있으며, 디렉터리는 0700, 파일은 0600 이다(`stat -f '%Sp %i %m'`). 두 번째 실행 뒤 inode 와 수정 시각이 같다(한 번 만들고 다시 쓴다). 런타임의 argv 에 키가 없다(`ps -o args= -p <pid>`).
+- P1-05 의 수도 macOS 로컬의 게이트 실행에서 센 값이고, 모든 시험이 Java 17(Temurin 17.0.19)에서 돌았다([ADR-025](ADR/ADR-025-java-17-baseline.md)). runtime 단위 871 은 모듈별로 adapter-crypto 77, adapter-metadata 18, adapter-web 249, app 484, application 32, domain 11 이다. app 의 새 시험 3건은 `JavaBaselineTest`(단위 테스트 JVM 이 17, 모듈마다 main 클래스의 클래스 파일 주 버전 61, 클래스 파일 머리 읽기의 음성 시험)다. 통합 28 은 `BootJarClassVersionIntegrationTest` 2건(실행 JAR 안의 모든 클래스가 61 이하이고 `com/queryhub` 클래스는 61, 검사기의 음성 시험)을 더한 수이고, `BootJarIntegrationTest` 의 정상 기동 시험은 통합 테스트 JVM 이 17 이고 자식의 기동 줄에 `using Java 17.` 이 있는지도 본다. cargo test 71 은 `java.rs` 의 경계 시험 2건과 감독 시험 1건(가짜 java 17.0.19 가 버전 확인을 통과하고 런타임을 띄운다)을 더한 수다. 감독 시험 (9) 의 거부 시험은 이제 16.0.2 를 쓴다. vitest 는 바뀌지 않았다(43). 게이트 스크립트는 바꾸지 않았고 `selftest.sh` 는 279 시나리오다. 더 높은 Java 버전에서는 이 변경 뒤에 다시 돌리지 않았다. CI 의 수는 없다(미실행).
 
 ## 명세 12절 테스트 기준과 Phase
 

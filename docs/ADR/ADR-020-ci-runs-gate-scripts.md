@@ -15,7 +15,7 @@
 ## 결정
 
 - 워크플로는 `.github/workflows/ci.yml` 하나다. main 의 `push`, `pull_request` 와 `workflow_dispatch` 에서 돈다. `pull_request_target` 은 쓰지 않는다. `concurrency` 는 ref 마다 하나이고, `refs/heads/main` 이 아닌 ref 에서만 진행 중인 실행을 취소한다.
-- 작업 `gates` (`ubuntu-24.04`): checkout, root 가 아닌지 확인(`test "$(id -u)" -ne 0`), WebKitGTK 패키지, Temurin 21, pnpm 11.9.0, Node 24.16.0, rustup 1.97.1(rustfmt, clippy) 다음에 `bash scripts/gate/selftest.sh --no-skip` 을 돌리고, 팩토리 게이트 명령 네 줄을 인자 없이 글자 그대로 실행한다. 마지막 단계는 `git status --porcelain --untracked-files=all` 을 출력하고 비어 있지 않으면 실패한다(P0B-R7).
+- 작업 `gates` (`ubuntu-24.04`): checkout, root 가 아닌지 확인(`test "$(id -u)" -ne 0`), WebKitGTK 패키지, Temurin 17([ADR-025](ADR-025-java-17-baseline.md)), pnpm 11.9.0, Node 24.16.0, rustup 1.97.1(rustfmt, clippy) 다음에 `bash scripts/gate/selftest.sh --no-skip` 을 돌리고, 팩토리 게이트 명령 네 줄을 인자 없이 글자 그대로 실행한다. 마지막 단계는 `git status --porcelain --untracked-files=all` 을 출력하고 비어 있지 않으면 실패한다(P0B-R7).
 - 작업 `desktop` (matrix `macos-15`, `windows-2025`, `fail-fast: false`, 기본 셸 bash): Java, Gradle, Docker 단계 없이 `bash scripts/gate/build.sh --desktop-only`, `bash scripts/gate/test.sh --desktop-only`, `bash scripts/gate/lint.sh --desktop-only` 를 실행한다.
 - 통합 테스트(`integration.sh`)는 Linux 컨테이너가 필요하므로 `gates` 작업에서만 돈다. Linux Desktop(WebKitGTK)의 빌드·테스트·lint 도 `gates` 작업이 맡는다.
 - 범위 선택(`scripts/gate/lib.sh` 의 `gate_parse_scope`): 인자가 없으면 모든 단계다(팩토리 명령). 정확히 `--desktop-only` 하나면 runtime(Gradle) 단계만 빼고, 시작 안내 `게이트 범위: desktop-only, runtime(Gradle) 단계는 실행하지 않았다 (runtime 단계까지 실행하려면 인자 없이 실행한다)` 와 마지막 줄 `GATE PASS: <이름> (desktop-only, runtime(Gradle) 단계는 실행하지 않았다…)` 로 그 사실을 밝힌다. 그 밖의 인자는 어떤 도구도 실행하기 전에 exit 2 다. 환경변수로는 범위를 고를 수 없다. `integration.sh` 는 인자를 받지 않는다.

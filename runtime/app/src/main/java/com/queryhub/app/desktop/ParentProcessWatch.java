@@ -18,8 +18,9 @@ import org.slf4j.LoggerFactory;
  *       메시지는 변수 이름을 말한다.
  *   <li>감시는 Spring 컨텍스트를 만들기 전에 시작한다({@code QueryHubApplication.main}). 그래서 기동이 멈춰 있는 동안(예: Hikari
  *       가 DB 를 10 초 기다리는 중) 셸이 끝나도 런타임이 끝난다.
- *   <li>JDK 는 자식이 아닌 프로세스를 길어야 5 초마다 확인하고, 시작 시각을 비교해 PID 재사용을 알아챈다(JDK 21
- *       ProcessHandleImpl.completion). 그래서 감지는 길어야 5 초쯤 늦다.
+ *   <li>JDK 는 자식이 아닌 프로세스를 길어야 5 초마다 확인하고, 시작 시각을 비교해 PID 재사용을 알아챈다(ProcessHandle.onExit). 그래서 감지는
+ *       길어야 5 초쯤 늦다. 기준선 Java 17(ADR-025)에서의 동작은 DesktopParentWatchIntegrationTest(부모가 죽으면 20 초 안에
+ *       끝난다)가 확인한다.
  *   <li>부모가 끝나면 INFO 한 줄을 남기고 종료 동작을 부른다. 운영 동작({@link #exitJvm()})은 System.exit 로 Boot 의 종료 훅이
  *       컨텍스트를 닫게 하고, 30 초 뒤에도 JVM 이 살아 있으면 Runtime.halt 로 끝낸다. 테스트는 종료 동작을 바꿔 넣는다.
  * </ul>

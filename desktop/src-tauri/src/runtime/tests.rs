@@ -924,6 +924,12 @@ fn java_is_resolved_from_queryhub_desktop_java_then_java_home_then_path() {
     env.insert("PATH".into(), empty_dir.display().to_string());
     let missing = launch::resolve_java(&env).expect_err("missing");
     assert_eq!(missing.kind, FailureKind::JavaNotFound);
+    // 안내하는 최소 버전은 java::MIN_MAJOR(17)에서 온다 (P1-05, ADR-025).
+    assert!(
+        missing.message.contains("JDK 17 이상"),
+        "{}",
+        missing.message
+    );
 
     // 명시한 경로가 틀리면 JAVA_HOME 으로 넘어가지 않는다.
     let wrong = sandbox.root.join("missing").join("java");
@@ -932,13 +938,18 @@ fn java_is_resolved_from_queryhub_desktop_java_then_java_home_then_path() {
     let failure = launch::resolve_java(&env).expect_err("explicit missing");
     assert_eq!(failure.kind, FailureKind::JavaNotFound);
     assert!(failure.message.contains(&wrong.display().to_string()));
+    assert!(
+        failure.message.contains("JDK 17 이상"),
+        "{}",
+        failure.message
+    );
 }
 
-// (9)
+// (9) 기준선 Java 17 (P1-05, ADR-025): 16 은 거부한다.
 #[test]
-fn java_17_gives_java_too_old_naming_the_version_and_path() {
+fn java_16_gives_java_too_old_naming_the_version_and_path() {
     let sandbox = Sandbox::new();
-    sandbox.fake_java("17.0.2", SLEEP_LOOP);
+    sandbox.fake_java("16.0.2", SLEEP_LOOP);
     let supervisor = Supervisor::new(
         sandbox.config(free_port(), launch::port_is_free),
         sandbox.env(),
@@ -948,13 +959,43 @@ fn java_17_gives_java_too_old_naming_the_version_and_path() {
     let status = supervisor.start();
     let failure = status.failure.as_ref().expect("failure");
     assert_eq!(failure.kind, FailureKind::JavaTooOld);
-    assert!(failure.message.contains("17.0.2"), "{}", failure.message);
+    assert!(failure.message.contains("16.0.2"), "{}", failure.message);
     assert!(failure
         .message
         .contains(&sandbox.java().display().to_string()));
     assert!(failure.message.contains(launch::JAVA_VAR));
+    assert!(
+        failure.message.contains("Java 17 이상"),
+        "{}",
+        failure.message
+    );
     assert_eq!(status.pid, None);
     assert!(!sandbox.spawned());
+}
+
+// (9) 기준선 Java 17 (P1-05, ADR-025): 17 은 버전 확인을 통과하고 런타임을 띄운다.
+#[test]
+fn java_17_passes_the_version_check_and_spawns_the_runtime() {
+    let sandbox = Sandbox::new();
+    sandbox.fake_java("17.0.19", SLEEP_LOOP);
+    let server = FakeServer::start(200, 200);
+    let supervisor = Supervisor::new(
+        sandbox.config(server.port, always_free),
+        sandbox.env(),
+        token(),
+    );
+
+    let first = supervisor.start();
+    assert!(first.failure.is_none(), "{first:?}");
+    let running = wait_for(&supervisor, WAIT, "running + up", |s| {
+        s.state == RuntimeState::Running && s.health == Health::Up
+    });
+    let pid = running.pid.expect("pid");
+    assert!(sandbox.spawned());
+    assert!(running.failure.is_none());
+
+    assert_eq!(supervisor.stop().state, RuntimeState::Stopped);
+    assert!(!alive(pid));
 }
 
 // (9)
