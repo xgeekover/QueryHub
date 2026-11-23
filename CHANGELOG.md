@@ -10,6 +10,12 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. 다음은 DB Provider 와 연결 CRUD 다.
 
+#### MIT 라이선스 (커밋 전)
+
+##### 추가
+
+- 저장소 루트의 [LICENSE](LICENSE)(MIT, `Copyright (c) 2026 xgeekover`)와 README 의 「라이선스」 절. 사용자 결정(2026-11-23) 「MIT」에 따른 것이다. 코드와 테스트는 바뀌지 않았다.
+
 #### P1-06 내장 SQLite Metadata 저장소 (커밋 전)
 
 사용자 결정(2026-11-23)에 따른 태스크다. 결정은 [ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md)(승인됨)에 있고, [ADR-009](docs/ADR/ADR-009-mariadb-metadata-db.md)(사용자 결정 D2), [ADR-011](docs/ADR/ADR-011-metadata-secrets-env-only.md), [ADR-017](docs/ADR/ADR-017-desktop-metadata-settings-from-env.md)을 대체한다. 명세 3절 「Metadata Database: MariaDB」와 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 13, 사용자 문구와 항목별 대응은 [REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-2 에 있다. P1-05 리뷰의 후속 R1, R2, R3, R6, R8 도 함께 했다.

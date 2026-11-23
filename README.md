@@ -60,6 +60,7 @@ Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 ├─ .github/workflows/      CI 워크플로 ci.yml (정의됨·미실행, 팩토리 게이트와 같은 스크립트를 부른다)
 ├─ .editorconfig  .gitattributes  .gitignore
 ├─ CHANGELOG.md
+├─ LICENSE
 └─ README.md
 ```
 
@@ -126,3 +127,9 @@ pnpm --dir desktop tauri dev
 | [docs/BACKLOG.md](docs/BACKLOG.md) | 리뷰에서 넘어온 후속 과제와 목표 Phase |
 | [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md) | Phase 0 보고: 통과 기준과 근거, 태스크별 요약, 사람의 결정, 남은 문제, 미검증 항목, 다음 단계 |
 | [CHANGELOG.md](CHANGELOG.md) | 태스크별 변경, 테스트 수, 남은 문제 |
+
+## 라이선스
+
+QueryHub 는 MIT 라이선스로 배포한다(2026-11-23 사용자 결정). 전문과 저작권 표시(`Copyright (c) 2026 xgeekover`)는 저장소 루트의 [LICENSE](LICENSE)에 있다.
+
+서드파티 의존성은 MIT 가 아니라 각자의 라이선스를 따른다. Metadata 저장소 드라이버 `sqlite-jdbc` 의 라이선스(Apache-2.0, 번들된 SQLite 는 public domain)와 업무 DB 드라이버(계획)의 라이선스는 [docs/DATABASE_SUPPORT.md](docs/DATABASE_SUPPORT.md)에 있다.
