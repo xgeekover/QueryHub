@@ -1,0 +1,14 @@
+<configuration>
+  <!-- 단위 테스트는 LogCapture 가 루트 로거에서 모든 수준의 로그를 붙잡아 비밀번호가 없는지 본다. 콘솔에는 WARN 이상만 낸다. -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>WARN</level>
+    </filter>
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="DEBUG">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>

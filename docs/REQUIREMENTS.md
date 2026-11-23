@@ -714,7 +714,7 @@ XLSX의 최대 행 제한을 고려하고, 초과 시 명확한 오류 또는 �
 | 결정 | 승인된 내용 | 대체하는 원문 | 문서 |
 |---|---|---|---|
 | D1 | Spring Boot 4.1 + Java 21. **Java 21 부분은 [AR-2](#ar-2-java-17-에서-실행-승인-2026-11-23) / [ADR-025](ADR/ADR-025-java-17-baseline.md) 가 대체했다 (2026-11-23): Spring Boot 4.1 은 그대로이고 Java 17 로 컴파일·테스트·실행한다** | 원문 3절 Backend 의 「Java 17 이상」, 「Spring Boot 3.x」 | [ADR-010](ADR/ADR-010-spring-boot-4-java-21.md), [ADR-025](ADR/ADR-025-java-17-baseline.md) |
-| D2 | Metadata DB 는 Desktop Mode 와 Server Mode 모두 MariaDB 하나다. 내장 DB(H2)를 쓰자는 제안은 반려됐다. **이 결정은 [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) 이 대체했다 (2026-11-23): 사용자가 「2. SQLite 내장」과 「3. 권장하는 반식으로 진행」으로 답해, Metadata 저장소는 두 모드 모두 내장 SQLite 이고 MariaDB 는 metadata 저장소 선택지로 남지 않는다([AR-2](#ar-2-java-17-에서-실행-승인-2026-11-23) 2·3항). 구현됨 (P1-06, 커밋 전). MariaDB 는 업무 DB 로서 계속 지원 계획이다** | 원문 3절 Metadata Database 의 「MariaDB」를 두 모드 모두에 적용한다는 확인이었다. ADR-026 부터는 원문 3절의 「MariaDB」와 다르다([ARCHITECTURE.md](ARCHITECTURE.md) 「설계와 다른 구현」 13) | [ADR-009](ADR/ADR-009-mariadb-metadata-db.md) (대체됨), [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) |
+| D2 | Metadata DB 는 Desktop Mode 와 Server Mode 모두 MariaDB 하나다. 내장 DB(H2)를 쓰자는 제안은 반려됐다. **이 결정은 [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) 이 대체했다 (2026-11-23): 사용자가 「2. SQLite 내장」과 「3. 권장하는 반식으로 진행」으로 답해, Metadata 저장소는 두 모드 모두 내장 SQLite 이고 MariaDB 는 metadata 저장소 선택지로 남지 않는다([AR-2](#ar-2-java-17-에서-실행-승인-2026-11-23) 2·3항). 구현됨 (P1-06, 39c90e1 (2026-11-23)). MariaDB 는 업무 DB 로서 지원한다(P1-07 의 MariaDB Provider, [ADR-027](ADR/ADR-027-database-provider.md))** | 원문 3절 Metadata Database 의 「MariaDB」를 두 모드 모두에 적용한다는 확인이었다. ADR-026 부터는 원문 3절의 「MariaDB」와 다르다([ARCHITECTURE.md](ARCHITECTURE.md) 「설계와 다른 구현」 13) | [ADR-009](ADR/ADR-009-mariadb-metadata-db.md) (대체됨), [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) |
 | D3 | HTTP 포트는 하나다. 관리 API 와 데이터 API 는 경로로 나눈다. 포트 분리는 「나중에 필요하면 그 때」 정한다 | 원문에는 포트에 관한 문장이 없다. 새로 정한 것이다 | [ADR-002](ADR/ADR-002-single-http-port.md) |
 | D4 | Phase 0 에 Desktop 셸 스파이크(Tauri 에서 런타임 기동·중지·헬스 표시)를 넣는다. UI 본 구현은 Phase 6 그대로다 | 원문 11절 「Phase 0. 프로젝트 기반 구축」 목록(Desktop 없음)과 「Phase 6. Desktop Application」의 「Tauri 연동」 | [ARCHITECTURE.md 의 Phase 계획](ARCHITECTURE.md#phase-계획) |
 
@@ -763,9 +763,9 @@ XLSX의 최대 행 제한을 고려하고, 초과 시 명확한 오류 또는 �
 
 | 항목 | 뜻 | 상태 | 문서 |
 |---|---|---|---|
-| 1. 진행 | P1-05: Spring Boot 4.1 은 그대로 두고 Java 17 로 컴파일·테스트·실행한다. AR-0 D1 의 Java 21 부분을 대체한다. Gradle toolchain 은 정확히 17 이고 로컬에 설치된 JDK 17 만 쓴다(JDK 를 내려받지 않는다). desktop 셸은 Java 17 이상을 받고 16 이하는 `java_too_old` 로 거부한다. CI 는 Java 17 을 준비한다. Java 18 이상의 API 와 언어 기능은 쓰지 않는다 | 구현됨 (P1-05, 6ceef51 (2026-11-23)). 테스트는 Java 17 에서 돌았다. Java 21 이상에서는 이 변경 뒤에 다시 돌리지 않았다. CI 는 정의됨·미실행(CI-1), Windows·Linux 는 미검증(PLAT-1) | [ADR-025](ADR/ADR-025-java-17-baseline.md) |
-| 2. SQLite 내장 | P1-06: Metadata 저장소를 desktop·server 모두 내장 SQLite(`org.xerial:sqlite-jdbc` 3.53.4.0, BOM 관리)로 바꾼다. 데이터 디렉터리 `QUERYHUB_DATA_DIR`(환경변수, 외부 설정 파일 또는 명령행)의 `queryhub.db`. AR-0 D2(Metadata DB 는 MariaDB 하나)를 대체한다. desktop 셸은 `<앱 로컬 데이터 디렉터리>/data` 를 넘기므로 앱이 환경변수 없이 시작한다 | 구현됨 (P1-06, 커밋 전). macOS arm64 만 실행했다. 다른 네이티브와 Windows·Linux 는 미검증(PLAT-1), CI 는 정의됨·미실행(CI-1) | [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) (ADR-009 를 대체) |
-| 3. 권장하는 반식으로 진행 | P1-06 을 Queen 이 권한 방식으로 진행한다: MariaDB 를 metadata 저장소 선택지로 남기지 않는다. `QUERYHUB_METADATA_DB_*`, MariaDB 드라이버와 `flyway-mysql`, Testcontainers MariaDB 시험, `deploy/compose.dev.yml` 을 지웠다. 여러 서버가 저장소 하나를 함께 써야 할 때 다시 더한다([BACKLOG.md](BACKLOG.md) P106-1) | 구현됨 (P1-06, 커밋 전) | [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) |
+| 1. 진행 | P1-05: Spring Boot 4.1 은 그대로 두고 Java 17 로 컴파일·테스트·실행한다. AR-0 D1 의 Java 21 부분을 대체한다. Gradle toolchain 은 정확히 17 이고 로컬에 설치된 JDK 17 만 쓴다(JDK 를 내려받지 않는다). desktop 셸은 Java 17 이상을 받고 16 이하는 `java_too_old` 로 거부한다. CI 는 Java 17 을 준비한다. Java 18 이상의 API 와 언어 기능은 쓰지 않는다 | 구현됨 (P1-05, 6ceef51 (2026-11-23)). 테스트는 Java 17 에서 돌았다. Java 21 이상에서는 이 변경 뒤에 다시 돌리지 않았다. CI 는 2026-11-23 부터 실행되고 Linux·macOS 작업은 통과했다. Windows 는 미검증(PLAT-1, CI-1) | [ADR-025](ADR/ADR-025-java-17-baseline.md) |
+| 2. SQLite 내장 | P1-06: Metadata 저장소를 desktop·server 모두 내장 SQLite(`org.xerial:sqlite-jdbc` 3.53.4.0, BOM 관리)로 바꾼다. 데이터 디렉터리 `QUERYHUB_DATA_DIR`(환경변수, 외부 설정 파일 또는 명령행)의 `queryhub.db`. AR-0 D2(Metadata DB 는 MariaDB 하나)를 대체한다. desktop 셸은 `<앱 로컬 데이터 디렉터리>/data` 를 넘기므로 앱이 환경변수 없이 시작한다 | 구현됨 (P1-06, 39c90e1 (2026-11-23)). 로컬은 macOS arm64, CI 는 Linux x86_64 에서 실행했다. 다른 네이티브와 Windows 는 미검증(PLAT-1, CI-1) | [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) (ADR-009 를 대체) |
+| 3. 권장하는 반식으로 진행 | P1-06 을 Queen 이 권한 방식으로 진행한다: MariaDB 를 metadata 저장소 선택지로 남기지 않는다. `QUERYHUB_METADATA_DB_*`, MariaDB 드라이버와 `flyway-mysql`, Testcontainers MariaDB 시험, `deploy/compose.dev.yml` 을 지웠다. 여러 서버가 저장소 하나를 함께 써야 할 때 다시 더한다([BACKLOG.md](BACKLOG.md) P106-1) | 구현됨 (P1-06, 39c90e1 (2026-11-23)) | [ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md) |
 | 4. 병합 및 승인 (키ID 방식은 나중에 도입) | P1-04 커밋(037385b, 2026-11-23)을 승인했다. 「키ID 방식은 나중에 도입」은 P1-04 리뷰 지적 R7(kid 를 AES 키 자체로 만든 HMAC-SHA256 으로 얻는다)에 대한 답이다: 지금의 kid 유도를 그대로 두고 나중에 다시 본다 | P1-04 구현됨 (037385b). kid 유도 변경은 정하지 않음 | [ADR-024](ADR/ADR-024-secret-cipher-format-and-rotation.md), [BACKLOG.md](BACKLOG.md) P104-R7 |
 
 [편집자 주: 3항의 「반식」은 사용자가 적은 글자 그대로다(「방식」의 오타로 읽는다). 「SQLLite」도 원문 그대로다. 이 주는 인용문의 일부가 아니다.]
@@ -774,3 +774,16 @@ XLSX의 최대 행 제한을 고려하고, 초과 시 명확한 오류 또는 �
 
 > 「1. 커밋과 병합 승인
 > 2. 다음 작업 진행」
+
+### AR-3 P1-07 의 사람 결정 (2026-11-23)
+
+P1-07(업무 DB Provider) 진행 중에 사람이 정한 것이다. 인용 부호 안은 사람이 적은 글자 그대로다.
+
+| 결정 | 뜻 | 상태 | 문서 |
+|---|---|---|---|
+| PostgreSQL 드라이버와 Testcontainers PostgreSQL 모듈 내려받기 승인 | 그 둘(과 pgjdbc 의 전이 의존성 checker-qual)만 받았다 | P1-07 에서 받음 | [DATABASE_SUPPORT.md](DATABASE_SUPPORT.md) |
+| 「Phase 1 마무리로 미룸」 | CI-2(Gradle 의존성 검증과 체크섬)를 P1-12 로 미룬다 | 계획 (P1-12) | [BACKLOG.md](BACKLOG.md) CI-2 |
+| 「Oracle만, MSSQL은 테스트 생략」 | P1-10 이 Oracle Provider(ojdbc 내려받기는 그때 사람이 다시 답한다), P1-11 이 MSSQL Provider(드라이버만, arm64 이미지가 없어 통합 시험은 생략) | 계획 (P1-10, P1-11) | [BACKLOG.md](BACKLOG.md) P107-2, P107-3 |
+| MIT 라이선스 | 저장소 루트의 [LICENSE](../LICENSE) | 구현됨 (319c8ee) | [README.md](../README.md) |
+| 「별도 작은 태스크 (권장)」 | Windows CI 의 심볼릭 링크 실패(CI-1)는 P1-07 에서 고치지 않는다. 점검기 규칙(`FORBIDDEN_ENV` 의 `MSYS*`)은 그대로다. P1-07 바로 다음의 작은 태스크가 보호 파일 `scripts/gate/selftest.sh` 의 i6 줄만 고친다: 그 `ln -s` 하나에만 `MSYS=winsymlinks:native`, 그래도 깨진 링크를 만들지 못하면 이유를 적고 i6 SKIP. 보호 파일을 바꾸는 동의는 그 태스크에만 해당한다. run 명령 안에 설정을 넣는 모양(`run: MSYS=… bash …`)은 점검기가 run 명령 안을 보지 않아 통과할 뿐이므로 쓰지 않는다 | 계획 (P1-07 다음 태스크). Windows 는 그 태스크의 push 뒤 CI 실행까지 미검증(PLAT-1) | [BACKLOG.md](BACKLOG.md) CI-1 |
+| 릴리스는 Phase 8 로 미룬다 | 버전 번호와 릴리스는 Phase 8 에서 정한다 | 계획 (Phase 8) | [CHANGELOG.md](../CHANGELOG.md) |

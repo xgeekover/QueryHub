@@ -41,15 +41,16 @@ QueryHub 의 기술 결정을 결정 하나에 파일 하나로 남긴다. 다�
 | [ADR-017](ADR-017-desktop-metadata-settings-from-env.md) | Phase 0 Desktop 은 Metadata DB 설정을 셸 환경변수에서 읽는다 | 대체됨(ADR-026) | 구현됨 (P0-C, f84c628). P1-06 에서 지웠다 | 2026-11-19 |
 | [ADR-018](ADR-018-mariadb-connector-j-override.md) | MariaDB Connector/J 3.5.11 로 BOM 버전을 덮어쓴다 | 제안 | 구현됨 (P0-B, f913239). P1-06 부터 드라이버는 Provider 태스크까지 클래스패스에 없다(덮어쓰기 줄은 남겼다) | 2026-11-18 |
 | [ADR-019](ADR-019-gate-scripts-judge-results.md) | 게이트 스크립트가 테스트 결과를 직접 판정한다 | 승인됨 | 구현됨 (P0-A, P0-B, P0-C) | 2026-11-15 |
-| [ADR-020](ADR-020-ci-runs-gate-scripts.md) | CI 는 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다 | 제안 | 일부 구현 — 정의됨 (P0-D), 실행은 미검증 | 2026-11-20 |
+| [ADR-020](ADR-020-ci-runs-gate-scripts.md) | CI 는 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다 | 제안 | 구현됨 (P0-D) — 2026-11-23 부터 실행된다. Linux·macOS 작업 통과, Windows 작업 실패(CI-1) | 2026-11-20 |
 | [ADR-021](ADR-021-admin-token-bearer.md) | 관리 API 는 Bearer 관리자 토큰으로 인증하고, desktop 은 루프백과 Host 허용 목록으로 좁힌다 | 승인됨 | 구현됨 (P1-03, 2698115) | 2026-11-22 |
 | [ADR-022](ADR-022-admin-token-implementation.md) | 관리자 토큰의 구현: Spring Security 관리 체인 하나, 토큰 형식, 셸에서 WebView 로의 전달 | 제안 | 구현됨 (P1-03, 2698115) | 2026-11-22 |
 | [ADR-023](ADR-023-master-key-delivery.md) | 마스터 키 전달: server 는 환경변수나 시크릿 파일, desktop 은 셸이 만드는 키 파일(키체인 대신, 설계 §1.2·§7 과 다름) | 제안 (키체인 제외는 사용자 결정 2026-11-23) | 구현됨 (P1-04, 037385b) — Windows·Linux 미검증 | 2026-11-23 |
 | [ADR-024](ADR-024-secret-cipher-format-and-rotation.md) | 비밀 값 암호 형식 v1(AES-256-GCM, AAD, 키 id)과 키 교체 | 제안 | 일부 구현 (P1-04, 037385b) — 이전 키 입력과 일괄 재암호화는 계획 | 2026-11-23 |
-| [ADR-025](ADR-025-java-17-baseline.md) | Java 기준선은 17 이다 (Spring Boot 4.1 은 그대로, ADR-010 의 Java 버전 결정을 대체) | 승인됨 | 구현됨 (P1-05, 6ceef51) — CI 미실행, Windows·Linux 미검증 | 2026-11-23 |
-| [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) | Metadata 저장소는 두 모드 모두 내장 SQLite 다 (ADR-009 를 대체) | 승인됨 | 구현됨 (P1-06, 커밋 전) — macOS arm64 만 실행, 다른 네이티브와 Windows·Linux 미검증, CI 미실행 | 2026-11-23 |
+| [ADR-025](ADR-025-java-17-baseline.md) | Java 기준선은 17 이다 (Spring Boot 4.1 은 그대로, ADR-010 의 Java 버전 결정을 대체) | 승인됨 | 구현됨 (P1-05, 6ceef51) — Linux·macOS 는 CI 통과(2026-11-23), Windows 미검증 | 2026-11-23 |
+| [ADR-026](ADR-026-sqlite-embedded-metadata-store.md) | Metadata 저장소는 두 모드 모두 내장 SQLite 다 (ADR-009 를 대체) | 승인됨 | 구현됨 (P1-06, 39c90e1 (2026-11-23)), P1-07 보강은 커밋 전 — macOS arm64 와 Linux x86_64(CI) 실행, 다른 네이티브와 Windows 미검증 | 2026-11-23 |
+| [ADR-027](ADR-027-database-provider.md) | 업무 DB Provider: 필드로 만든 URL, 옵션 허용 목록, 고정 속성, `Driver.connect`, 연결마다 읽기 전용 Hikari 풀(Spring 빈 아님), 고정 메시지 | 제안 | 구현됨 (P1-07, 커밋 전) — MariaDB·PostgreSQL 만, Oracle·MSSQL 계획(P1-10, P1-11) | 2026-11-23 |
 
-제안 상태인 ADR-015, ADR-018, ADR-020, ADR-022, ADR-023, ADR-024 는 사용자가 받아들이면 승인됨으로 바꾼다. ADR-009, ADR-011, ADR-017 은 2026-11-23 에 ADR-026 이 대체했다.
+제안 상태인 ADR-015, ADR-018, ADR-020, ADR-022, ADR-023, ADR-024, ADR-027 은 사용자가 받아들이면 승인됨으로 바꾼다. ADR-009, ADR-011, ADR-017 은 2026-11-23 에 ADR-026 이 대체했다.
 
 ## 템플릿
 

@@ -2,7 +2,7 @@
 
 - 상태: 제안
 - 날짜: 2026-11-20
-- 구현: 일부 구현 — 정의됨 (P0-D), 실행은 미검증
+- 구현: 구현됨 (P0-D). 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux·macOS 작업은 통과하고 Windows 작업은 실패한다([BACKLOG](../BACKLOG.md) CI-1)
 
 ## 맥락
 
@@ -33,9 +33,9 @@
 
 - 로컬 팩토리와 CI 가 같은 판정 코드를 쓴다. 0건, 실패, 건너뜀, 이전 결과를 거부하는 방어가 CI 에도 그대로 적용된다.
 - 새 checkout 뒤의 깨끗한 작업 트리 확인이 P0B-R7 의 「`A` 줄만 있어야 통과」 읽는 법을 대신한다. 로컬 새 사본 검사는 CI 가 처음 돌기 전까지 기준으로 남는다([TEST_PLAN.md](../TEST_PLAN.md)).
-- Windows·Linux Desktop 이 처음으로 실행될 자리가 생겼다(PLAT-1). 하지만 아직 한 번도 실행되지 않았다([BACKLOG](../BACKLOG.md) CI-1).
+- Windows·Linux Desktop 이 처음으로 실행될 자리가 생겼다(PLAT-1). P1-06(39c90e1)과 MIT 라이선스(319c8ee) 코드를 돌린 두 push 실행(45135537429, 45139240703)에서 `gates (ubuntu-24.04)` 와 `desktop (macos-15, --desktop-only)` 는 성공했고, `desktop (windows-2025, --desktop-only)` 는 `test.sh` 의 junit-check 자체 검증(`selftest.sh:92` 의 `ln -s`, Git Bash 는 대상이 없는 링크를 만들지 못한다)에서 실패했다([BACKLOG](../BACKLOG.md) CI-1).
 - 치르는 값: 산출물을 캐시하지 않으므로 매 실행이 느리다. `desktop` 작업은 runtime 단계를 돌리지 않으므로 macOS·Windows 에서 Gradle 빌드는 CI 가 확인하지 않는다. `workflow-check.sh` 는 줄 단위 점검이고 YAML 파서나 표현식 검증기가 아니다. 다루지 않는 문법, 허용 목록 밖의 줄 모양, 여러 줄에 걸친 평범한 스칼라, LF 가 아닌 줄바꿈 문자와 단계 밖의 `run:` 은 거부하므로 워크플로를 쓰는 방식이 좁아진다(이름이 `run` 인 action 입력, 점이 든 키, 여러 줄 값도 쓸 수 없다). action 입력 이름, 표현식의 뜻, 러너 레이블이 있는지, 트리거와 브랜치 필터, `working-directory`, `FORBIDDEN_ENV` 밖의 env 이름(`HOME`, `TMPDIR`, `LANG`·`LC_*`, `JAVA_TOOL_OPTIONS`·`NODE_OPTIONS`·`GRADLE_OPTS`·`RUSTC_WRAPPER` 같은 도구 옵션 변수)으로 도구를 바꿔치기하는 것과 `container:`·`services:` 의 env 는 확인하지 않는다(리뷰와 첫 실행이 본다). 표현식은 `secrets` 와 `github` 문맥만 본다: `inputs`, `vars`, `needs`, `steps`, `matrix`, `env`, `job`, `runner`, `strategy` 문맥의 값은 보지 않는다. 단계 명령이 무엇을 하는지도 보지 않는다: 앞 단계가 게이트 스크립트를 고쳐 쓰거나 `$GITHUB_ENV`·`$GITHUB_PATH`·`$GITHUB_OUTPUT` 에 써서(예: `BASH_ENV` 설정) 뒤 단계를 바꾸는 것, `container:` 와 `services:` 는 잡지 못한다(P1-01 리뷰 3회차 C3-R2). YAML 을 GitHub 와 같게 읽는지도 확인하지 않았다: 전수 점검은 libyaml 0.2.1(Ruby Psych)과 견준 구성에서만 했다. 그 awk 는 `LC_ALL=C` 로 돌리고 macOS `/usr/bin/awk` 에서만 돌려 봤다.
-- 미검증(첫 실행 전에는 알 수 없다): 러너 레이블, action 입력 이름, Git Bash 위의 Windows 단계(가짜 실행 파일과 심볼릭 링크를 쓰는 selftest 시나리오 포함), Linux WebKitGTK 빌드, ubuntu 의 awk(mawk)에서 새 awk 코드, Windows 에서만 컴파일되는 `#[cfg(windows)]` 테스트.
+- 첫 실행(2026-11-23)에서 러너 레이블, action 입력 이름, Linux WebKitGTK 빌드, ubuntu 의 awk(mawk)에서 새 awk 코드를 확인했다. 미검증: Git Bash 위의 Windows 단계(가짜 실행 파일과 심볼릭 링크를 쓰는 selftest 시나리오 포함), Windows 에서만 컴파일되는 `#[cfg(windows)]` 테스트.
 - 남은 문제: CI-1, CI-2, PLAT-1. P0B-R6 은 P1-06 에서 닫혔다(아래 주).
 - 2026-11-23 주 (P1-06, [ADR-026](ADR-026-sqlite-embedded-metadata-store.md)): Metadata 저장소가 내장 SQLite 가 되어 통합 테스트는 Testcontainers 와 `mariadb:12.3` 을 쓰지 않는다(P0B-R6 의 열린 포트도 없어졌다). `integration.sh` 의 Docker 사전 점검은 그대로 두었다. 다음 DB Provider 태스크의 통합 테스트가 Docker 를 다시 쓰기 때문이다. 그래서 `integration.sh` 는 지금도 `gates` 작업에만 있고 Docker 가 필요하다. 맥락의 `mariadb:12.3` 줄은 P0-D 때의 기록이다.
 

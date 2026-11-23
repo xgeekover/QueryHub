@@ -120,7 +120,7 @@ class MetadataFlywayConnectionTest {
                       "jdbc:sqlite:"
                           + dataDir().resolve("queryhub.db")
                           + "?journal_mode=WAL&synchronous=FULL&foreign_keys=true"
-                          + "&busy_timeout=5000&transaction_mode=IMMEDIATE");
+                          + "&busy_timeout=5000&transaction_mode=IMMEDIATE&open_mode=2");
               assertThat(context.getBean(Flyway.class).getConfiguration().getDataSource())
                   .as("Flyway 는 주 풀로 마이그레이션한다")
                   .isSameAs(main);

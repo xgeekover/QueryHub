@@ -3,6 +3,9 @@ package com.queryhub.app;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.queryhub.adapter.crypto.AesGcmSecretCipher;
+import com.queryhub.adapter.dbprovider.JdbcDatabaseProvider;
+import com.queryhub.adapter.dbprovider.provider.mariadb.MariaDbJdbcProvider;
+import com.queryhub.adapter.dbprovider.provider.postgresql.PostgreSqlJdbcProvider;
 import com.queryhub.adapter.metadata.setting.JdbcAppSettingRepository;
 import com.queryhub.adapter.web.admin.security.AdminTokenFilter;
 import com.queryhub.application.runtime.GetRuntimeInfoUseCase;
@@ -47,6 +50,9 @@ class JavaBaselineTest {
     mainClassPerModule.put("adapter-web", AdminTokenFilter.class);
     mainClassPerModule.put("adapter-metadata", JdbcAppSettingRepository.class);
     mainClassPerModule.put("adapter-crypto", AesGcmSecretCipher.class);
+    mainClassPerModule.put("adapter-dbprovider", JdbcDatabaseProvider.class);
+    mainClassPerModule.put("provider-mariadb", MariaDbJdbcProvider.class);
+    mainClassPerModule.put("provider-postgresql", PostgreSqlJdbcProvider.class);
     mainClassPerModule.put("app", QueryHubApplication.class);
 
     for (Map.Entry<String, Class<?>> entry : mainClassPerModule.entrySet()) {

@@ -35,6 +35,16 @@ public final class StoreLock implements Closeable {
 
   private static final String ROLE = "Metadata 저장소 잠금 파일";
 
+  /** 잠금 파일의 채널을 여는 방법. 운영 코드는 {@link #OPEN_FOR_WRITE} 만 쓴다. 시험은 실패를 넣는다. */
+  @FunctionalInterface
+  interface ChannelOpener {
+    FileChannel open(Path lockFile) throws IOException;
+  }
+
+  /** 쓰기로, 링크를 따라가지 않고 연다. */
+  static final ChannelOpener OPEN_FOR_WRITE =
+      lockFile -> FileChannel.open(lockFile, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+
   private final Path lockFile;
   private final Object identity;
   private final FileChannel channel;
@@ -54,6 +64,15 @@ public final class StoreLock implements Closeable {
    * @throws MetadataStoreException 다른 런타임(다른 프로세스나 같은 JVM)이 잡고 있거나, 파일 규칙에 어긋나거나, 열 수 없을 때
    */
   static StoreLock acquire(StoreLayout layout) {
+    return acquire(layout, OPEN_FOR_WRITE);
+  }
+
+  /**
+   * {@link #acquire(StoreLayout)} 와 같고 채널을 {@code opener} 로 연다. 잠그지 못하면 어떤 실패든(RuntimeException 이든
+   * OutOfMemoryError·InternalError 같은 Error 든) JVM 표에서 정체를 빼고 다시 던진다. 빼지 않으면 닫을 StoreLock 이 없어 이
+   * 데이터 디렉터리를 이 JVM 에서 다시 열 수 없다(P1-06 리뷰 N3).
+   */
+  static StoreLock acquire(StoreLayout layout, ChannelOpener opener) {
     Path lockFile = layout.lockFile();
     PrivatePaths.createPrivateFile(lockFile, ROLE);
     PrivatePaths.checkExistingFile(lockFile, ROLE);
@@ -63,17 +82,18 @@ public final class StoreLock implements Closeable {
       throw held(layout, lockFile);
     }
     try {
-      return lock(layout, lockFile, identity);
-    } catch (RuntimeException failure) {
+      return lock(layout, lockFile, identity, opener);
+    } catch (RuntimeException | Error failure) {
       HELD_IN_THIS_JVM.remove(identity);
       throw failure;
     }
   }
 
-  private static StoreLock lock(StoreLayout layout, Path lockFile, Object identity) {
+  private static StoreLock lock(
+      StoreLayout layout, Path lockFile, Object identity, ChannelOpener opener) {
     FileChannel channel;
     try {
-      channel = FileChannel.open(lockFile, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+      channel = opener.open(lockFile);
     } catch (IOException failure) {
       throw new MetadataStoreException(
           ROLE + "(" + lockFile + ")를 열 수 없어 런타임을 시작하지 않는다: " + failure, failure);
@@ -88,6 +108,9 @@ public final class StoreLock implements Closeable {
       closeQuietly(channel);
       throw new MetadataStoreException(
           ROLE + "(" + lockFile + ")를 잠글 수 없어 런타임을 시작하지 않는다: " + failure, failure);
+    } catch (RuntimeException | Error unexpected) {
+      closeQuietly(channel);
+      throw unexpected;
     }
     if (lock == null) {
       closeQuietly(channel);

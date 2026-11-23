@@ -1,0 +1,9 @@
+// provider-mariadb: MariaDB Provider (P1-07). Connector/J 의 드라이버, URL, 고정 속성, 옵션 허용 목록, 오류 분류만 준다.
+// - 접속, 제한 시간, 풀, 오류 정리는 adapter-dbprovider 의 공통 코드가 맡는다 (JdbcProviderSpi).
+// - 드라이버 클래스는 com.queryhub.adapter.dbprovider.provider.mariadb 안에서만 쓴다 (ArchUnit R6, R11).
+dependencies {
+    // 공개 클래스가 JdbcProviderSpi 를 구현하므로 app 이 SPI 를 그대로 보도록 api 로 둔다.
+    api project(':adapter-dbprovider')
+    // 버전은 runtime/build.gradle 의 BOM 속성 mariadb.version 이 정한다 (3.5.11, OSV 수정판).
+    implementation libs.mariadb.java.client
+}

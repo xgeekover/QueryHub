@@ -2,6 +2,7 @@ package com.queryhub.adapter.metadata.store;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Properties;
 import org.jspecify.annotations.Nullable;
 
@@ -25,21 +27,23 @@ import org.jspecify.annotations.Nullable;
  * JdbcConnectionDetails 빈을 만들 때).
  *
  * <ol>
- *   <li>데이터 디렉터리나 네이티브 디렉터리가 Windows UNC 경로(네트워크 공유)이면 아무것도 만들기 전에 거부한다({@link
- *       NetworkFileSystems}).
+ *   <li>데이터 디렉터리나 네이티브 디렉터리가 Windows UNC 경로(네트워크 공유)이거나, 그 경로에서 가장 가까운 있는 조상의 실제 경로가 UNC 경로이면(공유를
+ *       가리키는 정션·심볼릭 링크) 아무것도 만들기 전에 거부한다({@link NetworkFileSystems}).
  *   <li>데이터 디렉터리: 없으면 0700 으로 만들고, 있으면 비공개 디렉터리 규칙({@link PrivatePaths})을 확인한다.
  *   <li>알려진 네트워크 파일 시스템이면 거부한다({@link NetworkFileSystems}).
  *   <li>{@code queryhub.lock} 배타 잠금({@link StoreLock}).
  *   <li>네이티브 디렉터리를 준비하고 JVM 시스템 속성 {@value #SQLITE_TMPDIR_PROPERTY} 를 그 디렉터리로 정한다. sqlite-jdbc 는
  *       java.io.tmpdir 대신 여기에 네이티브 라이브러리를 푼다.
- *   <li>DB 파일: 있으면 파일 규칙을 확인한다. -wal, -shm 도 있으면 같은 규칙이다. DB 파일이 없거나 비었는데 데이터가 든 -wal 이나 -journal 이
- *       남아 있으면 거부한다(SQLite 는 빈 DB 옆의 WAL 을 읽기 전용 연결에서도 지운다). 그다음 없으면 런타임이 0600 빈 파일로
+ *   <li>DB 파일: 있으면 파일 규칙을 확인한다. -wal, -shm, -journal 도 있으면 같은 규칙이다. DB 파일이 없거나 비었는데 데이터가 든 -wal 이나
+ *       -journal 이 남아 있으면 거부한다(SQLite 는 빈 DB 옆의 WAL 을 읽기 전용 연결에서도 지운다). 그다음 없으면 런타임이 0600 빈 파일로
  *       만든다(CREATE_NEW, SQLite 가 umask 로 만들지 않는다). 비어 있지 않은데 SQLite 머리글({@code "SQLite format
  *       3\0"})이 없으면 열지 않고 거부한다. 여기까지는 파일을 읽기만 한다.
  *   <li>내용 검사 연결({@link #checkContent}, <b>읽기 전용</b>): 네이티브 라이브러리를 불러오고 {@code PRAGMA quick_check}
  *       가 ok 인지 본다. 읽기 전용이라 닫을 때 WAL 을 DB 파일로 옮기지(체크포인트) 않고, -wal·-shm 을 지우지 않고, 롤백 저널을 재생하지 않는다.
- *       되돌려야 하는 롤백 저널이 있으면 거부한다.
- *   <li>부트스트랩 연결(런타임 URL, 읽기·쓰기): 내용 검사를 통과한 파일만 연다. PRAGMA 값을 확인한다({@link StorePragmas}).
+ *       되돌려야 하는 롤백 저널이 있으면 거부한다. 그때 저널 머리글(28 바이트)을 읽기만 해서 원래 DB 크기가 0 페이지(커밋한 데이터가 없는 새 저장소)인지 알려
+ *       준다.
+ *   <li>부트스트랩 연결(런타임 URL, 읽기·쓰기, DB 파일을 만들지 않는 {@code open_mode=2}): 내용 검사를 통과한 파일만 연다. 새 DB 나 롤백
+ *       저널 모드 DB 는 이때 SQLite 가 롤백 저널을 한 번 써서 WAL 로 바꾼다. PRAGMA 값을 확인한다({@link StorePragmas}).
  * </ol>
  *
  * <p>거부한 DB 파일, -wal, -journal 은 바꾸거나, 자르거나, 이름을 바꾸거나, 지우지 않는다. -shm 은 데이터가 없는 WAL 색인이라 SQLite 가 읽기
@@ -77,6 +81,25 @@ public final class StoreBootstrap {
 
   private static final int SQLITE_NOTADB = 26;
 
+  /** 롤백 저널 머리글의 매직 바이트 (SQLite 파일 형식, 저널 머리글 0-7 바이트). */
+  static final byte[] JOURNAL_MAGIC = {
+    (byte) 0xd9,
+    (byte) 0xd5,
+    (byte) 0x05,
+    (byte) 0xf9,
+    (byte) 0x20,
+    (byte) 0xa1,
+    (byte) 0x63,
+    (byte) 0xd7
+  };
+
+  /** 롤백 저널 머리글의 길이: 매직 8, 페이지 기록 수 4, 체크섬 난수 4, 원래 DB 크기(페이지) 4, 섹터 크기 4, 페이지 크기 4. */
+  static final int JOURNAL_HEADER_LENGTH = 28;
+
+  private static final int JOURNAL_INITIAL_PAGES_OFFSET = 16;
+
+  private static final String JOURNAL_ROLE = "Metadata 저장소 롤백 저널";
+
   private StoreBootstrap() {}
 
   /**
@@ -85,8 +108,15 @@ public final class StoreBootstrap {
    * @throws MetadataStoreException 어느 단계든 문제가 있을 때 (기동 거부)
    */
   public static OpenedMetadataStore open(StoreLayout layout) {
+    return open(layout, NetworkFileSystems.REAL_ROOTS);
+  }
+
+  /** {@link #open(StoreLayout)} 와 같고 실제 경로의 뿌리를 {@code realRoots} 로 읽는다(시험이 UNC 뿌리를 넣는다). */
+  static OpenedMetadataStore open(StoreLayout layout, NetworkFileSystems.RealRoots realRoots) {
     NetworkFileSystems.refuseUncPath(layout.dataDir(), DATA_DIR_ROLE);
     NetworkFileSystems.refuseUncPath(layout.nativeDir(), NATIVE_DIR_ROLE);
+    NetworkFileSystems.refuseUncRealPath(layout.dataDir(), DATA_DIR_ROLE, realRoots);
+    NetworkFileSystems.refuseUncRealPath(layout.nativeDir(), NATIVE_DIR_ROLE, realRoots);
     PrivatePaths.prepareDirectory(layout.dataDir(), DATA_DIR_ROLE);
     NetworkFileSystems.requireLocal(layout.dataDir(), DATA_DIR_ROLE);
     StoreLock lock = StoreLock.acquire(layout);
@@ -117,6 +147,7 @@ public final class StoreBootstrap {
     boolean exists = PrivatePaths.checkExistingFile(db, DB_ROLE);
     PrivatePaths.checkExistingFile(layout.walFile(), "Metadata 저장소 WAL 파일");
     PrivatePaths.checkExistingFile(layout.shmFile(), "Metadata 저장소 공유 메모리 파일");
+    PrivatePaths.checkExistingFile(layout.journalFile(), JOURNAL_ROLE);
     if (!exists || size(db) == 0) {
       refuseLeftoverData(layout, exists, layout.walFile());
       refuseLeftoverData(layout, exists, layout.journalFile());
@@ -238,16 +269,7 @@ public final class StoreBootstrap {
       return corrupt(layout.dbFile(), String.valueOf(sql.getMessage()), sql);
     }
     if (failure instanceof SQLException sql && needsRollback(sql)) {
-      return new MetadataStoreException(
-          DB_ROLE
-              + "("
-              + layout.dbFile()
-              + ") 옆에 되돌리지 않은 롤백 저널("
-              + layout.journalFile()
-              + ")이 있어 런타임을 시작하지 않으며 파일을 고치거나 지우지 않는다. 런타임은 WAL 만 쓰므로 이 저널은 다른 도구가 남긴 것이다."
-              + " 런타임은 내용을 읽기 전용으로 검사해 저널을 재생하지 않는다. 런타임을 멈춘 채 백업에서 DB 파일과 마스터 키를 함께 복원하거나"
-              + " (docs/DEPLOYMENT.md 의 백업·복구), 그 저널을 만든 도구로 DB 를 열어 되돌린 뒤 다시 시작하라.",
-          sql);
+      return new MetadataStoreException(hotJournalMessage(layout), sql);
     }
     return new MetadataStoreException(
         DB_ROLE
@@ -274,6 +296,74 @@ public final class StoreBootstrap {
    */
   private static boolean needsRollback(SQLException failure) {
     return String.valueOf(failure.getMessage()).contains("SQLITE_READONLY_ROLLBACK");
+  }
+
+  /**
+   * 되돌려야 하는 롤백 저널의 거부 메시지. 런타임도 새 DB 나 롤백 저널 모드로 되살린 DB(VACUUM INTO 사본)를 처음 WAL 로 바꿀 때 롤백 저널을 한 번
+   * 쓴다(P1-06 리뷰 N1). 저널 머리글의 원래 DB 크기가 0 페이지이면 그 트랜잭션 전에 DB 가 비어 있었으므로 커밋한 데이터가 없는 새 저장소다: 파일을 함께
+   * 옮기고 다시 시작하면 된다. 그 밖에는(1 페이지 이상이거나 머리글을 읽지 못하면) 데이터가 있을 수 있다.
+   */
+  static String hotJournalMessage(StoreLayout layout) {
+    Path db = layout.dbFile();
+    Path journal = layout.journalFile();
+    String refusal =
+        DB_ROLE
+            + "("
+            + db
+            + ") 옆에 되돌리지 않은 롤백 저널("
+            + journal
+            + ")이 있어 런타임을 시작하지 않으며 파일을 고치거나 지우지 않는다. 런타임은 새 DB 나 롤백 저널 모드로 되살린 DB(예: VACUUM INTO 사본)를"
+            + " 처음 WAL 로 바꿀 때 롤백 저널을 한 번 쓴다. 그때 런타임이 멈췄거나 다른 도구가 남긴 저널이다. 런타임은 내용을 읽기 전용으로 검사해 저널을"
+            + " 재생하지 않는다.";
+    OptionalLong initialPages = journalInitialPageCount(journal);
+    if (initialPages.isPresent() && initialPages.getAsLong() == 0) {
+      return refusal
+          + " 저널 머리글의 원래 DB 크기가 0 페이지라서 이 저장소는 커밋한 데이터가 없는 새 저장소다. 런타임을 멈춘 채 "
+          + StoreLayout.DB_FILE_NAME
+          + " 와 "
+          + journal.getFileName()
+          + "(있으면 "
+          + layout.walFile().getFileName()
+          + "·"
+          + layout.shmFile().getFileName()
+          + " 도)를 함께 데이터 디렉터리("
+          + layout.dataDir()
+          + ") 밖으로 옮긴 뒤 다시 시작하라. 런타임이 새 저장소를 만든다.";
+    }
+    String size =
+        initialPages.isPresent()
+            ? " 저널 머리글의 원래 DB 크기가 " + initialPages.getAsLong() + " 페이지라서 커밋한 데이터가 있을 수 있다."
+            : " 저널 머리글이 SQLite 롤백 저널 머리글이 아니라서 커밋한 데이터가 있는지 알 수 없다.";
+    return refusal
+        + size
+        + " 런타임을 멈춘 채 "
+        + StoreLayout.DB_FILE_NAME
+        + " 와 "
+        + journal.getFileName()
+        + " 를 함께 다른 곳에 복사해 둔 뒤 sqlite3 \""
+        + db
+        + "\" \"PRAGMA quick_check\" 로 열면 SQLite 가 저널을 되돌린다. 그다음 다시 시작하라. 또는 런타임을 멈춘 채 백업에서 DB 파일과 마스터 키를"
+        + " 함께 복원하라 (docs/DEPLOYMENT.md 의 백업·복구).";
+  }
+
+  /**
+   * 롤백 저널 머리글의 원래 DB 크기(페이지 수, 16-19 바이트, big-endian). 머리글 28 바이트를 링크를 따라가지 않고 읽기만 한다. 파일이 짧거나, 매직
+   * 바이트가 다르거나, 읽을 수 없으면 빈 값이다.
+   */
+  static OptionalLong journalInitialPageCount(Path journal) {
+    byte[] header;
+    try (InputStream in = Files.newInputStream(journal, LinkOption.NOFOLLOW_LINKS)) {
+      header = in.readNBytes(JOURNAL_HEADER_LENGTH);
+    } catch (IOException unreadable) {
+      return OptionalLong.empty();
+    }
+    if (header.length < JOURNAL_HEADER_LENGTH
+        || !Arrays.equals(
+            header, 0, JOURNAL_MAGIC.length, JOURNAL_MAGIC, 0, JOURNAL_MAGIC.length)) {
+      return OptionalLong.empty();
+    }
+    return OptionalLong.of(
+        Integer.toUnsignedLong(ByteBuffer.wrap(header).getInt(JOURNAL_INITIAL_PAGES_OFFSET)));
   }
 
   private static MetadataStoreException corrupt(Path db, String detail, @Nullable Throwable cause) {

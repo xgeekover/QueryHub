@@ -70,7 +70,7 @@ audit_log, app_setting (독립)
 
 | 엔티티 (테이블) | 명세 필드 | 설계 변경 | 목표 |
 |---|---|---|---|
-| DatabaseConnection (`database_connection`) | id, connectionName, databaseType, host, port, databaseName, username, encryptedPassword, jdbcUrl, connectionProperties, connectionTimeout, enabled, createdAt, updatedAt | `maxPoolSize`, `queryTimeoutSeconds` 추가. `connectionName` 유니크. 비밀번호는 AES-256-GCM([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)) | 계획 (Phase 1) |
+| DatabaseConnection (`database_connection`) | id, connectionName, databaseType, host, port, databaseName, username, encryptedPassword, jdbcUrl, connectionProperties, connectionTimeout, enabled, createdAt, updatedAt | `maxPoolSize`, `queryTimeoutSeconds` 추가. `connectionName` 유니크. 비밀번호는 AES-256-GCM([ADR-006](ADR/ADR-006-password-aes-gcm-api-key-hmac.md)) | 계획 (P1-08: V2 마이그레이션, 암호화한 비밀번호). P1-07 은 저장 없이 설정 형식(`ConnectionSettings`)과 연결 시험·풀만 만들었다. 사용자가 주는 원시 `jdbcUrl` 은 받지 않는다(P107-1, [ADR-027](ADR/ADR-027-database-provider.md)) |
 | SqlDefinition (`sql_definition`) | id, sqlCode, sqlName, description, databaseConnectionId, sqlContent, queryType, version, enabled, createdAt, updatedAt | `sqlCode` 유니크 | 계획 (Phase 2) |
 | SqlParameter (`sql_parameter`) | id, sqlDefinitionId, parameterName, dataType, required, defaultValue, description, validationRule, displayOrder. 타입: STRING, INTEGER, LONG, DECIMAL, BOOLEAN, DATE, TIME, DATETIME, TIMESTAMP | `multiple` 추가 (컬렉션 여부, IN 절) | 계획 (Phase 2) |
 | ApiDefinition (`api_definition`) | id, apiCode, apiName, description, endpointPath, httpMethod, sqlDefinitionId, responseType, authenticationType, cacheEnabled, cacheTtlSeconds, maxRows, timeoutSeconds, enabled, version, createdAt, updatedAt | 유니크 `(httpMethod, endpointPath)`, `apiCode` | 계획 (Phase 3) |

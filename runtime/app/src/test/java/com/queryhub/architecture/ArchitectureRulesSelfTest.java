@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.queryhub.archfixture.adapter.crypto.AllowedCryptoFixture;
+import com.queryhub.archfixture.adapter.dbprovider.CommonToProviderFixture;
+import com.queryhub.archfixture.adapter.dbprovider.provider.alpha.AlphaProviderFixture;
+import com.queryhub.archfixture.adapter.dbprovider.provider.beta.BetaProviderFixture;
 import com.queryhub.archfixture.adapter.export.DirectJdbcFixture;
 import com.queryhub.archfixture.adapter.metadata.CrossAdapterFixture;
 import com.queryhub.archfixture.adapter.metadata.DriverLeakFixture;
@@ -26,7 +29,9 @@ import org.junit.jupiter.api.Test;
  * AC-07: 규칙이 실제로 실패할 수 있음을 증명한다.
  *
  * <p>com.queryhub.archfixture 의 고의 위반 클래스에 같은 규칙을 적용한다. 각 규칙은 실패해야 하고, 모든 위반 내용이 그 규칙을 위한 픽스처 클래스를
- * 가리켜야 하며, 다른 규칙용 픽스처는 언급하지 않아야 한다. R6 과 R8 의 픽스처는 P0-B 가 더했다(첫 JDBC 드라이버와 Spring JDBC).
+ * 가리켜야 하며, 다른 규칙용 픽스처는 언급하지 않아야 한다. R6 과 R8 의 픽스처는 P0-B 가 더했다(첫 JDBC 드라이버와 Spring JDBC). P1-07 이 R8
+ * 의 Boot JDBC·Flyway 위반(DirectJdbcFixture)과 R11 픽스처(Alpha/Beta Provider, CommonToProviderFixture)를
+ * 더했다.
  */
 class ArchitectureRulesSelfTest {
 
@@ -48,7 +53,10 @@ class ArchitectureRulesSelfTest {
           DirectJdbcFixture.class,
           NonConstantTimeTokenVerifier.class,
           CryptoOutsideAdapterFixture.class,
-          AllowedCryptoFixture.class);
+          AllowedCryptoFixture.class,
+          AlphaProviderFixture.class,
+          BetaProviderFixture.class,
+          CommonToProviderFixture.class);
 
   @Test
   void fixturesAreImported() {
@@ -108,6 +116,45 @@ class ArchitectureRulesSelfTest {
         .anySatisfy(
             detail ->
                 assertThat(detail).contains("org.springframework.jdbc.core.simple.JdbcClient"));
+  }
+
+  @Test
+  void r8FailsWhenAnAdapterWithoutPersistenceUsesBootJdbcOrBootFlyway() {
+    // P0B-R5: Spring Boot 의 JDBC 지원과 Flyway 지원도 R8 이 막는다.
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(
+            RULES.r8OnlyPersistenceAdaptersAndAppUseJdbc(), DirectJdbcFixture.class);
+    assertThat(result.getFailureReport().getDetails())
+        .anySatisfy(
+            detail ->
+                assertThat(detail).contains("org.springframework.boot.jdbc.DataSourceBuilder"))
+        .anySatisfy(
+            detail ->
+                assertThat(detail)
+                    .contains("org.springframework.boot.flyway.autoconfigure.FlywayProperties"));
+  }
+
+  @Test
+  void r11FailsWhenOneProviderDependsOnAnother() {
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(
+            RULES.r11ProvidersDoNotDependOnEachOther(),
+            AlphaProviderFixture.class,
+            BetaProviderFixture.class);
+    assertThat(result.getFailureReport().getDetails())
+        .anySatisfy(detail -> assertThat(detail).contains(BetaProviderFixture.class.getName()));
+  }
+
+  @Test
+  void r11FailsWhenCommonDbProviderCodeDependsOnAProvider() {
+    EvaluationResult result =
+        assertFailsOnlyBecauseOf(
+            RULES.r11CommonDbProviderCodeDoesNotDependOnProviders(),
+            CommonToProviderFixture.class,
+            BetaProviderFixture.class);
+    assertThat(result.getFailureReport().getDetails())
+        .anySatisfy(detail -> assertThat(detail).contains(BetaProviderFixture.class.getName()))
+        .noneSatisfy(detail -> assertThat(detail).contains(AlphaProviderFixture.class.getName()));
   }
 
   @Test

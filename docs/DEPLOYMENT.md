@@ -58,14 +58,15 @@
 | 디렉터리에 그룹·기타 권한 비트가 있다(예: 0755) | 경로와 `chmod 700 '<경로>'` | 안내된 `chmod 700` 을 실행한다 |
 | 디렉터리를 쓸 수 없다(예: 0500) | 경로 | 런타임 사용자가 쓸 수 있게 한다 |
 | 디렉터리나 파일의 소유자가 런타임 사용자가 아니다 | 경로와 소유자 | 런타임을 그 사용자로 실행하거나 소유자를 바꾼다 |
-| `queryhub.db`, `-wal`, `-shm`, `queryhub.lock` 이 심볼릭 링크이거나 일반 파일이 아니다 | 경로 | 그 자리의 것을 옮긴다 |
+| `queryhub.db`, `-wal`, `-shm`, `-journal`(P1-07), `queryhub.lock` 이 심볼릭 링크이거나 일반 파일이 아니다 | 경로 | 그 자리의 것을 옮긴다 |
 | 그 파일에 그룹·기타 권한 비트가 있다(예: 0644) | 경로와 `chmod 600 '<경로>'` | 안내된 `chmod 600` 을 실행한다 |
+| 그 파일에 소유자 읽기·쓰기 비트가 없다(예: 0400. SQLite 가 읽기 전용으로 열어 쓰기마다 실패한다, P1-07) | 경로, 모드와 `chmod 600 '<경로>'` | 안내된 `chmod 600` 을 실행한다. Windows 에서는 쓸 수 없는 파일을 거부한다(미검증) |
 | 비어 있지 않은 `queryhub.db` 가 SQLite 파일이 아니다 | 「SQLite DB 파일이 아니다」 | 다른 파일이면 옮기고, 아니면 아래 「백업·복구」 |
 | `queryhub.db` 가 손상되었다(`PRAGMA quick_check` 가 ok 가 아님) | 「손상」 | 런타임을 멈춘 채 아래 「백업·복구」로 DB 와 키를 함께 되살린다 |
 | `queryhub.db` 가 없거나 비었는데 `queryhub.db-wal` 이나 `queryhub.db-journal` 에 데이터가 있다 | 두 경로와 「데이터가 남아 있어」 | 옮기거나 지운 DB 파일을 그 짝과 함께 되돌려 놓거나 「백업·복구」. 그 데이터가 필요 없으면 남은 파일을 옮긴다 |
-| 되돌리지 않은 롤백 저널(`queryhub.db-journal`)이 있다 | 「롤백 저널」 | 런타임은 WAL 만 쓰므로 다른 도구가 남긴 것이다. 「백업·복구」, 또는 그 도구로 열어 되돌린다 |
+| 되돌리지 않은 롤백 저널(`queryhub.db-journal`)이 있다 | 「롤백 저널」. 저널 머리글의 원래 페이지 수가 0 이면 데이터가 없는 새 저장소라고 말한다 | 런타임도 새 DB 나 롤백 저널 모드로 되살린 DB(예: `VACUUM INTO` 사본)를 처음 WAL 로 바꿀 때 롤백 저널을 한 번 쓴다. 그때 멈췄거나 다른 도구가 남긴 저널이다(P1-07, 리뷰 N1). 새 저장소라는 메시지면 런타임을 멈추고 `queryhub.db`·`queryhub.db-journal`(과 있으면 `-wal`·`-shm`)을 함께 데이터 디렉터리 밖으로 옮긴 뒤 다시 시작한다. 아니면 런타임을 멈춘 채 두 파일을 다른 곳에 복사해 두고 `sqlite3 "<db>" "PRAGMA quick_check"` 로 열어 SQLite 가 되돌리게 하거나 「백업·복구」 |
 | 다른 런타임이 같은 데이터 디렉터리를 쓰고 있다 | 데이터 디렉터리와 `queryhub.lock` | 아래 「런타임 하나」 |
-| 데이터 디렉터리가 네트워크 파일 시스템에 있다, 또는 데이터·네이티브 디렉터리가 Windows UNC 경로(`\\server\share\...`)다 | 파일 시스템 형식, 또는 「UNC 경로」 | 로컬 디스크의 디렉터리를 쓴다 |
+| 데이터 디렉터리가 네트워크 파일 시스템에 있다, 또는 데이터·네이티브 디렉터리가 Windows UNC 경로(`\\server\share\...`)이거나 그 가장 가까운 있는 조상의 실제 경로가 UNC 공유다(심볼릭 링크·junction, P1-07) | 파일 시스템 형식, 또는 「UNC 경로」 | 로컬 디스크의 디렉터리를 쓴다 |
 | 마이그레이션 기록이 맞지 않는다(V1 체크섬이 다르다 등) | Flyway 의 validate 오류 | 그 저장소의 백업을 확인한다. 기록 테이블을 손으로 고치지 않는다 |
 
 - **거부한 파일을 바꾸지 않는다.** 머리글 검사는 파일을 읽기만 하고, 내용 검사(`quick_check`)는 **읽기 전용** SQLite 연결로 한다. 그래서 거부할 때 `queryhub.db`, `queryhub.db-wal`, `queryhub.db-journal` 은 바이트 하나 바뀌지 않는다. 읽기·쓰기 연결이었다면 닫을 때 WAL 을 DB 파일로 옮겨 담고 `-wal`·`-shm` 을 지웠을 것이다(P1-06 리뷰 R1). 런타임이 쓰는 읽기·쓰기 연결은 내용 검사를 통과한 파일만 연다.
@@ -73,14 +74,14 @@
 - `-wal` 은 있고 `-shm` 이 없는 저장소(예: `-shm` 없이 복사한 사본)는 거부하지 않는다. 데이터 디렉터리는 쓸 수 있어야 하므로 SQLite 가 `-shm` 을 0600 으로 다시 만들고 `-wal` 의 내용을 읽는다.
 - Windows 는 권한과 소유자를 확인하지 않는다. 사용자 프로필의 기본 ACL 에만 기댄다(마스터 키와 같다, 미검증 PLAT-1). 데이터 디렉터리를 다른 사용자가 읽을 수 있는 곳에 두지 않는다.
 - 소유자 판정: Linux 에서는 `/proc/self` 의 소유자, 그 밖에서는 `user.name` 의 사용자와 비교한다. 둘 다 안 되면 기동을 거부한다. 다른 소유자의 경우는 값을 넣은 단위 시험으로만 확인했다(root 없이 만들 수 없다).
-- SQLite 설정(`journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON`, `busy_timeout=5000`, `transaction_mode=IMMEDIATE`)은 런타임이 정한다. `spring.datasource.hikari.data-source-properties` 로 그 이름을 주거나 `connection-init-sql` 로 값을 바꾸면 기동을 거부한다. 풀 크기(`spring.datasource.hikari.maximum-pool-size`, 기본 4)는 바꿔도 된다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)).
+- SQLite 설정(`journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON`, `busy_timeout=5000`, `transaction_mode=IMMEDIATE`)과 런타임 URL 의 `open_mode=2`(DB 파일을 만들지 않는다, P1-07)는 런타임이 정한다. `spring.datasource.hikari.data-source-properties` 로 그 이름(`open_mode` 포함)을 주거나 `connection-init-sql` 로 값을 바꾸면 기동을 거부한다. 풀 크기(`spring.datasource.hikari.maximum-pool-size`, 기본 4)는 바꿔도 된다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)).
 
 ### 로컬 디스크만
 
 데이터 디렉터리는 **로컬 디스크**에 둔다. SQLite 의 잠금과 WAL 은 네트워크 파일 시스템에서 안전하지 않다. 런타임은 데이터 디렉터리의 파일 시스템 형식이 알려진 네트워크 형식(nfs, nfs4, cifs, smbfs, smb2, smb3, afpfs, webdav, davfs, fuse.sshfs, 9p, ceph, glusterfs, fuse.glusterfs)이면 거부한다. 이 검사는 최선 노력이다.
 
 - 모르는 형식은 받는다. 예를 들어 위 목록 밖의 FUSE 마운트는 통과한다.
-- Windows 의 **UNC 경로**(`\\server\share\...`)는 데이터 디렉터리와 네이티브 디렉터리 모두 경로의 뿌리만 보고 거부한다. 이 검사는 아무것도 만들기 전에 한다. 분류기만 단위 시험이 있다(Windows 에서는 실행하지 않았다, PLAT-1).
+- Windows 의 **UNC 경로**(`\\server\share\...`)는 데이터 디렉터리와 네이티브 디렉터리 모두 경로의 뿌리를 보고 거부한다. P1-07 부터는 가장 가까운 있는 조상의 실제 경로(`toRealPath`)의 뿌리도 보므로 UNC 공유를 가리키는 심볼릭 링크나 junction 조상도 거부하고, 실제 경로를 읽지 못하면(깨진 링크 등) 거부한다. 이 검사는 아무것도 만들기 전에 한다. 분류기만 단위 시험이 있다(Windows 에서는 실행하지 않았다, PLAT-1).
 - **Windows 에서 네트워크 드라이브에 매핑한 드라이브 문자(예: `Z:\`)는 잡지 못한다.** 보통 원격 형식(예: NTFS)을 보고한다(미검증).
 - 실제 NFS·SMB·AFP·WebDAV 마운트에서는 시험하지 않았다. 분류기만 단위 시험이 있다([BACKLOG.md](BACKLOG.md) P106-4).
 
@@ -171,7 +172,7 @@ sqlite3 "$db" ".timeout 5000" ".backup '/backup/queryhub-$(date +%Y%m%d-%H%M%S).
 2. 지금의 `queryhub.db`, `queryhub.db-wal`, `queryhub.db-shm` 을 다른 곳으로 **옮긴다**(되살리기가 끝날 때까지 지우지 않는다). 이전 DB 의 `-wal`·`-shm` 이 새 DB 옆에 남으면 SQLite 가 그것을 새 DB 와 함께 읽어 데이터를 잃거나 파일이 손상될 수 있으므로 반드시 함께 치운다.
 3. 백업 사본을 `<데이터 디렉터리>/queryhub.db` 로 놓는다. 방법 2 의 사본이면 그 `-wal`·`-shm` 도 같은 이름 규칙으로 함께 놓는다. unix 에서는 파일 0600, 디렉터리 0700, 런타임 사용자 소유로 둔다(`install -m 600 <사본> "<데이터 디렉터리>/queryhub.db"`).
 4. **그 사본과 짝인 마스터 키**를 되살린다(server 는 변수나 키 파일, desktop 은 `secrets/master.key` 를 같은 권한으로, 아래 「마스터 키」의 되살리는 방법).
-5. 런타임을 시작한다. 런타임이 머리글, `quick_check`, 마이그레이션 기록을 확인하고, 맞지 않으면 포트를 열기 전에 멈춘다. 머리글과 `quick_check` 에서 거부한 파일은 바꾸지 않는다. 마이그레이션 기록은 그 검사를 통과한 파일을 읽기·쓰기로 연 뒤에 보므로, 기록이 맞지 않아 멈출 때 Flyway 는 마이그레이션하지 않지만 SQLite 가 연결을 닫으며 `-wal` 의 내용을 DB 파일로 옮겨 담을 수 있다(데이터는 그대로다).
+5. 런타임을 시작한다. 런타임이 머리글, `quick_check`, 마이그레이션 기록을 확인하고, 맞지 않으면 포트를 열기 전에 멈춘다. 머리글과 `quick_check` 에서 거부한 파일은 바꾸지 않는다. 마이그레이션 기록은 그 검사를 통과한 파일을 읽기·쓰기로 연 뒤에 보므로, 기록이 맞지 않아 멈출 때 Flyway 는 마이그레이션하지 않지만 SQLite 가 연결을 닫으며 `-wal` 의 내용을 DB 파일로 옮겨 담을 수 있다(데이터는 그대로다). 롤백 저널 모드 파일(`VACUUM INTO` 사본)은 이때 머리글이 WAL 모드로 바뀐다(바이트 18–19 가 1,1 에서 2,2 로, P1-06 리뷰 N7). 풀 연결의 PRAGMA·`PRAGMA database_list` 검사와 `data-source-properties` 거부도 이 읽기·쓰기 연결 뒤에 온다.
 
 - 손상으로 기동이 거부되었을 때도 이 순서다. 손상된 파일은 옮겨 두고 고치려 하지 않는다. 런타임은 거부할 때 `queryhub.db` 와 `-wal` 을 바꾸지 않으므로 2단계에서 옮기는 파일은 거부되던 때 그대로다(`-shm` 은 데이터가 없는 색인이라 SQLite 가 고쳐 쓸 수 있다).
 - `queryhub.db` 만 옮기고 `-wal` 을 남기면 다음 시작은 「데이터가 남아 있어」로 거부된다. SQLite 는 빈 DB 옆의 WAL 을 지우므로 런타임이 새 DB 를 만들기 전에 멈춘다.
@@ -390,4 +391,4 @@ pnpm --dir desktop tauri build --debug --bundles app --no-sign
 
 - **Desktop 설치본:** JRE 묶기(jlink), JAR 묶기(`bundle.resources`), dmg·설치 프로그램, 코드 서명과 공증. `bundle.externalBin` 사이드카는 쓰지 않는다([ADR-001](ADR/ADR-001-jvm-child-process.md)).
 - **Server:** Docker 이미지와 `Dockerfile`(설계 §3 의 `deploy/`), 운영 프로파일(시크릿 파일 입력은 구현됐다: 관리자 토큰의 `QUERYHUB_ADMIN_TOKEN_FILE` 은 P1-03, 마스터 키의 `QUERYHUB_MASTER_KEY_FILE` 은 P1-04).
-- **플랫폼:** Windows·Linux 의 빌드와 실행은 **미검증**이다. CI 워크플로(`.github/workflows/ci.yml`, 정의됨·미실행)의 첫 실행과 Phase 8 에서 확인한다([BACKLOG.md](BACKLOG.md) CI-1, PLAT-1). Windows 의 `Path` 대소문자 처리(P0C-C2-4)는 P0-D 에서 고쳤지만 Windows 에서 실행해 보지 않았다.
+- **플랫폼:** Windows·Linux 의 빌드와 실행은 **미검증**이다. CI 워크플로(`.github/workflows/ci.yml`)는 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux(`gates`)와 macOS(`desktop`) 작업은 통과했고, Windows 작업은 `test.sh` 의 자체 검증에서 실패한다([BACKLOG.md](BACKLOG.md) CI-1). Linux 는 CI 의 `gates` 작업에서 네 게이트가 통과했고(P1-06 코드), Windows 와 실제 앱 실행은 Phase 8 에서 확인한다(PLAT-1). Windows 의 `Path` 대소문자 처리(P0C-C2-4)는 P0-D 에서 고쳤지만 Windows 에서 실행해 보지 않았다.

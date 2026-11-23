@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.queryhub.adapter.metadata.store.MetadataStoreException;
 import com.queryhub.adapter.metadata.store.StoreLayout;
+import com.queryhub.adapter.metadata.store.StorePragmas;
 import com.queryhub.app.QueryHubApplication;
 import com.queryhub.app.support.TestAdminToken;
 import com.queryhub.app.support.TestComponentScanExclusion;
@@ -124,6 +125,16 @@ class MetadataStartupFailureTest {
     assertNoSecretInOutput(output);
   }
 
+  /** P1-07: 거부 메시지는 런타임이 정하는 설정을 모두(open_mode 포함) 이름으로만 든다. 넘긴 값은 메시지에 없다. */
+  private static final String MANAGED_KEY_LIST =
+      "(런타임이 정하는 설정: journal_mode, synchronous, foreign_keys, busy_timeout, transaction_mode, open_mode)";
+
+  @Test
+  void managedKeyListInTheRefusalMessageIsTheManagedKeySet() {
+    assertThat(MANAGED_KEY_LIST)
+        .isEqualTo("(런타임이 정하는 설정: " + String.join(", ", StorePragmas.MANAGED_KEYS) + ")");
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"journal_mode=DELETE", "synchronous=OFF", "busy_timeout=0"})
   void dataSourcePropertiesThatChangeTheStoreSettingsAreRefused(String setting) {
@@ -140,7 +151,34 @@ class MetadataStartupFailureTest {
         .rootCause()
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("spring.datasource.hikari.data-source-properties." + key)
-        .hasMessageContaining("런타임이 정하는 값");
+        .hasMessageContaining("런타임이 정하는 값")
+        .hasMessageContaining(MANAGED_KEY_LIST)
+        .hasMessageNotContaining(setting);
+    assertThat(attempt.webServerStarted()).isFalse();
+  }
+
+  /**
+   * P1-07 AC6 (리뷰 N5): 런타임 URL 의 open_mode=2 는 DB 파일을 만들지 않는다. sqlite-jdbc 는 연결 속성을 URL 의 같은 이름보다
+   * 앞세우므로 data-source-properties 의 open_mode(예: 6 = 읽기·쓰기·만들기)는 이름만으로 거부한다.
+   */
+  @Test
+  void dataSourcePropertyOpenModeIsRefusedBecauseTheRuntimeOpensWithoutCreate() {
+    Path dataDir = tmp.resolve("data");
+
+    StartupAttempt attempt =
+        start(
+            false,
+            "desktop",
+            withDataDir(dataDir, "--spring.datasource.hikari.data-source-properties.open_mode=6"));
+
+    assertThat(attempt.failure()).as("open_mode 를 바꾸면 기동할 수 없다").isNotNull();
+    assertThat(attempt.failure())
+        .rootCause()
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("spring.datasource.hikari.data-source-properties.open_mode")
+        .hasMessageContaining("런타임이 정하는 값")
+        .hasMessageContaining(MANAGED_KEY_LIST)
+        .hasMessageNotContaining("open_mode=6");
     assertThat(attempt.webServerStarted()).isFalse();
   }
 

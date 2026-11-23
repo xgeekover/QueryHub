@@ -1,0 +1,13 @@
+// adapter-dbprovider: 업무 DB 접속의 공통 코드 (P1-07). application 의 DatabaseProvider, ConnectionPools 포트를 구현한다.
+// - DB 별 차이(드라이버, URL, 고정 속성, 옵션 허용 목록, 확인 쿼리, 오류 분류)는 provider-* 모듈이 JdbcProviderSpi 로 준다.
+//   이 모듈에는 JDBC 드라이버가 없고 provider 패키지도 참조하지 않는다 (ArchUnit R6, R11).
+// - 연결은 Provider 가 준 java.sql.Driver 의 connect 로만 만든다 (JDBC 전역 드라이버 등록부를 쓰지 않는다).
+// - 커넥션 풀(HikariCP)은 접속 정보마다 하나이고 Spring 빈이 아니다. 빈 등록은 app 이 맡는다(이 모듈에는 Spring 이 없다).
+dependencies {
+    // SPI 의 메서드가 domain 타입(ConnectionSettings 등)을 쓰므로 provider-* 가 그대로 보도록 api 로 둔다.
+    api project(':application')
+    // 버전은 BOM 이 관리한다 (Boot 4.1.2: 7.0.2). slf4j-api 가 함께 온다.
+    implementation libs.hikaricp
+    // 단위 테스트가 로그를 붙잡아 비밀번호가 없는지 확인한다 (버전은 BOM).
+    testImplementation libs.logback.classic
+}

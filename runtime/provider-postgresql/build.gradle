@@ -1,0 +1,9 @@
+// provider-postgresql: PostgreSQL Provider (P1-07). pgjdbc 의 드라이버, URL, 고정 속성, 옵션 허용 목록을 준다.
+// - 접속, 제한 시간, 풀, 오류 정리는 adapter-dbprovider 의 공통 코드가 맡는다 (JdbcProviderSpi).
+// - 드라이버 클래스는 com.queryhub.adapter.dbprovider.provider.postgresql 안에서만 쓴다 (ArchUnit R6, R11).
+dependencies {
+    // 공개 클래스가 JdbcProviderSpi 를 구현하므로 app 이 SPI 를 그대로 보도록 api 로 둔다.
+    api project(':adapter-dbprovider')
+    // 버전은 BOM 이 관리한다 (Boot 4.1.2: 42.7.14). checker-qual 이 함께 온다.
+    implementation libs.postgresql
+}

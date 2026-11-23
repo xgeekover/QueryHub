@@ -438,6 +438,304 @@ class StoreBootstrapTest {
     }
   }
 
+  /**
+   * P1-07 AC2 (리뷰 N1): 새 저장소를 처음 WAL 로 바꾸다 멈춘 모습. 1 페이지 DB 옆에 원래 DB 크기 0 페이지인 실제 저널 머리글이 있다. 거부
+   * 메시지는 커밋한 데이터가 없는 새 저장소라고 말하고 파일을 함께 옮기라고 한다. 두 파일은 바이트 하나 바뀌지 않고, 그 방법대로 옮기면 열린다.
+   */
+  @Test
+  void hotJournalOfANewStoreIsRefusedWithTheNewStoreRemedyAndTheRemedyWorks() throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    Refusal.privateDataDir(layout);
+    TestSqlite.writeOnePageWalModeDatabase(tmp.resolve("source"), layout.dbFile());
+    TestSqlite.writeRollbackJournal(layout.journalFile(), 0);
+    assertThat(Files.size(layout.dbFile())).isEqualTo(TestSqlite.PAGE_SIZE);
+    assertThat(StoreBootstrap.hasSqliteHeaderOrIsEmpty(layout.dbFile())).isTrue();
+    assertThat(Files.size(layout.journalFile())).isEqualTo(512);
+    String db = TestSqlite.sha256(layout.dbFile());
+    String journal = TestSqlite.sha256(layout.journalFile());
+
+    assertThatThrownBy(() -> StoreBootstrap.open(layout).close())
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining(layout.dbFile().toString())
+        .hasMessageContaining(layout.journalFile().toString())
+        .hasMessageContaining("처음 WAL 로 바꿀 때 롤백 저널을 한 번 쓴다")
+        .hasMessageContaining("원래 DB 크기가 0 페이지")
+        .hasMessageContaining("커밋한 데이터가 없는 새 저장소")
+        .hasMessageContaining("런타임을 멈춘 채 queryhub.db 와 queryhub.db-journal")
+        .hasMessageContaining("queryhub.db-wal·queryhub.db-shm")
+        .hasMessageContaining("데이터 디렉터리(" + layout.dataDir() + ") 밖으로 옮긴 뒤 다시 시작하라")
+        .message()
+        .doesNotContain("sqlite3");
+    assertThat(TestSqlite.sha256(layout.dbFile())).as("DB 파일 내용").isEqualTo(db);
+    assertThat(TestSqlite.sha256(layout.journalFile())).as("저널 내용").isEqualTo(journal);
+
+    // 메시지가 말한 방법: 런타임을 멈춘 채 DB 파일과 저널(있으면 -wal·-shm)을 함께 데이터 디렉터리 밖으로 옮긴다.
+    Path aside = Files.createDirectory(tmp.resolve("moved-aside"));
+    for (Path file :
+        List.of(layout.dbFile(), layout.journalFile(), layout.walFile(), layout.shmFile())) {
+      if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
+        Files.move(file, aside.resolve(file.getFileName()));
+      }
+    }
+    try (OpenedMetadataStore store = StoreBootstrap.open(layout)) {
+      assertThat(store.isLocked()).isTrue();
+      assertThat(mode(layout.dbFile())).isEqualTo("rw-------");
+    }
+    assertThat(TestSqlite.sha256(aside.resolve("queryhub.db"))).isEqualTo(db);
+    assertThat(TestSqlite.sha256(aside.resolve("queryhub.db-journal"))).isEqualTo(journal);
+  }
+
+  /** P1-07 AC2: 원래 DB 크기가 1 페이지 이상인 저널은 커밋한 데이터가 있을 수 있다. 새 저장소라고 하지 않고 sqlite3 와 백업 복원을 알려 준다. */
+  @ParameterizedTest(name = "원래 DB 크기 {0} 페이지")
+  @ValueSource(ints = {1, 3})
+  void hotJournalOfAStoreThatHadDataGetsTheSqlite3AndBackupRemedy(int initialPages)
+      throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    Refusal.privateDataDir(layout);
+    TestSqlite.writeOnePageWalModeDatabase(tmp.resolve("source"), layout.dbFile());
+    TestSqlite.writeRollbackJournal(layout.journalFile(), initialPages);
+    String db = TestSqlite.sha256(layout.dbFile());
+    String journal = TestSqlite.sha256(layout.journalFile());
+
+    assertThatThrownBy(() -> StoreBootstrap.open(layout).close())
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining(layout.journalFile().toString())
+        .hasMessageContaining("원래 DB 크기가 " + initialPages + " 페이지")
+        .hasMessageContaining("커밋한 데이터가 있을 수 있다")
+        .hasMessageContaining("sqlite3 \"" + layout.dbFile() + "\" \"PRAGMA quick_check\"")
+        .hasMessageContaining("백업에서 DB 파일과 마스터 키를 함께 복원하라")
+        .message()
+        .doesNotContain("새 저장소")
+        .doesNotContain("커밋한 데이터가 없");
+    assertThat(TestSqlite.sha256(layout.dbFile())).isEqualTo(db);
+    assertThat(TestSqlite.sha256(layout.journalFile())).isEqualTo(journal);
+  }
+
+  @Test
+  void journalHeaderReaderReadsTheInitialPageCountOnlyFromARealHeader() throws Exception {
+    Path journal = tmp.resolve("queryhub.db-journal");
+    TestSqlite.writeRollbackJournal(journal, 0);
+    assertThat(StoreBootstrap.journalInitialPageCount(journal)).hasValue(0);
+    TestSqlite.writeRollbackJournal(journal, -1);
+    assertThat(StoreBootstrap.journalInitialPageCount(journal))
+        .as("부호 없는 32 비트")
+        .hasValue(4_294_967_295L);
+    Files.writeString(journal, "leftover rollback journal, not a real header");
+    assertThat(StoreBootstrap.journalInitialPageCount(journal)).as("매직 바이트가 다르다").isEmpty();
+    Files.write(journal, java.util.Arrays.copyOf(StoreBootstrap.JOURNAL_MAGIC, 20));
+    assertThat(StoreBootstrap.journalInitialPageCount(journal)).as("28 바이트보다 짧다").isEmpty();
+    assertThat(StoreBootstrap.journalInitialPageCount(tmp.resolve("missing"))).isEmpty();
+  }
+
+  /** P1-07 AC3: -journal 도 연결 전에 파일 규칙으로 본다. 심볼릭 링크인 저널은 롤백 저널 메시지가 아니라 링크 메시지로 거부하고 링크는 그대로 둔다. */
+  @Test
+  void symlinkedRollbackJournalIsRefusedByTheFileRuleBeforeAnyConnection() throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    Refusal.privateDataDir(layout);
+    TestSqlite.writeHealthyDatabase(layout.dbFile());
+    chmod(layout.dbFile(), "rw-------");
+    Path target = tmp.resolve("elsewhere.db-journal");
+    TestSqlite.writeRollbackJournal(target, 1);
+    Files.createSymbolicLink(layout.journalFile(), target);
+    Map<String, String> before = snapshot(tmp);
+
+    assertThatThrownBy(() -> StoreBootstrap.open(layout).close())
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining("Metadata 저장소 롤백 저널(" + layout.journalFile() + ")")
+        .hasMessageContaining("심볼릭 링크")
+        .message()
+        .doesNotContain("되돌리지 않은 롤백 저널");
+    assertThat(snapshot(tmp)).containsAllEntriesOf(before);
+    assertThat(Files.readSymbolicLink(layout.journalFile())).isEqualTo(target);
+    assertThat(layout.shmFile()).as("연결하지 않았다").doesNotExist();
+  }
+
+  /** P1-07 AC4 (리뷰 N3): 잠금 채널을 열다 Error 가 나도 JVM 표에 정체가 남지 않아 같은 데이터 디렉터리를 다시 잠글 수 있다. */
+  @Test
+  void anErrorWhileOpeningTheLockChannelLeavesNoEntryInTheJvmTable() throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    PrivatePaths.prepareDirectory(layout.dataDir(), StoreBootstrap.DATA_DIR_ROLE);
+    InternalError injected = new InternalError("injected at channel open (test)");
+
+    assertThatThrownBy(
+            () ->
+                StoreLock.acquire(
+                    layout,
+                    lockFile -> {
+                      throw injected;
+                    }))
+        .isSameAs(injected);
+
+    try (StoreLock lock = StoreLock.acquire(layout)) {
+      assertThat(lock.isHeld()).isTrue();
+    }
+    assertThat(TestSqlite.lockIsFreeInAnotherProcess(layout.lockFile())).isTrue();
+  }
+
+  /**
+   * P1-07 AC5 (리뷰 N4): 소유자가 쓸 수 없는(0400) 파일이 있는 건강한 WAL 저장소는 연결 전에 거부한다. 있던 파일의 내용·권한은 그대로이고, 연결하지
+   * 않았으므로 -shm 이 없던 경우 생기지 않는다.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"queryhub.db-shm", "queryhub.db", "queryhub.db-wal"})
+  void ownerReadOnlyStoreFileIsRefusedBeforeAnyConnection(String name) throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    Refusal.privateDataDir(layout);
+    boolean withShm = name.endsWith("-shm");
+    TestSqlite.writeStoreWithLiveWal(tmp.resolve("source"), layout.dataDir(), withShm, false);
+    Path readOnly = layout.dataDir().resolve(name);
+    chmod(readOnly, "r--------");
+    Map<String, String> before = snapshot(tmp);
+
+    assertThatThrownBy(() -> StoreBootstrap.open(layout).close())
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining(readOnly.toString())
+        .hasMessageContaining("r--------")
+        .hasMessageContaining("읽고 쓸 수 없다")
+        .hasMessageContaining("chmod 600 " + readOnly);
+    assertThat(snapshot(tmp)).as("거부한 항목은 그대로다").containsAllEntriesOf(before);
+    assertThat(mode(readOnly)).isEqualTo("r--------");
+    assertThat(Files.exists(layout.shmFile())).as("연결하지 않았다").isEqualTo(withShm);
+  }
+
+  /**
+   * P1-07 AC6 (리뷰 N5): 런타임 URL 은 open_mode=2(SQLITE_OPEN_CREATE 없음)다. 런타임이 도는 동안 DB 파일이 사라지면 새 연결은
+   * 빈 DB 를 만들지 않고 실패한다.
+   */
+  @Test
+  void runtimeUrlDoesNotRecreateADatabaseFileThatVanishedWhileTheStoreIsOpen() throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    try (OpenedMetadataStore store = StoreBootstrap.open(layout)) {
+      for (Path file : List.of(layout.dbFile(), layout.walFile(), layout.shmFile())) {
+        Files.deleteIfExists(file);
+      }
+
+      assertThatThrownBy(() -> DriverManager.getConnection(store.jdbcUrl()).close())
+          .isInstanceOf(SQLException.class);
+      assertThat(layout.dbFile()).as("런타임 URL 이 DB 파일을 만들지 않는다").doesNotExist();
+    }
+    assertThat(layout.dbFile()).doesNotExist();
+  }
+
+  /**
+   * P1-07 AC7: 롤백 저널 모드 파일(머리글 18-19 바이트 1, 1: VACUUM INTO 사본)은 open_mode=2 로도 열리고, 부트스트랩 연결이 WAL
+   * 모드(2, 2)로 바꾼다. 그때 쓴 롤백 저널은 남지 않는다.
+   */
+  @Test
+  void rollbackModeDatabaseLikeAVacuumIntoCopyOpensAndIsSwitchedToWal() throws Exception {
+    StoreLayout layout = StoreLayout.resolve(tmp.resolve("data").toString(), null);
+    Refusal.privateDataDir(layout);
+    Path source = Files.createDirectory(tmp.resolve("source")).resolve("live.db");
+    try (Connection connection =
+            DriverManager.getConnection("jdbc:sqlite:" + source + "?journal_mode=WAL");
+        Statement statement = connection.createStatement()) {
+      statement.execute("CREATE TABLE probe (v TEXT NOT NULL)");
+      statement.execute("INSERT INTO probe (v) VALUES ('a'), ('b')");
+    }
+    try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + source);
+        Statement statement = connection.createStatement()) {
+      statement.execute("VACUUM INTO '" + layout.dbFile() + "'");
+    }
+    chmod(layout.dbFile(), "rw-------");
+    assertThat(TestSqlite.formatVersionBytes(layout.dbFile())).containsExactly(1, 1);
+
+    try (OpenedMetadataStore store = StoreBootstrap.open(layout);
+        Connection connection = DriverManager.getConnection(store.jdbcUrl());
+        Statement statement = connection.createStatement();
+        var rs = statement.executeQuery("SELECT count(*) FROM probe")) {
+      assertThat(rs.next()).isTrue();
+      assertThat(rs.getInt(1)).isEqualTo(2);
+    }
+    assertThat(TestSqlite.formatVersionBytes(layout.dbFile())).containsExactly(2, 2);
+    assertThat(layout.journalFile()).doesNotExist();
+    assertThat(mode(layout.dbFile())).isEqualTo("rw-------");
+  }
+
+  /**
+   * P1-07 AC8 (리뷰 N6): 데이터 디렉터리에서 가장 가까운 있는 조상의 실제 경로가 UNC 뿌리이면(공유를 가리키는 정션·링크) 아무것도 만들기 전에 거부한다.
+   * 실제 경로 뿌리는 넣은 것이 돌려준다(Windows 에서는 시험하지 않았다, PLAT-1).
+   */
+  @Test
+  void
+      dataDirectoryWhoseNearestExistingAncestorIsReallyOnAUncShareIsRefusedBeforeAnythingIsCreated()
+          throws Exception {
+    Path dataDir = tmp.resolve("missing/parent/data");
+    StoreLayout layout = StoreLayout.resolve(dataDir.toString(), null);
+    Map<String, String> before = snapshot(tmp);
+    List<Path> asked = new ArrayList<>();
+
+    assertThatThrownBy(
+            () ->
+                StoreBootstrap.open(
+                        layout,
+                        existing -> {
+                          asked.add(existing);
+                          return "\\\\server\\share\\";
+                        })
+                    .close())
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining(StoreBootstrap.DATA_DIR_ROLE + "(" + dataDir + ")")
+        .hasMessageContaining("상위 경로 " + tmp + " ")
+        .hasMessageContaining("UNC 경로 \\\\server\\share\\")
+        .hasMessageContaining("네트워크")
+        .hasMessageContaining("로컬 디스크");
+    assertThat(asked).as("가장 가까운 있는 조상").containsExactly(tmp);
+    assertThat(snapshot(tmp)).as("아무것도 만들지 않는다").isEqualTo(before);
+  }
+
+  @Test
+  void
+      nativeDirectoryWhoseNearestExistingAncestorIsReallyOnAUncShareIsRefusedBeforeAnythingIsCreated()
+          throws Exception {
+    Path shareLink = Files.createDirectory(tmp.resolve("junction-to-share"));
+    StoreLayout layout =
+        StoreLayout.resolve(
+            tmp.resolve("data").toString(), shareLink.resolve("queryhub/native").toString());
+    Map<String, String> before = snapshot(tmp);
+
+    assertThatThrownBy(
+            () ->
+                StoreBootstrap.open(
+                        layout,
+                        existing ->
+                            existing.equals(shareLink)
+                                ? "//server/share/"
+                                : NetworkFileSystems.REAL_ROOTS.realRoot(existing))
+                    .close())
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining(StoreBootstrap.NATIVE_DIR_ROLE)
+        .hasMessageContaining("UNC 경로 //server/share/");
+    assertThat(snapshot(tmp)).as("데이터 디렉터리도 만들지 않는다").isEqualTo(before);
+  }
+
+  /** P1-07 AC8: unix 에서 가장 가까운 있는 조상 찾기와 실제 경로 읽기(링크를 따라간다). */
+  @Test
+  void nearestExistingAncestorSkipsMissingDescendantsAndTheRealPathFollowsLinks() throws Exception {
+    String role = StoreBootstrap.DATA_DIR_ROLE;
+    assertThat(NetworkFileSystems.nearestExistingAncestor(tmp.resolve("a/b/c"))).contains(tmp);
+    assertThat(NetworkFileSystems.nearestExistingAncestor(tmp)).contains(tmp);
+
+    Path real = Files.createDirectory(tmp.resolve("real"));
+    Path alias = Files.createSymbolicLink(tmp.resolve("alias"), real);
+    assertThat(NetworkFileSystems.nearestExistingAncestor(alias.resolve("x/y"))).contains(alias);
+    assertThat(NetworkFileSystems.REAL_ROOTS.realRoot(alias)).isEqualTo("/");
+    NetworkFileSystems.refuseUncRealPath(alias.resolve("x/y"), role, NetworkFileSystems.REAL_ROOTS);
+
+    // 끊긴 링크는 링크 자체가 가장 가까운 있는 조상이고, 실제 경로를 읽을 수 없어 거부한다.
+    Path dangling = Files.createSymbolicLink(tmp.resolve("dangling"), tmp.resolve("nowhere"));
+    assertThat(NetworkFileSystems.nearestExistingAncestor(dangling.resolve("x")))
+        .contains(dangling);
+    assertThatThrownBy(
+            () ->
+                NetworkFileSystems.refuseUncRealPath(
+                    dangling.resolve("x"), role, NetworkFileSystems.REAL_ROOTS))
+        .isInstanceOf(MetadataStoreException.class)
+        .hasMessageContaining(dangling.toString())
+        .hasMessageContaining("실제 경로를 확인할 수 없어");
+    assertThat(tmp.resolve("nowhere")).doesNotExist();
+    assertThat(alias.resolve("x")).doesNotExist();
+  }
+
   /** 디렉터리 아래 모든 항목의 종류·권한·내용(파일)·링크 대상(링크). 링크는 따라가지 않는다. */
   private static Map<String, String> snapshot(Path root) throws IOException {
     Map<String, String> entries = new TreeMap<>();

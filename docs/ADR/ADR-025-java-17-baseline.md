@@ -2,7 +2,7 @@
 
 - 상태: 승인됨
 - 날짜: 2026-11-23
-- 구현: 구현됨 (P1-05, 6ceef51 (2026-11-23)). 테스트는 Java 17 에서 돌았다. Java 21 이상에서는 이 변경 뒤에 다시 돌리지 않았다. CI 는 정의됨·미실행(CI-1), Windows·Linux 는 미검증(PLAT-1)
+- 구현: 구현됨 (P1-05, 6ceef51 (2026-11-23)). 테스트는 Java 17 에서 돌았다. Java 21 이상에서는 이 변경 뒤에 다시 돌리지 않았다. CI 는 2026-11-23 부터 실행되고 Linux(Temurin 17)와 macOS 작업은 통과했다. Windows 는 미검증(PLAT-1, CI-1)
 
 ## 맥락
 
@@ -17,7 +17,7 @@
 - Java 기준선은 17 이다. `runtime/build.gradle` 의 Java toolchain 은 `JavaLanguageVersion.of(17)` 이다. 컴파일(`-Xlint:all -Werror -parameters` 그대로), 단위 테스트, 통합 테스트, 통합 테스트가 띄우는 실행 JAR 자식 프로세스가 모두 JDK 17 에서 돈다. `--release 17` 로 컴파일하고 21 에서 테스트하는 방식은 쓰지 않는다(Java 17 에서 도는지 증명하지 못하고 JDK 21 이 필요하다).
 - JDK 를 내려받지 않는다. `runtime/settings.gradle` 에서 foojay resolver 플러그인을 뺐고, `runtime/gradle.properties` 에 `org.gradle.java.installations.auto-download=false` 를 두었다. Gradle 은 로컬에 설치된 JDK 를 자동 감지해 찾는다(현재 JVM, `JAVA_HOME`, macOS 의 java_home, `~/.gradle/jdks` 등). 다른 위치의 JDK 17 은 `~/.gradle/gradle.properties` 의 `org.gradle.java.installations.paths` 로 알려 준다(Windows 에서는 경로의 `\` 를 `/` 로 쓰거나 `\\` 로 적는다. `gradle.properties` 는 `\` 를 이스케이프로 읽는다. 미검증, PLAT-1. P1-05 리뷰 R3). JDK 17 이 없으면 첫 `JavaCompile` 태스크가 Gradle 의 toolchain 오류로 실패한다. toolchain 의 언어 버전은 정확히 일치해야 하므로 JDK 21 이 있어도 17 대신 쓰이지 않는다. 실제 메시지는 [DEPLOYMENT.md](../DEPLOYMENT.md) 준비물에 있다.
 - desktop 셸은 Java 17 이상을 받는다(`desktop/src-tauri/src/runtime/java.rs` 의 `MIN_MAJOR = 17`, `is_supported`). 16 이하는 `java_too_old` 로 거부한다. `launch.rs` 의 안내 문구도 `MIN_MAJOR` 에서 숫자를 가져온다.
-- CI(`.github/workflows/ci.yml`)의 `setup-java` 는 Temurin 17 을 준비한다. CI 는 정의됨·미실행이다(CI-1).
+- CI(`.github/workflows/ci.yml`)의 `setup-java` 는 Temurin 17 을 준비한다. CI 는 2026-11-23 부터 실행된다(CI-1).
 - Java 18 이상의 API 와 언어 기능은 쓰지 않는다. 기대값을 일부러 고정한 테스트가 이 기준선을 지킨다: `runtime/app/src/test/java/com/queryhub/app/JavaBaselineTest.java`(테스트 JVM 이 17, 모든 모듈의 main 클래스가 주 버전 61), `runtime/app/src/integrationTest/java/com/queryhub/app/it/BootJarIntegrationTest.java`(실행 JAR 이 Java 17 로 기동. P1-06 부터 기동 줄은 `using Java 17 with` 와 `using Java 17.0.x with` 를 모두 받는다(P1-05 리뷰 R2). GA 빌드의 `java.version` 은 `17` 이다), `runtime/app/src/integrationTest/java/com/queryhub/app/it/BootJarClassVersionIntegrationTest.java`(실행 JAR 안의 모든 클래스가 61 이하, `com/queryhub` 클래스는 61). 결정 없이 toolchain 을 바꾸면 이 테스트들이 실패한다. 기준선을 다시 바꿀 때는 새 ADR 을 쓰고 이 값들을 함께 고친다.
 
 ## 결과

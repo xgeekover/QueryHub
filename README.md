@@ -12,7 +12,7 @@ SQL 을 저장하고 API 엔드포인트와 연결해, 외부 시스템이 HTTP 
 
 ## 현재 상태: Phase 0 완료, Phase 1 진행 중
 
-Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완료됐다. Phase 1 의 첫 태스크 P1-01(P0-D 리뷰 후속, 99040c0, 2026-11-21)은 게이트의 두 점검기가 다루지 못하는 입력을 거부하게 했다. 둘째 태스크 P1-02(P1-01 리뷰 5회차 후속, 9fc70db (2026-11-22))는 워크플로 점검이 셸 시작 env 이름과 더 많은 표현식 모양을 거부하게 하고, 데스크톱 셸의 포트 확인이 macOS 에서 연결 시간에 기대지 않게 했다(P101-T1). CI 워크플로는 정의만 했고 한 번도 실행되지 않았다(정의됨·미실행).
+Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완료됐다. Phase 1 의 첫 태스크 P1-01(P0-D 리뷰 후속, 99040c0, 2026-11-21)은 게이트의 두 점검기가 다루지 못하는 입력을 거부하게 했다. 둘째 태스크 P1-02(P1-01 리뷰 5회차 후속, 9fc70db (2026-11-22))는 워크플로 점검이 셸 시작 env 이름과 더 많은 표현식 모양을 거부하게 하고, 데스크톱 셸의 포트 확인이 macOS 에서 연결 시간에 기대지 않게 했다(P101-T1). CI 워크플로는 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux 와 macOS 작업은 통과했고 Windows 작업은 실패한다([docs/BACKLOG.md](docs/BACKLOG.md) CI-1).
 
 셋째 태스크 P1-03(2698115 (2026-11-22))은 Phase 1 본래 범위의 첫 태스크로, 관리 API 에 관리자 토큰(Bearer)과 desktop 의 루프백 전용·Host 허용 목록을 더했다.
 
@@ -20,7 +20,9 @@ Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완�
 
 다섯째 태스크 P1-05(6ceef51 (2026-11-23))는 Spring Boot 4.1 을 그대로 두고 런타임을 OpenJDK 17 에서 컴파일·테스트·실행하게 했다(2026-11-23 사용자 결정, [ADR-025](docs/ADR/ADR-025-java-17-baseline.md)). 빌드는 로컬에 설치된 JDK 17 만 쓰고 JDK 를 내려받지 않는다. 데스크톱 셸은 Java 17 이상을 받는다.
 
-여섯째 태스크 P1-06(커밋 전)은 MariaDB Metadata DB 를 두 모드 모두 내장 SQLite 저장소로 바꿨다(2026-11-23 사용자 결정 「2. SQLite 내장」, [ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md)). 런타임은 데이터 디렉터리(`QUERYHUB_DATA_DIR`) 안의 `queryhub.db` 를 쓰고, 데스크톱 앱은 환경변수 없이 시작한다. 외부 DB 와 개발용 compose 가 필요 없다. 실행해 본 플랫폼은 macOS arm64 뿐이다.
+여섯째 태스크 P1-06(39c90e1 (2026-11-23))은 MariaDB Metadata DB 를 두 모드 모두 내장 SQLite 저장소로 바꿨다(2026-11-23 사용자 결정 「2. SQLite 내장」, [ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md)). 런타임은 데이터 디렉터리(`QUERYHUB_DATA_DIR`) 안의 `queryhub.db` 를 쓰고, 데스크톱 앱은 환경변수 없이 시작한다. 외부 DB 와 개발용 compose 가 필요 없다. 로컬에서는 macOS arm64, CI 에서는 Linux 에서 실행했다.
+
+일곱째 태스크 P1-07(커밋 전)은 업무 DB 연결의 첫 부분이다. 공통 모듈 `adapter-dbprovider` 와 MariaDB·PostgreSQL Provider 가 검사한 필드로 URL 을 만들고, TLS 모드 말고는 드라이버 옵션을 거부하고, `Driver.connect` 로 연결을 시험하고, 연결마다 읽기 전용 풀을 연다([ADR-027](docs/ADR/ADR-027-database-provider.md)). P1-06 리뷰 후속 N1–N7 로 Metadata 저장소의 롤백 저널 안내, 파일 규칙, `open_mode=2`, UNC 실제 경로 검사도 고쳤다. 다음은 P1-08(연결 저장), P1-09(관리 API), P1-10(Oracle), P1-11(MSSQL), P1-12(Phase 1 마무리)다.
 
 | 구분 | 내용 |
 |---|---|
@@ -28,14 +30,15 @@ Phase 0 은 마지막 태스크 P0-D 의 커밋(d0b0f0f, 2026-11-20)으로 완�
 | 구현됨 (P0-B) | Metadata DB(MariaDB, P1-06 에서 내장 SQLite 로 바뀌었다) 연결과 기동 검사, Flyway 마이그레이션 V1(`app_setting`), `AppSettingRepository` 포트와 JDBC 구현(`adapter-metadata`), ArchUnit R8, Testcontainers 통합 테스트와 통합 테스트 게이트(`integration.sh`), 개발용 compose(`deploy/compose.dev.yml`, P1-06 에서 지웠다) |
 | 구현됨 (P0-C) | Tauri 2.11 데스크톱 셸(`desktop/`): 런타임 JAR 을 자식 프로세스로 자동 시작·중지·재시작, 상태 화면(React 19 + shadcn/ui), 앱 종료 시 런타임 정지, 런타임의 부모 프로세스 감시(`QUERYHUB_DESKTOP_PARENT_PID`), desktop 프로파일의 관리 API CORS, 게이트의 desktop 단계(vitest, cargo test 판정기 `cargo-test-check.sh`, Tauri 버전 고정 검사) |
 | 문서 기준선 (51141df) | `docs/` 의 요구사항, 아키텍처, ADR 19건, ERD, API 명세, DB 지원, 보안, 배포, 테스트 계획, 백로그와 루트의 `CHANGELOG.md` |
-| 구현됨 (P0-D, d0b0f0f) | CI 워크플로 `.github/workflows/ci.yml`(**정의됨·미실행**: 원격 저장소가 없어 한 번도 실행되지 않았다, [ADR-020](docs/ADR/ADR-020-ci-runs-gate-scripts.md)), 게이트의 `--desktop-only`, 문서 점검 `docs-check.sh`, 워크플로 점검 `workflow-check.sh`, `selftest.sh --no-skip`, stdout 만 읽는 Docker 사전 점검, Windows `Path` 처리(미검증), ADR 은 모두 20건, [Phase 0 보고](docs/PHASE0-REPORT.md) |
+| 구현됨 (P0-D, d0b0f0f) | CI 워크플로 `.github/workflows/ci.yml`(P0-D 에서는 정의만 했고 2026-11-23 부터 실행된다, [ADR-020](docs/ADR/ADR-020-ci-runs-gate-scripts.md)), 게이트의 `--desktop-only`, 문서 점검 `docs-check.sh`, 워크플로 점검 `workflow-check.sh`, `selftest.sh --no-skip`, stdout 만 읽는 Docker 사전 점검, Windows `Path` 처리(미검증), ADR 은 모두 20건, [Phase 0 보고](docs/PHASE0-REPORT.md) |
 | 구현됨 (P1-01, 99040c0) | P0-D 리뷰 후속 R1–R7. `workflow-check.sh` 는 YAML 파서가 아니므로 줄 단위로 다룰 수 없는 문법, 허용 목록 밖의 줄 모양, 여러 줄에 걸친 평범한 스칼라와 LF 가 아닌 줄바꿈 문자를 거부하고(`[UNSUPPORTED_SYNTAX]`), 같은 매핑의 같은 키(`[DUPLICATE_KEY]`), 대문자가 든 키(`[KEY_NOT_LOWERCASE]`, `env:` 변수 이름 말고), `continue-on-error`, `if:`, bash 가 아닌 `shell:`, 단계 밖의 `run:`(`[RUN_KEY]`), run 값 안의 `${{ }}` 를 거부하며, checkout 의 `persist-credentials: false` 는 그 단계의 `with:` 바로 아래만 센다. `docs-check.sh` 는 저장소 루트 밖으로 나가는 상대 링크를 깨진 링크로 센다. 두 점검기가 잡는 것과 잡지 못하는 것은 [SECURITY.md](docs/SECURITY.md)와 [TEST_PLAN.md](docs/TEST_PLAN.md)에 있다 |
 | 구현됨 (P1-02, 9fc70db (2026-11-22)) | P1-01 리뷰 5회차 후속 C5-R1–R4 와 P101-T1, P0C-C2-1. `workflow-check.sh` 는 워크플로·job·단계 `env:` 의 셸·로더·러너 시작 변수 이름과 Windows 명령 찾기 변수(`BASH_ENV`, `PATH`, `PATHEXT`, `COMSPEC` 등)와 한 줄 `env:` 값(`[FORBIDDEN_ENV]`), 식별자 `secrets` 와 허용 속성 밖의 `github` 표현식(`[FORBIDDEN_EXPR]`), 블록 스칼라 안 빈 줄의 내용 열 앞 탭(`[UNSUPPORTED_SYNTAX]`)을 거부한다. 데스크톱 셸의 포트 확인(`launch::port_is_free`)은 macOS 에서 0.0.0.0·[::] 리스너를 바인딩만 하는 시험으로 찾고, TCP 자기 연결은 비어 있다로 본다(Windows 는 자기 연결 예외만 바뀌었고 미검증이다, PLAT-1). 남은 한계는 [SECURITY.md](docs/SECURITY.md)와 [TEST_PLAN.md](docs/TEST_PLAN.md)에 있다 |
 | 구현됨 (P1-03, 2698115 (2026-11-22)) | 관리자 토큰([ADR-021](docs/ADR/ADR-021-admin-token-bearer.md), [ADR-022](docs/ADR/ADR-022-admin-token-implementation.md)). `/admin/**` 와 health 세 경로 밖의 `/actuator/**` 는 `Authorization: Bearer <토큰>` 을 요구한다(없거나 틀리면 401 `UNAUTHORIZED`, `WWW-Authenticate: Bearer`). 토큰이 없으면 런타임은 기동을 거부한다. 데스크톱 셸은 실행마다 OS 난수 생성기로 토큰을 만들어 런타임에는 환경변수 `QUERYHUB_ADMIN_TOKEN` 으로, UI 에는 Tauri 커맨드 `admin_token` 으로 넘긴다. server 는 `QUERYHUB_ADMIN_TOKEN` 이나 `QUERYHUB_ADMIN_TOKEN_FILE` 로 받는다. desktop 의 관리 요청은 소켓 원격 주소가 루프백이고 Host 가 허용 목록에 있을 때만 받는다(아니면 403 `FORBIDDEN`). Windows·Linux 의 셸은 미검증이다(PLAT-1). 남은 한계는 [SECURITY.md](docs/SECURITY.md)에 있다 |
 | 구현됨 (P1-04, 037385b (2026-11-23)) | 마스터 키와 비밀 값 암호([ADR-023](docs/ADR/ADR-023-master-key-delivery.md), [ADR-024](docs/ADR/ADR-024-secret-cipher-format-and-rotation.md)). 런타임은 두 프로파일 모두 16진수 64 자의 마스터 키가 없으면 기동을 거부한다. server 는 `QUERYHUB_MASTER_KEY` 나 `QUERYHUB_MASTER_KEY_FILE` 로 받는다. desktop 셸은 첫 실행에 앱 로컬 데이터 디렉터리의 `secrets/master.key` 를 만들고(unix 0700/0600, 있는 파일은 덮어쓰지 않는다) 시작마다 읽어 환경변수로 넘긴다. 키 파일은 파일 권한만 지킨다([SECURITY.md](docs/SECURITY.md) 「마스터 키」). 새 모듈 `adapter-crypto` 의 AES-256-GCM 과 저장 형식 `qh1`. 비밀번호를 저장하는 연결 기능은 다음 태스크다. Windows·Linux 의 셸은 미검증이다(PLAT-1) |
-| 구현됨 (P1-05, 6ceef51 (2026-11-23)) | Java 17 기준선([ADR-025](docs/ADR/ADR-025-java-17-baseline.md)). Spring Boot 4.1.2 는 그대로다. Gradle toolchain 은 정확히 17 이고 로컬에 설치된 JDK 만 자동 감지한다(foojay 없음, `runtime/gradle.properties` 의 `org.gradle.java.installations.auto-download=false`). 단위·통합 테스트와 통합 테스트가 띄우는 실행 JAR 이 Java 17 에서 돈다. 테스트가 테스트 JVM 의 버전, 모듈마다 클래스 파일 버전(61), 실행 JAR 안의 모든 클래스 버전을 확인한다. 데스크톱 셸은 Java 17 이상을 받고 16 이하는 `java_too_old` 로 거부한다. CI 는 Temurin 17 을 준비한다(정의됨·미실행). 더 높은 Java 버전에서는 이 변경 뒤에 다시 시험하지 않았다. Windows·Linux 는 미검증이다(PLAT-1) |
-| 구현됨 (P1-06, 커밋 전) | 내장 SQLite Metadata 저장소([ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md), ADR-009·ADR-011·ADR-017 을 대체). `org.xerial:sqlite-jdbc` 3.53.4.0(BOM 관리, Apache-2.0)과 Flyway core 의 SQLite 지원. 데이터 디렉터리 `QUERYHUB_DATA_DIR`(환경변수, 외부 설정 파일 또는 명령행, 두 프로파일 필수)의 `queryhub.db`. 디렉터리 0700·파일 0600, 심볼릭 링크·다른 소유자·느슨한 권한 거부, 알려진 네트워크 파일 시스템 거부, `queryhub.lock` 으로 런타임 하나, 네이티브 라이브러리는 `java.io.tmpdir` 대신 `<data-dir>/native`(`QUERYHUB_SQLITE_NATIVE_DIR` 로 옮긴다), SQLite 머리글·`quick_check`·PRAGMA 검사. 모두 포트를 열기 전에 실패 닫힘. `QUERYHUB_METADATA_DB_*`, MariaDB 드라이버, `flyway-mysql`, Testcontainers, `deploy/compose.dev.yml` 은 지웠다. 데스크톱 셸은 `<앱 로컬 데이터 디렉터리>/data` 를 준비해 넘기고(`data_dir_unavailable`), 앱은 환경변수 없이 시작한다. macOS arm64 만 실행했다. 다른 SQLite 네이티브와 Windows·Linux 는 미검증이다(PLAT-1). 백업·복구는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
-| 계획 | DB 연결과 Provider 4종·보안·연결 비밀번호의 암호화 저장(Phase 1), SQL 저장소(Phase 2), API 관리(Phase 3), API 런타임·API Key(Phase 4), Export(Phase 5), Desktop UI·운영 지표 화면(Phase 6), 모니터링과 운영 지표 수집(Phase 7), 배포·Dockerfile(Phase 8) |
+| 구현됨 (P1-05, 6ceef51 (2026-11-23)) | Java 17 기준선([ADR-025](docs/ADR/ADR-025-java-17-baseline.md)). Spring Boot 4.1.2 는 그대로다. Gradle toolchain 은 정확히 17 이고 로컬에 설치된 JDK 만 자동 감지한다(foojay 없음, `runtime/gradle.properties` 의 `org.gradle.java.installations.auto-download=false`). 단위·통합 테스트와 통합 테스트가 띄우는 실행 JAR 이 Java 17 에서 돈다. 테스트가 테스트 JVM 의 버전, 모듈마다 클래스 파일 버전(61), 실행 JAR 안의 모든 클래스 버전을 확인한다. 데스크톱 셸은 Java 17 이상을 받고 16 이하는 `java_too_old` 로 거부한다. CI 는 Temurin 17 을 준비한다(2026-11-23 부터 실행). 더 높은 Java 버전에서는 이 변경 뒤에 다시 시험하지 않았다. Windows·Linux 는 미검증이다(PLAT-1) |
+| 구현됨 (P1-06, 39c90e1 (2026-11-23)) | 내장 SQLite Metadata 저장소([ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md), ADR-009·ADR-011·ADR-017 을 대체). `org.xerial:sqlite-jdbc` 3.53.4.0(BOM 관리, Apache-2.0)과 Flyway core 의 SQLite 지원. 데이터 디렉터리 `QUERYHUB_DATA_DIR`(환경변수, 외부 설정 파일 또는 명령행, 두 프로파일 필수)의 `queryhub.db`. 디렉터리 0700·파일 0600, 심볼릭 링크·다른 소유자·느슨한 권한 거부, 알려진 네트워크 파일 시스템 거부, `queryhub.lock` 으로 런타임 하나, 네이티브 라이브러리는 `java.io.tmpdir` 대신 `<data-dir>/native`(`QUERYHUB_SQLITE_NATIVE_DIR` 로 옮긴다), SQLite 머리글·`quick_check`·PRAGMA 검사. 모두 포트를 열기 전에 실패 닫힘. `QUERYHUB_METADATA_DB_*`, MariaDB 드라이버, `flyway-mysql`, Testcontainers, `deploy/compose.dev.yml` 은 지웠다. 데스크톱 셸은 `<앱 로컬 데이터 디렉터리>/data` 를 준비해 넘기고(`data_dir_unavailable`), 앱은 환경변수 없이 시작한다. 로컬은 macOS arm64, CI 는 Linux x86_64 에서 실행했다. 다른 SQLite 네이티브와 Windows 는 미검증이다(PLAT-1). 백업·복구는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| 구현됨 (P1-07, 커밋 전) | 업무 DB Provider([ADR-027](docs/ADR/ADR-027-database-provider.md)): 공통 모듈 `adapter-dbprovider`, `provider-mariadb`(Connector/J 3.5.11), `provider-postgresql`(pgjdbc 42.7.14). 검사한 필드로 만든 URL, TLS 모드 하나만 받는 옵션 허용 목록, 이기는 고정 속성(MariaDB `allowLocalInfile=false`·`readOnlyPropagatesToServer=true`·`permitRedirect=false`, PostgreSQL `readOnlyMode=always`), `DriverManager` 없는 `Driver.connect`, connectTimeout + 2 초 마감, 고정 한국어 메시지, 연결마다 읽기 전용 Hikari 풀(Spring 빈 아님, DataSource 빈은 하나). 저장과 API 는 아직 없다. 통합 시험은 로컬 `mariadb:12.3`·`postgres:16-alpine` 컨테이너(127.0.0.1 에만 바인딩)로 돈다. Oracle·MSSQL 은 계획(P1-10, P1-11). P1-06 리뷰 후속 N1–N7(Metadata 저장소) 포함 |
+| 계획 | 연결 저장과 비밀번호의 암호화 저장(P1-08), 관리 API(P1-09), Oracle·MSSQL Provider(P1-10, P1-11), Phase 1 마무리(P1-12), SQL 저장소(Phase 2), API 관리(Phase 3), API 런타임·API Key(Phase 4), Export(Phase 5), Desktop UI·운영 지표 화면(Phase 6), 모니터링과 운영 지표 수집(Phase 7), 배포·Dockerfile(Phase 8) |
 
 Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#phase-계획), 태스크별 변경과 테스트 수는 [CHANGELOG.md](CHANGELOG.md), 남은 문제는 [docs/BACKLOG.md](docs/BACKLOG.md), Phase 0 의 결과·사람의 결정·미검증 항목은 [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md)에 있다.
 
@@ -48,6 +51,9 @@ Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 │  ├─ application/         유스케이스와 포트 (GetRuntimeInfoUseCase, RuntimeInfoService, AppSettingRepository)
 │  ├─ adapter-web/         관리 REST, 공통 응답 형식, 요청 ID 필터, 오류 매핑
 │  ├─ adapter-metadata/    Metadata 저장소(내장 SQLite): 저장소 열기와 검사(store/), JdbcAppSettingRepository, Flyway 마이그레이션(db/migration)
+│  ├─ adapter-dbprovider/  업무 DB 연결의 공통 JDBC 코드(Provider SPI, Driver.connect, 옵션 허용 목록, 읽기 전용 풀, P1-07)
+│  ├─ provider-mariadb/    MariaDB Provider(Connector/J 3.5.11, P1-07)
+│  ├─ provider-postgresql/ PostgreSQL Provider(pgjdbc 42.7.14, P1-07)
 │  └─ app/                 Spring Boot 조립, 프로파일, Metadata 저장소 설정, 실행 JAR, 아키텍처 테스트, 통합 테스트(src/integrationTest)
 ├─ desktop/                Tauri 데스크톱 셸 (pnpm 프로젝트: package.json, pnpm-lock.yaml, vite.config.ts, components.json)
 │  ├─ src/                 UI: App.tsx, components/RuntimePanel.tsx, components/ui/(shadcn), runtime/(shell.ts, adminApi.ts …)
@@ -57,7 +63,7 @@ Phase 별 범위와 통과 기준은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 ├─ docs/                   요구사항, 아키텍처, ADR/, ERD, API 명세, DB 지원, 보안, 배포, 테스트 계획, 백로그
 ├─ scripts/gate/           build · test · lint · integration 게이트 스크립트, JUnit 결과 판정기, cargo test 결과 판정기,
 │                          문서 점검(docs-check.sh), 워크플로 점검(workflow-check.sh), 판정기 자체 검사(selftest.sh)
-├─ .github/workflows/      CI 워크플로 ci.yml (정의됨·미실행, 팩토리 게이트와 같은 스크립트를 부른다)
+├─ .github/workflows/      CI 워크플로 ci.yml (2026-11-23 부터 실행, 팩토리 게이트와 같은 스크립트를 부른다)
 ├─ .editorconfig  .gitattributes  .gitignore
 ├─ CHANGELOG.md
 ├─ LICENSE
@@ -123,7 +129,7 @@ pnpm --dir desktop tauri dev
 | [docs/DATABASE_SUPPORT.md](docs/DATABASE_SUPPORT.md) | Metadata 저장소(내장 SQLite: 드라이버, 라이선스, 크기, 연결 설정, 네이티브 20개와 검증 상태)와 업무 DB 4종의 계획 |
 | [docs/SECURITY.md](docs/SECURITY.md) | 명세 9절 정책과 상태, 구현된 통제, 관리자 토큰, 마스터 키, Metadata 저장소 파일 규칙과 백업의 민감도, 자식 환경 허용 목록, 알려진 빈 곳 |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 준비물, 데이터 디렉터리(설정 파일, 네이티브 디렉터리, 로컬 디스크, 런타임 하나), 백업·복구, 런타임 실행, 관리자 토큰, 마스터 키, Desktop 셸 실행과 변수, 서명 없는 번들 |
-| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | 테스트 계층, 게이트 스크립트와 거짓 통과 방어, 게이트 범위, CI(정의됨·미실행), 테스트 수, 명세 12절 기준, 문서 점검 절차 |
+| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | 테스트 계층, 게이트 스크립트와 거짓 통과 방어, 게이트 범위, CI 와 그 실행 결과, 테스트 수, 명세 12절 기준, 문서 점검 절차 |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | 리뷰에서 넘어온 후속 과제와 목표 Phase |
 | [docs/PHASE0-REPORT.md](docs/PHASE0-REPORT.md) | Phase 0 보고: 통과 기준과 근거, 태스크별 요약, 사람의 결정, 남은 문제, 미검증 항목, 다음 단계 |
 | [CHANGELOG.md](CHANGELOG.md) | 태스크별 변경, 테스트 수, 남은 문제 |

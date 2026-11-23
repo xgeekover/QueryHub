@@ -10,7 +10,7 @@ archunit = "1.5.1"
 spotless = "8.11.0"
 # BOM 덮어쓰기 예외 (유일). MariaDB Connector/J 는 Boot 4.1.2 BOM 의 3.5.10 대신 이 버전을 쓴다.
 # 라이브러리 항목에는 버전을 적지 않고 runtime/build.gradle 이 BOM 속성 mariadb.version 으로 넣는다 (이유는 그 파일의 주석 참고).
-# P1-06 (ADR-026) 부터 Metadata 저장소는 SQLite 라서 어떤 클래스패스에도 Connector/J 가 없다. 업무 DB Provider 작업이 이 값을 쓰려고 남겨 둔다.
+# P1-06 (ADR-026) 부터 Metadata 저장소는 SQLite 다. P1-07 부터 provider-mariadb 가 이 버전의 Connector/J 를 쓴다.
 mariadb-connector-j = "3.5.11"
 
 [libraries]
@@ -26,9 +26,18 @@ spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-bo
 # Metadata 저장소 드라이버 (P1-06, ADR-026). 버전은 BOM 이 관리한다 (Boot 4.1.2: 3.53.4.0). 네이티브 라이브러리가 JAR 안에 있다.
 # Flyway 의 SQLite 지원은 flyway-core 안에 있어서 Flyway 모듈을 더하지 않는다.
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc" }
-# 업무 DB Provider 작업용으로 남겨 둔 별칭 (P1-06 부터 어떤 build.gradle 도 쓰지 않으므로 클래스패스에 들어가지 않는다).
+# 업무 DB 드라이버 (P1-07). provider-mariadb, provider-postgresql 만 쓴다 (ArchUnit R6).
+# Connector/J 는 runtime/build.gradle 의 mariadb.version(3.5.11) 을 쓰고, pgjdbc 는 BOM 이 관리한다 (Boot 4.1.2: 42.7.14).
 mariadb-java-client = { module = "org.mariadb.jdbc:mariadb-java-client" }
+postgresql = { module = "org.postgresql:postgresql" }
+# 업무 DB 통합 테스트 (P1-07, app 의 integrationTest 스위트만). 버전은 BOM 이 관리한다 (Boot 4.1.2: 2.0.5).
+testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter" }
 testcontainers-mariadb = { module = "org.testcontainers:testcontainers-mariadb" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
+# 업무 DB 커넥션 풀 (P1-07, adapter-dbprovider). 버전은 BOM 이 관리한다 (Boot 4.1.2: 7.0.2).
+hikaricp = { module = "com.zaxxer:HikariCP" }
+# adapter-dbprovider 단위 테스트의 로그 붙잡기 (ListAppender). 버전은 BOM 이 관리한다.
+logback-classic = { module = "ch.qos.logback:logback-classic" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core" }

@@ -11,6 +11,11 @@ dependencies {
     // 비밀 값 암호화(P1-04): SecretCipher 의 AES-GCM 구현. 마스터 키는 app 의 MasterKeySource 가 읽는다.
     implementation project(':adapter-crypto')
     implementation project(':application')
+    // 업무 DB 접속 (P1-07): 공통 코드(접속 테스트, 접속 정보별 읽기 전용 풀)와 DB 별 Provider. 조립은 config.dbprovider 에 있다.
+    // 드라이버(Connector/J, pgjdbc)는 provider-* 의 implementation 이라 app 의 컴파일 클래스패스에는 없다 (ArchUnit R6).
+    implementation project(':adapter-dbprovider')
+    implementation project(':provider-mariadb')
+    implementation project(':provider-postgresql')
     implementation libs.spring.boot.starter.webmvc
     implementation libs.spring.boot.starter.actuator
     // 관리자 토큰(P1-03): 보안 자동 구성과 UserDetailsServiceAutoConfiguration 제외는 QueryHubApplication 에 있다.
@@ -42,7 +47,7 @@ tasks.named('bootJar') {
 // ---- 통합 테스트 (P0-B, P1-06): 실제 SQLite 저장소(임시 데이터 디렉터리)와 실행 JAR 자식 프로세스로 돈다. ----
 // - 소스: src/integrationTest/java, 태스크: integrationTest, 결과: build/test-results/integrationTest
 // - check, build 에 넣지 않는다. 실행은 scripts/gate/integration.sh 가 맡는다.
-// - P1-06 부터 이 스위트의 테스트는 Docker 를 쓰지 않는다 (게이트의 Docker 사전 점검은 다음 DB Provider 작업을 위해 남아 있다).
+// - P1-07 부터 업무 DB Provider 시험(it.dbprovider)이 Testcontainers 로 Docker 를 쓴다. 컨테이너 포트는 127.0.0.1 에만 연다.
 def bootJarFile = tasks.named('bootJar').flatMap { it.archiveFile }
 
 testing {
@@ -52,6 +57,10 @@ testing {
             useJUnitJupiter(dependencyManagement.importedProperties['junit-jupiter.version'])
             dependencies {
                 implementation project()
+                // 업무 DB Provider 통합 테스트 (P1-07): 로컬 이미지 mariadb:12.3, postgres:16-alpine. 버전은 BOM 이 관리한다 (2.0.5).
+                implementation libs.testcontainers.junit.jupiter
+                implementation libs.testcontainers.mariadb
+                implementation libs.testcontainers.postgresql
             }
             targets {
                 all {

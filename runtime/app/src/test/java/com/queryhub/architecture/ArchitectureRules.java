@@ -16,7 +16,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 아키텍처 규칙 R1~R10 (P0-A FR-04, P0-B 가 R8 을, P1-03 이 R9 를, P1-04 가 R10 을 더했다).
+ * 아키텍처 규칙 R1~R11 (P0-A FR-04, P0-B 가 R8 을, P1-03 이 R9 를, P1-04 가 R10 을, P1-07 이 R11 과 R8 의 Boot
+ * JDBC·Flyway 패키지를 더했다).
  *
  * <p>루트 패키지를 받는다. 운영 코드에는 {@code com.queryhub} 를, 자기 검사(ArchitectureRulesSelfTest)에는 고의 위반 클래스가 있는
  * {@code com.queryhub.archfixture} 를 넣어 같은 규칙을 적용한다. 그래서 규칙이 실제로 실패할 수 있음을 증명할 수 있다.
@@ -145,8 +146,9 @@ public final class ArchitectureRules {
   }
 
   /**
-   * R8 JDBC, Flyway, javax.sql, 커넥션 풀(Hikari)은 root.adapter.metadata.., root.adapter.dbprovider..,
-   * root.app.. 만 쓴다. java.sql 은 허용한다.
+   * R8 JDBC, Flyway, javax.sql, 커넥션 풀(Hikari), Spring Boot 의 JDBC·Flyway
+   * 지원(org.springframework.boot.jdbc.., org.springframework.boot.flyway.., P1-07 이 P0B-R5 로 더했다)은
+   * root.adapter.metadata.., root.adapter.dbprovider.., root.app.. 만 쓴다. java.sql 은 허용한다.
    *
    * <p>Gradle 모듈 규칙은 어떤 adapter-* 든 spring-jdbc 를 선언하게 둔다. 이 규칙이 저장 기술을 메타데이터 저장소와 DB Provider, 조립
    * 지점에 가두는 두 번째 방어선이다.
@@ -161,7 +163,12 @@ public final class ArchitectureRules {
         .should()
         .dependOnClassesThat()
         .resideInAnyPackage(
-            "org.springframework.jdbc..", "org.flywaydb..", "javax.sql..", "com.zaxxer.hikari..")
+            "org.springframework.jdbc..",
+            "org.flywaydb..",
+            "javax.sql..",
+            "com.zaxxer.hikari..",
+            "org.springframework.boot.jdbc..",
+            "org.springframework.boot.flyway..")
         .because("R8: 저장 기술(JDBC, Flyway, 커넥션 풀)은 메타데이터 저장소, DB Provider, app 조립에만 둔다");
   }
 
@@ -229,6 +236,40 @@ public final class ArchitectureRules {
         .because("R10: 암호 기본 요소(javax.crypto)는 adapter-crypto 에만 둔다");
   }
 
+  /**
+   * R11(가) DB 별 Provider 패키지(root.adapter.dbprovider.provider.(*)..)는 서로 의존하지 않는다 (P1-07).
+   *
+   * <p>Provider 모듈은 Gradle 규칙상 서로를 선언할 수 없지만, 같은 패키지 뿌리 아래에 있어 R2 의 어댑터 단위 검사는 둘을 한 조각으로 본다. 이 규칙이
+   * DB 별 차이를 각 Provider 안에 가둔다. Provider 가 아직 없는 동안에는 검사할 조각이 없다.
+   */
+  public ArchRule r11ProvidersDoNotDependOnEachOther() {
+    return slices()
+        .matching(dbprovider() + ".provider.(*)..")
+        .should()
+        .notDependOnEachOther()
+        .allowEmptyShould(true)
+        .because("R11: DB 별 Provider 는 서로를 모르고 공통 SPI(adapter.dbprovider)만 쓴다");
+  }
+
+  /**
+   * R11(나) DB Provider 공통 코드(root.adapter.dbprovider.. 중 provider.. 밖)는 Provider 패키지에 의존하지 않는다
+   * (P1-07).
+   *
+   * <p>공통 코드는 SPI(JdbcProviderSpi)만 알고, 어떤 DB 의 구현도 이름으로 참조하지 않는다. 그래서 Provider 를 더해도 공통 코드를 고치지
+   * 않는다.
+   */
+  public ArchRule r11CommonDbProviderCodeDoesNotDependOnProviders() {
+    return noClasses()
+        .that()
+        .resideInAPackage(dbprovider() + "..")
+        .and()
+        .resideOutsideOfPackage(dbprovider() + ".provider..")
+        .should()
+        .dependOnClassesThat()
+        .resideInAPackage(dbprovider() + ".provider..")
+        .because("R11: DB Provider 공통 코드는 SPI 로만 Provider 를 쓴다");
+  }
+
   /** R7 루트 아래의 모든 클래스는 domain, application, adapter, app 중 한 곳에 있다. */
   public ArchRule r7EveryClassResidesInAKnownLayer() {
     return classes()
@@ -237,6 +278,10 @@ public final class ArchitectureRules {
         .should()
         .resideInAnyPackage(domain(), application(), adapter(), app())
         .because("R7: 계층 밖에 놓인 클래스는 R1~R6 의 검사를 피해 간다");
+  }
+
+  private String dbprovider() {
+    return root + ".adapter.dbprovider";
   }
 
   private String domain() {

@@ -47,13 +47,27 @@ class BootJarClassVersionIntegrationTest {
 
   /** 실행 JAR 에 com/queryhub 클래스가 있어야 하는 모듈 JAR (BOOT-INF/lib/&lt;모듈&gt;-&lt;버전&gt;.jar). */
   private static final List<String> MODULE_JARS =
-      List.of("domain", "application", "adapter-web", "adapter-metadata", "adapter-crypto");
+      List.of(
+          "domain",
+          "application",
+          "adapter-web",
+          "adapter-metadata",
+          "adapter-crypto",
+          "adapter-dbprovider",
+          "provider-mariadb",
+          "provider-postgresql");
+
+  /** 업무 DB 드라이버 JAR (P1-07). 이 JAR 들의 클래스도 위 검사(주 버전 61 이하)를 받는다. */
+  private static final List<String> DRIVER_JARS =
+      List.of("BOOT-INF/lib/mariadb-java-client-3.5.11.jar", "BOOT-INF/lib/postgresql-42.7.14.jar");
 
   /** 검사 결과. 위반은 "JAR!항목 (major n)" 꼴로 모은다. */
   private static final class Scan {
     final List<String> tooNew = new ArrayList<>();
     final List<String> oursNot61 = new ArrayList<>();
     final Set<String> jarsWithOurClasses = new TreeSet<>();
+    final Set<String> nestedJarNames = new TreeSet<>();
+    final Set<String> jarsWithClasses = new TreeSet<>();
     final List<String> skippedVersioned = new ArrayList<>();
     int classes;
     int ourClasses;
@@ -85,6 +99,8 @@ class BootJarClassVersionIntegrationTest {
           .as("%s 모듈 JAR 에 com/queryhub 클래스가 있어야 한다", module)
           .anyMatch(jar -> jar.startsWith("BOOT-INF/lib/" + module + "-"));
     }
+    assertThat(scan.nestedJarNames).as("실행 JAR 의 업무 DB 드라이버").containsAll(DRIVER_JARS);
+    assertThat(scan.jarsWithClasses).as("검사한 클래스가 있는 드라이버 JAR").containsAll(DRIVER_JARS);
   }
 
   @Test
@@ -131,6 +147,7 @@ class BootJarClassVersionIntegrationTest {
       }
       if (outer && name.startsWith("BOOT-INF/lib/") && name.endsWith(".jar")) {
         scan.nestedJars++;
+        scan.nestedJarNames.add(name);
         // 중첩 JAR 은 메모리로 읽어 같은 방법으로 검사한다 (가장 큰 라이브러리 JAR 도 수 MB 다).
         scanJar(name, new ByteArrayInputStream(zip.readAllBytes()), false, scan);
         continue;
@@ -146,6 +163,7 @@ class BootJarClassVersionIntegrationTest {
       }
       int major = majorVersionOf(zip.readNBytes(8));
       scan.classes++;
+      scan.jarsWithClasses.add(jarName);
       String classPath = name.startsWith("BOOT-INF/classes/") ? name.substring(17) : name;
       boolean ours = classPath.startsWith(OUR_PACKAGE);
       if (major < 0 || major > CLASS_MAJOR_JAVA_17) {

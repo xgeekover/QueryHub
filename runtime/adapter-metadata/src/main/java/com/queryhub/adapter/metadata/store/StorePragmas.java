@@ -34,10 +34,17 @@ public final class StorePragmas {
 
   /**
    * 런타임이 정하는 설정 이름. 이 이름을 spring.datasource.hikari.data-source-properties.* 로 넘기면 기동을 거부한다 (app 의
-   * 기동 검사).
+   * 기동 검사). sqlite-jdbc 는 연결 속성을 URL 의 같은 이름보다 앞세운다. 그래서 {@code open_mode}(런타임 URL 의 {@code
+   * open_mode=2}, DB 파일을 만들지 않는다)도 여기 있다.
    */
   public static final List<String> MANAGED_KEYS =
-      List.of("journal_mode", "synchronous", "foreign_keys", "busy_timeout", "transaction_mode");
+      List.of(
+          "journal_mode",
+          "synchronous",
+          "foreign_keys",
+          "busy_timeout",
+          "transaction_mode",
+          "open_mode");
 
   private StorePragmas() {}
 

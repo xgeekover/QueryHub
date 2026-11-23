@@ -3,6 +3,7 @@ package com.queryhub.architecture;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.queryhub.adapter.crypto.AesGcmSecretCipher;
+import com.queryhub.adapter.dbprovider.JdbcDatabaseProvider;
 import com.queryhub.adapter.metadata.setting.JdbcAppSettingRepository;
 import com.queryhub.adapter.web.common.error.GlobalExceptionHandler;
 import com.queryhub.app.QueryHubApplication;
@@ -16,7 +17,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
 /**
- * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R10 을 적용한다.
+ * AC-07: 운영 클래스(com.queryhub, 테스트 제외)에 R1~R11 을 적용한다.
  *
  * <p>app 의 테스트 클래스패스에는 모든 모듈이 있으므로, 나중에 추가되는 모듈의 클래스도 별도 설정 없이 검사된다.
  */
@@ -40,6 +41,7 @@ class ArchitectureTest {
     assertThat(PRODUCTION.contain(GlobalExceptionHandler.class)).as("adapter-web").isTrue();
     assertThat(PRODUCTION.contain(JdbcAppSettingRepository.class)).as("adapter-metadata").isTrue();
     assertThat(PRODUCTION.contain(AesGcmSecretCipher.class)).as("adapter-crypto").isTrue();
+    assertThat(PRODUCTION.contain(JdbcDatabaseProvider.class)).as("adapter-dbprovider").isTrue();
     assertThat(PRODUCTION.contain(QueryHubApplication.class)).as("app").isTrue();
     assertThat(PRODUCTION.stream().map(JavaClass::getName))
         .noneMatch(name -> name.startsWith("com.queryhub.archfixture."))
@@ -104,5 +106,17 @@ class ArchitectureTest {
             dependency ->
                 assertThat(dependency.getTargetClass().getPackageName())
                     .startsWith("javax.crypto"));
+  }
+
+  @Test
+  void r11ProvidersDoNotDependOnEachOther() {
+    RULES.r11ProvidersDoNotDependOnEachOther().check(PRODUCTION);
+  }
+
+  @Test
+  void r11CommonDbProviderCodeDoesNotDependOnProviders() {
+    RULES.r11CommonDbProviderCodeDoesNotDependOnProviders().check(PRODUCTION);
+    // 규칙이 빈 집합에 적용되지 않는다: 공통 코드가 실제로 있다.
+    assertThat(PRODUCTION.contain(JdbcDatabaseProvider.class)).isTrue();
   }
 }

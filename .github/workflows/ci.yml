@@ -1,6 +1,14 @@
 # QueryHub CI (P0-D, ADR-020).
 #
-# 상태: 정의됨·미실행. 원격 저장소가 없어 한 번도 실행되지 않았다. 사람이 push 한 뒤 첫 실행을 확인한다(BACKLOG CI-1).
+# 상태: 2026-11-23 부터 공개 저장소 github.com/xgeekover/QueryHub 에서 push 로 실행된다(BACKLOG CI-1).
+# P1-06(39c90e1)과 MIT 라이선스(319c8ee) 코드를 돌린 두 실행(45135537429, 45139240703)의 결과:
+# - gates (ubuntu-24.04): 성공. 네 게이트 전체와 통합 테스트, Linux desktop 이 돌았다.
+# - desktop (macos-15, --desktop-only): 성공.
+# - desktop (windows-2025, --desktop-only): 실패. build.sh 는 통과했고 test.sh 가 junit-check 자체 검증에서 멈췄다:
+#   ln: failed to create symbolic link '/tmp/queryhub-junit-selftest.*/i6-dangling-link/TEST-link.xml': No such file or directory
+#   (selftest.sh:92). Git Bash 의 ln -s 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다.
+#   MSYS2 의 winsymlinks 설정을 env 로 두는 해법은 workflow-check.sh 의 FORBIDDEN_ENV(MSYS*)가 거부한다. 어떻게 할지는
+#   사람이 정한다(BACKLOG CI-1). 그래서 Windows 는 미검증이다(PLAT-1).
 #
 # 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
 # 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서
@@ -25,7 +33,7 @@
 #   검증이 없다, BACKLOG CI-2).
 # - 비밀 값이 필요 없다. 권한은 최상위 contents: read 하나이고 checkout 은 자격 증명을 남기지 않는다.
 #
-# 미검증(첫 실행 전에는 알 수 없다): 러너 레이블, action 입력 이름, Git Bash 위의 Windows 단계, Linux WebKitGTK 빌드.
+# 첫 실행에서 확인한 것: 세 러너 레이블, action 입력 이름, Linux WebKitGTK 빌드. 미검증: Windows 의 test.sh 와 lint.sh 단계.
 
 name: CI
 

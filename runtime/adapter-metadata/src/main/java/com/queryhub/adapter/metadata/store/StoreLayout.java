@@ -12,6 +12,7 @@ import org.jspecify.annotations.Nullable;
  * &lt;data-dir&gt;/queryhub.db       SQLite DB 파일 (0600)
  * &lt;data-dir&gt;/queryhub.db-wal   WAL 파일 (SQLite 가 DB 파일과 같은 권한으로 만든다)
  * &lt;data-dir&gt;/queryhub.db-shm   공유 메모리 파일 (같은 권한, 데이터가 없는 WAL 색인)
+ * &lt;data-dir&gt;/queryhub.db-journal 롤백 저널 (새 DB 나 롤백 저널 모드 DB 를 처음 WAL 로 바꾸는 동안만 있다)
  * &lt;data-dir&gt;/queryhub.lock     런타임 하나만 이 디렉터리를 쓰게 하는 잠금 파일 (0600)
  * &lt;data-dir&gt;/native/           sqlite-jdbc 가 네이티브 라이브러리를 푸는 디렉터리 (0700, QUERYHUB_SQLITE_NATIVE_DIR 로 옮긴다)
  * </pre>
@@ -49,6 +50,14 @@ public record StoreLayout(Path dataDir, Path nativeDir, boolean nativeDirFromSet
       "journal_mode=WAL&synchronous=FULL&foreign_keys=true&busy_timeout="
           + StorePragmas.BUSY_TIMEOUT_MILLIS
           + "&transaction_mode=IMMEDIATE";
+
+  /**
+   * 런타임 URL 의 열기 플래그: sqlite-jdbc 연결 속성 {@code open_mode} 의 값 SQLITE_OPEN_READWRITE(0x2). 드라이버가
+   * SQLITE_OPEN_URI 를 더한다. SQLITE_OPEN_CREATE 가 없으므로 DB 파일이 없으면 만들지 않고 연결이 실패한다(P1-06 리뷰 N5). DB
+   * 파일은 런타임이 연결 전에 0600 으로 만든다({@link StoreBootstrap}). -wal, -shm, 롤백 저널은 SQLite 가 이 플래그와 상관없이
+   * 만든다. PRAGMA 목록({@link #URL_OPTIONS})과 따로 둔다: 시험이 다른 파일이나 메모리 DB 로 같은 PRAGMA 를 단 풀을 만든다.
+   */
+  static final String OPEN_READ_WRITE = "2";
 
   public StoreLayout {
     Objects.requireNonNull(dataDir, "dataDir");
@@ -88,7 +97,11 @@ public record StoreLayout(Path dataDir, Path nativeDir, boolean nativeDirFromSet
     return dataDir.resolve(DB_FILE_NAME + "-shm");
   }
 
-  /** 롤백 저널. 런타임은 WAL 만 쓰므로 이 파일을 만들지 않는다. 다른 도구가 남긴 것이 있으면 저장소 검사가 확인한다({@link StoreBootstrap}). */
+  /**
+   * 롤백 저널. 런타임은 새 DB 나 롤백 저널 모드로 되살린 DB(예: VACUUM INTO 사본)를 처음 WAL 로 바꿀 때 SQLite 를 통해 이 파일을 한 번 쓰고,
+   * 바꾸기를 마치면 SQLite 가 지운다. 그 사이에 멈췄거나 다른 도구가 남긴 저널은 저장소 검사가 연결 전에 파일 규칙으로, 내용 검사에서 되돌려야 하는지로
+   * 확인한다({@link StoreBootstrap}).
+   */
   public Path journalFile() {
     return dataDir.resolve(DB_FILE_NAME + "-journal");
   }
@@ -97,14 +110,24 @@ public record StoreLayout(Path dataDir, Path nativeDir, boolean nativeDirFromSet
     return dataDir.resolve(LOCK_FILE_NAME);
   }
 
-  /** 런타임이 쓰는 JDBC URL: {@code jdbc:sqlite:<절대 경로>/queryhub.db?}{@link #URL_OPTIONS}. */
+  /**
+   * 런타임이 쓰는 JDBC URL(부트스트랩 연결, 연결 풀, Flyway): {@code jdbc:sqlite:<절대 경로>/queryhub.db?}{@link
+   * #URL_OPTIONS}{@code &open_mode=2}. {@code open_mode=2}({@link #OPEN_READ_WRITE})는 읽기·쓰기로 열고 DB
+   * 파일을 만들지 않는다: 런타임이 도는 동안 DB 파일이 사라지면 새 풀 연결이 빈 DB 를 조용히 만들지 않고 실패한다.
+   */
   public String jdbcUrl() {
-    return plainJdbcUrl() + "?" + URL_OPTIONS;
+    return plainJdbcUrl()
+        + "?"
+        + URL_OPTIONS
+        + "&"
+        + StoreBootstrap.OPEN_MODE_PROPERTY
+        + "="
+        + OPEN_READ_WRITE;
   }
 
   /**
-   * 연결 설정이 없는 JDBC URL. 이 URL 만으로 연 연결은 읽기·쓰기다: journal_mode 는 바꾸지 않지만, 닫을 때 WAL 을 DB 파일로 옮기고
-   * -wal·-shm 을 지우며, 열 때 롤백 저널을 재생한다. 그래서 내용 검사는 이 URL 을 읽기 전용 속성과 함께 연다({@link
+   * 연결 설정이 없는 JDBC URL. 이 URL 만으로 연 연결은 읽기·쓰기이고 DB 파일이 없으면 만든다: journal_mode 는 바꾸지 않지만, 닫을 때 WAL 을
+   * DB 파일로 옮기고 -wal·-shm 을 지우며, 열 때 롤백 저널을 재생한다. 그래서 내용 검사는 이 URL 을 읽기 전용 속성과 함께 연다({@link
    * StoreBootstrap#checkContent}).
    */
   public String plainJdbcUrl() {

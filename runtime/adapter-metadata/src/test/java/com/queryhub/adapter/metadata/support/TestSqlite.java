@@ -188,6 +188,53 @@ public final class TestSqlite {
     };
   }
 
+  /** SQLite 페이지 크기(기본값). */
+  public static final int PAGE_SIZE = 4096;
+
+  /**
+   * 새 저장소를 처음 WAL 로 바꾸다 멈춘 모습의 DB 파일(P1-06 리뷰 N1): SQLite 가 WAL 로 바꾼 1 페이지(4096 바이트, 올바른 SQLite
+   * 머리글)만 있는 파일을 {@code scratch} 에서 만들어 {@code db} 로 복사한다(0600).
+   */
+  public static void writeOnePageWalModeDatabase(Path scratch, Path db)
+      throws IOException, SQLException {
+    Files.createDirectories(scratch);
+    Path source = scratch.resolve("one-page.db");
+    try (Connection connection =
+            DriverManager.getConnection("jdbc:sqlite:" + source + "?journal_mode=WAL");
+        Statement statement = connection.createStatement()) {
+      statement.execute("PRAGMA user_version");
+    }
+    copyPrivate(source, db);
+  }
+
+  /**
+   * 실제 롤백 저널 머리글을 단 512 바이트 저널을 쓴다(0600): 매직 d9 d5 05 f9 20 a1 63 d7, 페이지 기록 수 0, 체크섬 난수, 원래 DB 크기
+   * {@code initialPages} 페이지, 섹터 크기 512, 페이지 크기 4096(모두 big-endian). 나머지는 0 이다.
+   */
+  public static void writeRollbackJournal(Path journal, int initialPages) throws IOException {
+    java.nio.ByteBuffer header = java.nio.ByteBuffer.allocate(512);
+    header.put(
+        new byte[] {
+          (byte) 0xd9, (byte) 0xd5, (byte) 0x05, (byte) 0xf9,
+          (byte) 0x20, (byte) 0xa1, (byte) 0x63, (byte) 0xd7
+        });
+    header.putInt(0);
+    header.putInt(0x2c5e7a13);
+    header.putInt(initialPages);
+    header.putInt(512);
+    header.putInt(PAGE_SIZE);
+    Files.write(journal, header.array());
+    chmod(journal, "rw-------");
+  }
+
+  /** DB 파일 머리글의 18, 19 바이트(파일 형식 쓰기·읽기 판): 롤백 저널 모드는 1, 1, WAL 모드는 2, 2 다. 링크를 따라가지 않는다. */
+  public static byte[] formatVersionBytes(Path db) throws IOException {
+    try (InputStream in = Files.newInputStream(db, LinkOption.NOFOLLOW_LINKS)) {
+      byte[] head = in.readNBytes(20);
+      return new byte[] {head[18], head[19]};
+    }
+  }
+
   /** SQLite 가 아닌 내용의 파일. */
   public static void writeNotSqlite(Path file) throws IOException {
     try (OutputStream out = Files.newOutputStream(file)) {

@@ -8,15 +8,54 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. 다음은 DB Provider 와 연결 CRUD 다.
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
 
-#### MIT 라이선스 (커밋 전)
+#### P1-07 업무 DB Provider (MariaDB, PostgreSQL)와 P1-06 리뷰 후속 (커밋 전)
+
+태스크 T-20261123-164312-7774. 결정은 [ADR-027](docs/ADR/ADR-027-database-provider.md)(제안)에 있다. 사람의 결정(2026-11-23): PostgreSQL 드라이버와 Testcontainers PostgreSQL 모듈만 내려받기, CI-2 는 「Phase 1 마무리로 미룸」, Oracle·MSSQL 은 「Oracle만, MSSQL은 테스트 생략」([REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-3).
+
+##### 추가
+
+- `com.queryhub.domain.connection`: `DatabaseType`(4종), `ConnectionId`, 생성자에서 모든 필드를 허용 목록으로 검사하는 `ConnectionSettings`, 값을 `char[]` 에만 두는 `ConnectionPassword`, 고정 한국어 메시지의 결과 형식(`ConnectionFailureKind`, `ConnectionTestResult`).
+- `com.queryhub.application.connection`: 포트 `DatabaseProvider`, `ConnectionPools` 와 `TestConnectionUseCase`(Provider 가 없는 ORACLE·MSSQL 은 `UNSUPPORTED_DATABASE_TYPE`).
+- 새 모듈 `runtime/adapter-dbprovider`: Provider SPI(`JdbcProviderSpi`), 필드로 만든 URL(`JdbcUrls`, IPv6 대괄호), `Driver.connect` 하나뿐인 연결 경로(`DriverManager` 없음), 옵션 허용 목록과 이기는 고정 속성, connectTimeout + 2 초 마감, 연결마다 읽기 전용 Hikari 풀(`queryhub-conn-<id>`, MBean 없음, Spring 빈 아님).
+- 새 모듈 `runtime/provider-mariadb`(Connector/J 3.5.11)와 `runtime/provider-postgresql`(pgjdbc 42.7.14). 받는 옵션은 TLS 모드 하나다. 고정 속성은 MariaDB `allowLocalInfile=false`·`readOnlyPropagatesToServer=true`·`permitRedirect=false`, PostgreSQL `readOnlyMode=always`·`loginTimeout`(connectTimeout + 3 초)이고 두 드라이버 모두 socketTimeout = connectTimeout 이다. MariaDB 의 1049·1044 는 `DATABASE_NOT_FOUND` 다.
+- 앱 구성 `DatabaseProviderConfiguration`: 두 Provider, 사용 사례, `HikariConnectionPools`(컨텍스트를 닫으면 `closeAll`). DataSource 빈은 Metadata 저장소 하나 그대로이고 기동 때 업무 DB 에 연결하지 않는다.
+- ArchUnit R11(Provider 끼리, 공통 코드에서 Provider 로의 의존 금지)과 R8 의 `org.springframework.boot.jdbc..`·`org.springframework.boot.flyway..`(P0B-R5).
+- 업무 DB 통합 시험(Testcontainers 2.0.5, 로컬 `mariadb:12.3`·`postgres:16-alpine`, 포트는 127.0.0.1 에만, P0B-R6).
+- 의존성: `postgresql` 42.7.14, `checker-qual` 3.55.1, `testcontainers-postgresql` 2.0.5 를 승인대로 한 번 받았다. 나머지(Connector/J 3.5.11, HikariCP 7.0.2, 다른 Testcontainers 모듈, 시험용 Logback)는 캐시에 있었다. `runtimeClasspath` 68 → 71 모듈, `integrationTestRuntimeClasspath` 103 → 122 모듈. `runtime/build.gradle` 과 `gradle.properties` 는 바뀌지 않았다. 드라이버의 버전, 크기, 라이선스는 [DATABASE_SUPPORT.md](docs/DATABASE_SUPPORT.md)에 있다.
+
+##### 수정 (P1-06 리뷰 N1–N7)
+
+- N1: 롤백 저널 거부 메시지가 런타임은 WAL 만 쓰니 다른 도구가 남긴 저널이라고 잘못 말했다. 이제 런타임도 새 DB 나 롤백 모드 사본을 처음 WAL 로 바꿀 때 저널을 한 번 쓴다고 말하고, 저널 머리글의 원래 페이지 수가 0 이면 데이터가 없는 새 저장소의 해법(파일을 함께 옮기고 다시 시작)을, 아니면 `sqlite3` 의 `PRAGMA quick_check` 와 백업 해법을 안내한다. `-journal` 도 연결 전에 파일 규칙을 거친다.
+- N2: [ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md) 의 결정 4, 5, 8, 9, 10 과 약점 표 3행을 지금의 기동 순서와 검사에 맞췄다.
+- N3: `StoreLock` 이 `RuntimeException | Error` 에서도 JVM 표의 항목을 지운다.
+- N4: unix 에서 저장소 파일에 소유자 읽기·쓰기 비트가 없으면(0400) `chmod 600` 을 안내하고 거부한다. Windows 는 쓸 수 없는 파일을 거부한다(미검증).
+- N5: 런타임 URL 끝에 `open_mode=2`(만들기 없음)를 붙여 실행 중에 사라진 DB 를 다시 만들지 않는다. `open_mode` 를 `data-source-properties` 로 주면 거부한다. 거부 메시지의 설정 목록은 이제 `StorePragmas.MANAGED_KEYS` 에서 만든다(`open_mode` 포함).
+- N6: 아무것도 만들기 전에 가장 가까운 있는 조상의 실제 경로가 UNC 공유인지 본다(심볼릭 링크·junction 조상). 실제 경로를 읽지 못하면 거부한다. 매핑한 드라이브 문자는 여전히 잡지 못한다(P106-4).
+- N7: [DEPLOYMENT.md](docs/DEPLOYMENT.md) 「되살리기」 5단계가 롤백 모드 사본의 머리글이 WAL 모드로 바뀐다고 말한다.
+
+##### 변경
+
+- `DATABASE_NOT_FOUND` 의 메시지가 두 원인을 말한다: 「데이터베이스를 찾을 수 없거나 이 사용자에게 접근 권한이 없습니다. 데이터베이스 이름과 사용자 권한을 확인하세요.」(MariaDB 의 1044 는 없는 DB 와 권한 없는 DB 를 구별하지 않는다, P107-10).
+- 문서: P1-06 과 MIT 라이선스의 커밋 표시를 바꿨다. CI 가 실행된 사실(Linux·macOS 통과, Windows 실패)을 적었다. BACKLOG 는 P0B-R5 를 닫고, P0B-R6 을 DB 컨테이너에 대해 닫고, P0A-I2 를 R5 로 좁히고, P107-1–P107-11 을 더했다.
+- `.github/workflows/ci.yml` 은 머리 주석만 바꿨다. Windows 의 심볼릭 링크 실패를 고치는 `MSYS` 설정은 `workflow-check.sh` 의 `FORBIDDEN_ENV` 가 거부하므로 넣지 않았다(CI-1). 사람의 결정(2026-11-23) 「별도 작은 태스크 (권장)」: 점검기 규칙(`FORBIDDEN_ENV` 의 `MSYS*`)은 그대로 두고, P1-07 바로 다음의 작은 태스크가 보호 파일 `scripts/gate/selftest.sh` 의 i6 줄(92 행)만 고친다. 그 한 `ln -s` 명령에만 `MSYS=winsymlinks:native` 를 주고, 그래도 깨진 링크를 만들지 못하면 이유를 적고 i6 를 SKIP 한다. 사람은 이 선택으로 그 태스크에서만 보호 파일을 바꾸는 데 동의했다. 단계의 run 명령 안에 설정을 넣는 모양(`run: MSYS=… bash …`)은 점검기가 run 명령 안을 보지 않아 통과할 뿐이므로 쓰지 않는다. Windows 는 그 태스크를 push 한 뒤의 CI 실행까지 미검증이다(PLAT-1).
+
+##### 보안
+
+- 업무 DB 연결: 사용자가 준 문자열이 URL 구조나 드라이버 옵션이 되지 못한다. 결과, 예외, 로그에 비밀번호와 드라이버 메시지가 없다(통합 시험이 실행마다 새 비밀번호로 확인한다). 풀 연결의 쓰기는 서버가 거부한다. 거부·부정 시험은 닫힌 로컬 포트만 쓴다([TEST_PLAN.md](docs/TEST_PLAN.md)).
+
+- 남은 것: 원시 JDBC URL 정책(P107-1), Oracle·MSSQL Provider(P107-2, P107-3), 쓰기 권한 경고(P107-4), socketTimeout 재설계(P107-5), pgjdbc `verify-ca`·`verify-full` 의 홈 파일(P107-6), `permitRedirect` 미시험(P107-7), 다른 서버 버전(P107-8), PostgreSQL 응답 없는 서버의 시간 차이(P107-9), 1044 의 모호함(P107-10), Ryuk 바인딩(P107-11), Windows CI(CI-1), Gradle 의존성 검증(CI-2, P1-12), PLAT-1.
+
+테스트(macOS arm64 로컬의 게이트 실행, Java 17 toolchain, run D 의 최종 트리): runtime 단위 1093(adapter-crypto 77, adapter-dbprovider 20, adapter-metadata 135, adapter-web 249, app 422, application 35, domain 109, provider-mariadb 20, provider-postgresql 26), 통합 52, vitest 44, cargo test 79, 모두 통과, 건너뜀 0. build, test, lint, integration 게이트 모두 GATE PASS. P1-07 코드는 아직 CI 에서 돌지 않았다.
+
+#### MIT 라이선스 — 319c8ee (2026-11-23)
 
 ##### 추가
 
 - 저장소 루트의 [LICENSE](LICENSE)(MIT, `Copyright (c) 2026 xgeekover`)와 README 의 「라이선스」 절. 사용자 결정(2026-11-23) 「MIT」에 따른 것이다. 코드와 테스트는 바뀌지 않았다.
 
-#### P1-06 내장 SQLite Metadata 저장소 (커밋 전)
+#### P1-06 내장 SQLite Metadata 저장소 — 39c90e1 (2026-11-23)
 
 사용자 결정(2026-11-23)에 따른 태스크다. 결정은 [ADR-026](docs/ADR/ADR-026-sqlite-embedded-metadata-store.md)(승인됨)에 있고, [ADR-009](docs/ADR/ADR-009-mariadb-metadata-db.md)(사용자 결정 D2), [ADR-011](docs/ADR/ADR-011-metadata-secrets-env-only.md), [ADR-017](docs/ADR/ADR-017-desktop-metadata-settings-from-env.md)을 대체한다. 명세 3절 「Metadata Database: MariaDB」와 다른 점은 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 「설계와 다른 구현」 13, 사용자 문구와 항목별 대응은 [REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-2 에 있다. P1-05 리뷰의 후속 R1, R2, R3, R6, R8 도 함께 했다.
 

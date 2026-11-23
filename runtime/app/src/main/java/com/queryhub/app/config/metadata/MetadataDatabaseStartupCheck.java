@@ -69,7 +69,10 @@ final class MetadataDatabaseStartupCheck implements InitializingBean {
     }
   }
 
-  /** 런타임이 정하는 SQLite 설정을 Hikari 데이터 소스 속성으로 넘겼으면 거부한다. 값은 메시지에 넣지 않는다. */
+  /**
+   * 런타임이 정하는 SQLite 설정을 Hikari 데이터 소스 속성으로 넘겼으면 거부한다. 값은 메시지에 넣지 않는다. 메시지의 설정 목록은 {@link
+   * StorePragmas#MANAGED_KEYS} 에서 만든다(P1-07: open_mode 가 더해져도 목록이 어긋나지 않는다).
+   */
   static void rejectManagedDataSourceProperties(DataSource pool) {
     if (!(pool instanceof HikariDataSource hikari)) {
       return;
@@ -86,10 +89,9 @@ final class MetadataDatabaseStartupCheck implements InitializingBean {
       throw new IllegalStateException(
           "Metadata 저장소의 SQLite 설정 "
               + String.join(", ", managed)
-              + " 는 런타임이 정하는 값이라 바꿀 수 없어 런타임을 시작하지 않는다 (journal_mode=WAL, synchronous=FULL,"
-              + " foreign_keys=ON, busy_timeout="
-              + StorePragmas.BUSY_TIMEOUT_MILLIS
-              + ", transaction_mode=IMMEDIATE). 이 설정을 지워라.");
+              + " 는 런타임이 정하는 값이라 바꿀 수 없어 런타임을 시작하지 않는다 (런타임이 정하는 설정: "
+              + String.join(", ", StorePragmas.MANAGED_KEYS)
+              + "). 이 설정을 지워라.");
     }
   }
 

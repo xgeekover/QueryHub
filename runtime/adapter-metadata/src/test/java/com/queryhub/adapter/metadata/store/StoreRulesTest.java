@@ -40,8 +40,28 @@ class StoreRulesTest {
     assertThat(layout.jdbcUrl())
         .isEqualTo(
             "jdbc:sqlite:/srv/queryhub/data/queryhub.db?journal_mode=WAL&synchronous=FULL"
-                + "&foreign_keys=true&busy_timeout=5000&transaction_mode=IMMEDIATE");
+                + "&foreign_keys=true&busy_timeout=5000&transaction_mode=IMMEDIATE&open_mode=2");
     assertThat(layout.plainJdbcUrl()).isEqualTo("jdbc:sqlite:/srv/queryhub/data/queryhub.db");
+    assertThat(layout.journalFile()).isEqualTo(DIR.resolve("queryhub.db-journal"));
+  }
+
+  /**
+   * P1-07 AC6 (리뷰 N5): open_mode=2 는 런타임 URL 에만 있다. PRAGMA 목록은 그대로이고 open_mode 는 바꿀 수 없는 설정 이름이다.
+   */
+  @Test
+  void openModeIsOnlyInTheRuntimeUrlAndIsAManagedKey() {
+    assertThat(StoreLayout.URL_OPTIONS)
+        .isEqualTo(
+            "journal_mode=WAL&synchronous=FULL&foreign_keys=true&busy_timeout=5000"
+                + "&transaction_mode=IMMEDIATE");
+    assertThat(StorePragmas.MANAGED_KEYS)
+        .containsExactly(
+            "journal_mode",
+            "synchronous",
+            "foreign_keys",
+            "busy_timeout",
+            "transaction_mode",
+            "open_mode");
   }
 
   @Test
@@ -188,6 +208,55 @@ class StoreRulesTest {
 
     assertThat(PrivatePaths.problem(db, "DB 파일", Kind.FILE, facts))
         .hasValueSatisfying(message -> assertThat(message).contains("chmod 600 " + db));
+  }
+
+  /** P1-07 AC5 (리뷰 N4): 소유자가 읽거나 쓸 수 없는 파일은 chmod 600 으로 거부한다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"r--------", "-w-------", "---------", "r-x------"})
+  void fileWithoutOwnerReadOrWriteIsRefusedWithAChmod600Hint(String mode) {
+    Path shm = DIR.resolve("queryhub.db-shm");
+    Facts facts =
+        new Facts(false, false, true, ALICE, ALICE, PosixFilePermissions.fromString(mode), true);
+
+    assertThat(PrivatePaths.problem(shm, "공유 메모리 파일", Kind.FILE, facts))
+        .hasValueSatisfying(
+            message ->
+                assertThat(message)
+                    .contains("공유 메모리 파일(" + shm + ")", mode, "읽고 쓸 수 없다")
+                    .endsWith("chmod 600 " + shm));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"rw-------", "rwx------"})
+  void fileWithOwnerReadAndWriteAndNoGroupOrOtherBitsIsAccepted(String mode) {
+    Facts facts =
+        new Facts(false, false, true, ALICE, ALICE, PosixFilePermissions.fromString(mode), true);
+
+    assertThat(PrivatePaths.problem(DIR.resolve("queryhub.db"), "DB 파일", Kind.FILE, facts))
+        .isEmpty();
+  }
+
+  /**
+   * P1-07 AC5: POSIX 권한이 없는 파일 시스템(Windows)에서는 쓸 수 없는 파일(읽기 전용 속성)을 거부한다. Windows 에서는 시험하지
+   * 않았다(PLAT-1).
+   */
+  @Test
+  void withoutPosixPermissionsANonWritableFileIsRefused() {
+    Path db = DIR.resolve("queryhub.db");
+    Facts readOnly = new Facts(false, false, true, null, null, null, false);
+    Facts writable = new Facts(false, false, true, null, null, null, true);
+
+    assertThat(PrivatePaths.problem(db, "DB 파일", Kind.FILE, readOnly))
+        .hasValueSatisfying(
+            message -> assertThat(message).contains("DB 파일(" + db + ")", "쓸 수 없어", "읽기 전용 속성"));
+    assertThat(PrivatePaths.problem(db, "DB 파일", Kind.FILE, writable)).isEmpty();
+    assertThat(
+            PrivatePaths.problem(
+                DIR,
+                "데이터 디렉터리",
+                Kind.DIRECTORY,
+                new Facts(false, true, false, null, null, null, false)))
+        .hasValueSatisfying(message -> assertThat(message).contains("쓸 수 없어"));
   }
 
   @Test

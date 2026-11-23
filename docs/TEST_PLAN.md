@@ -1,6 +1,6 @@
 # QueryHub 테스트 계획
 
-테스트 계층, 게이트 스크립트와 거짓 통과 방어, CI 워크플로(정의됨·미실행), 지금까지의 테스트 수, 명세 12절 기준의 Phase 배치, 미검증 플랫폼, 문서 점검 절차를 적는다. 게이트가 결과를 직접 판정한다는 결정은 [ADR-019](ADR/ADR-019-gate-scripts-judge-results.md)에 있다.
+테스트 계층, 게이트 스크립트와 거짓 통과 방어, CI 워크플로와 그 실행 결과, 지금까지의 테스트 수, 명세 12절 기준의 Phase 배치, 미검증 플랫폼, 문서 점검 절차를 적는다. 게이트가 결과를 직접 판정한다는 결정은 [ADR-019](ADR/ADR-019-gate-scripts-judge-results.md)에 있다.
 
 ## 테스트 계층
 
@@ -42,7 +42,7 @@ bash scripts/gate/integration.sh  # 통합 테스트(실제 SQLite 파일, 실�
 
 `test.sh` 는 종료 코드만 보는 게이트가 거짓으로 통과하지 않도록 다음을 막는다.
 
-- 먼저 `selftest.sh` 로 판정기(`junit-check.sh`) 자체를 검증한다. 실패하면 중단한다. root 로 돌면 권한 000 파일을 읽을 수 있어 일부 시나리오가 SKIP 된다. `selftest.sh --no-skip` 은 건너뛴 시나리오가 하나라도 있으면 그 수를 말하고 exit 1 이다. `test.sh` 와 `integration.sh` 는 인자 없이 부르고, CI 의 `gates` 작업이 root 가 아닌지 확인한 뒤 `--no-skip` 으로 따로 실행한다(정의됨·미실행). 판정기의 합계 형식 거부 분기(`junit-check.sh` 의 `valid_counts`)는 진짜 awk 로는 닿지 않으므로, PATH 맨 앞의 가짜 awk 가 틀린 합계(빈 출력, 앞자리 0, 숫자가 아닌 글자, 값 5 개, 음수, 공백 두 칸)를 찍게 한 시나리오 (i8) 이 `[INVALID]` 와 그 분기의 메시지를 요구하고, 같은 장치의 올바른 합계는 통과해야 한다. 형식이 틀린 `tests` 속성(빈 값, 숫자가 아님)은 (i7) 이 다룬다([BACKLOG.md](BACKLOG.md) P0A-N1 완료).
+- 먼저 `selftest.sh` 로 판정기(`junit-check.sh`) 자체를 검증한다. 실패하면 중단한다. root 로 돌면 권한 000 파일을 읽을 수 있어 일부 시나리오가 SKIP 된다. `selftest.sh --no-skip` 은 건너뛴 시나리오가 하나라도 있으면 그 수를 말하고 exit 1 이다. `test.sh` 와 `integration.sh` 는 인자 없이 부르고, CI 의 `gates` 작업이 root 가 아닌지 확인한 뒤 `--no-skip` 으로 따로 실행한다(2026-11-23 부터 실행). 판정기의 합계 형식 거부 분기(`junit-check.sh` 의 `valid_counts`)는 진짜 awk 로는 닿지 않으므로, PATH 맨 앞의 가짜 awk 가 틀린 합계(빈 출력, 앞자리 0, 숫자가 아닌 글자, 값 5 개, 음수, 공백 두 칸)를 찍게 한 시나리오 (i8) 이 `[INVALID]` 와 그 분기의 메시지를 요구하고, 같은 장치의 올바른 합계는 통과해야 한다. 형식이 틀린 `tests` 속성(빈 값, 숫자가 아님)은 (i7) 이 다룬다([BACKLOG.md](BACKLOG.md) P0A-N1 완료).
 - `runtime/` 아래 `build.gradle` 을 가진 모든 모듈을 찾는다(모든 깊이의 `build/`, `.gradle/` 은 건너뛴다). 탐색(`find`)이 실패하거나 모듈이 하나도 없으면 테스트를 실행하기 전에 실패한다. `settings.gradle` 에 include 된 프로젝트에 자기 `build.gradle` 이 없으면 모듈 의존 규칙이 빌드를 실패시키므로, 탐색에서 빠지는 모듈이 없다. 새 모듈도 자동으로 포함된다. 심볼릭 링크인 모듈 디렉터리는 탐색에서 빠진다(P0A-N2).
 - `cleanTest test --continue --no-build-cache` 로 항상 테스트를 다시 실행한다. `cleanTest` 는 UP-TO-DATE 로 0건 실행이 되는 일을, `--no-build-cache` 는 사용자 홈이나 CI 에서 빌드 캐시를 켜 두었을 때 Test 태스크를 캐시에서 복원(FROM-CACHE)해 실행 없이 결과 XML 이 생기는 일을 막는다.
 - 모듈마다 실행된 테스트가 1건 이상인지 확인한다.
@@ -120,11 +120,19 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 설계 §9 의 Phase 0 통과 기준은 「새 clone 에서 build·test·lint 가 exit 0」이다.
 
 - **로컬 새 사본 (지금의 근거):** 커밋할 파일(`git ls-files -z --cached --others --exclude-standard`)을 빈 디렉터리에 복사하고 `git init -q`, `git add -A` 만 한 사본(커밋하지 않음)에서 네 게이트를 차례로 돌린다. 이 사본에서는 `git status --short` 가 staged `A` 줄을 늘 보여 준다. **`A` 줄 말고 아무것도 없어야 통과다**(`??` 나 ` M` 줄이 생기면 게이트가 추적되지 않는 산출물을 남긴 것이다).
-- **CI 의 새 clone (정의됨·미실행, P0-D):** `gates` 작업이 새 checkout 에서 네 게이트를 인자 없이 돌린 뒤 `git status --porcelain --untracked-files=all` 을 출력하고, 비어 있지 않으면 실패한다. 커밋된 checkout 이라 `A` 줄이 없고 출력이 비어야 한다. 이 단계가 처음 실행될 때까지 로컬 새 사본이 기준이다([BACKLOG.md](BACKLOG.md) P0B-R7 완료, CI-1).
+- **CI 의 새 clone (P0-D, 2026-11-23 부터 실행):** `gates` 작업이 새 checkout 에서 네 게이트를 인자 없이 돌린 뒤 `git status --porcelain --untracked-files=all` 을 출력하고, 비어 있지 않으면 실패한다. 커밋된 checkout 이라 `A` 줄이 없고 출력이 비어야 한다. 이 단계가 처음 실행될 때까지 로컬 새 사본이 기준이다([BACKLOG.md](BACKLOG.md) P0B-R7 완료, CI-1).
 
-## CI (정의됨·미실행, P0-D)
+## CI (P0-D, 2026-11-23 부터 실행)
 
-`.github/workflows/ci.yml` 은 정의만 했고 한 번도 실행되지 않았다. 원격 저장소가 없고 push 는 사람이 한다([BACKLOG.md](BACKLOG.md) CI-1). 결정과 이유는 [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)(제안)에 있다. 아래는 모두 **미검증**이다.
+`.github/workflows/ci.yml` 은 P0-D 에서 정의했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. push 는 사람이 한다. 결정과 이유는 [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)(제안)에 있다. P1-06(39c90e1)과 MIT 라이선스(319c8ee) 코드를 돌린 두 실행(45135537429, 45139240703)의 결과는 다음과 같다([BACKLOG.md](BACKLOG.md) CI-1). P1-07 코드는 아직 CI 에서 돌지 않았다.
+
+| 작업 | 결과 |
+|---|---|
+| `gates (ubuntu-24.04)` | 성공. 네 게이트 전체(selftest `--no-skip`, build, test, lint, integration)와 새 사본 검사 |
+| `desktop (macos-15, --desktop-only)` | 성공 |
+| `desktop (windows-2025, --desktop-only)` | 실패. `build.sh` 는 통과했고, `test.sh` 가 junit-check 자체 검증 i6 에서 멈췄다: `ln: failed to create symbolic link '/tmp/queryhub-junit-selftest.*/i6-dangling-link/TEST-link.xml': No such file or directory`(`selftest.sh:92`). Git Bash 의 `ln -s` 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다. 사람의 결정(2026-11-23) 「별도 작은 태스크 (권장)」: P1-07 다음의 작은 태스크가 `selftest.sh` 의 i6 줄만 고친다(그 `ln -s` 에만 `MSYS=winsymlinks:native`, 그래도 안 되면 이유를 적고 SKIP). 점검기 규칙은 그대로이고, run 명령 안에 설정을 넣는 모양은 점검기의 빈 곳으로만 통과하므로 쓰지 않는다. 그 태스크의 push 뒤 CI 실행까지 Windows 는 미검증이다(CI-1, PLAT-1) |
+
+단계 구성은 다음과 같다.
 
 | 작업 | 러너 | 단계 (차례대로) |
 |---|---|---|
@@ -132,11 +140,11 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 | `desktop` | matrix `macos-15`, `windows-2025` (`fail-fast: false`, 셸 bash) | checkout, pnpm, Node, rustup, cargo registry 캐시, `bash scripts/gate/build.sh --desktop-only`, `bash scripts/gate/test.sh --desktop-only`, `bash scripts/gate/lint.sh --desktop-only`. Java, Gradle, Docker 단계는 없다 |
 
 - **같은 명령:** `gates` 작업의 네 줄은 팩토리 게이트 명령과 글자 그대로 같고 인자가 없다. 게이트 스크립트 밖에서 gradle, pnpm, cargo 를 부르지 않는다. 그러므로 junit-check, cargo-test-check, selftest 의 거짓 통과 방어도 로컬과 같다. `workflow-check.sh` 가 이 네 줄이 단계의 한 줄짜리 run 값으로 있는지(다음 줄에 이어지는 더 깊은 줄 없이), 그리고 `continue-on-error`, `if:`, bash 가 아닌 `shell:`, 단계 밖의 `run:`, 같은 매핑의 같은 키가 없는지 lint 단계에서 확인한다(P1-01).
-- **통합 테스트는 Linux 에서만:** `integration.sh` 는 Docker 사전 점검을 한다. macOS 러너에는 Docker 가 없고 Windows 러너는 Windows 컨테이너만 돌린다. 그래서 `integration.sh` 는 `gates` 작업에만 있다. P1-05 까지는 `mariadb:12.3`(Linux 컨테이너)이 이유였고, P1-06 부터는 사전 점검과 다음 Provider 태스크의 컨테이너가 이유다.
+- **통합 테스트는 Linux 에서만:** `integration.sh` 는 Docker 사전 점검을 한다. macOS 러너에는 Docker 가 없고 Windows 러너는 Windows 컨테이너만 돌린다. 그래서 `integration.sh` 는 `gates` 작업에만 있다. P1-05 까지는 `mariadb:12.3`(Metadata DB), P1-07 부터는 업무 DB 컨테이너(`mariadb:12.3`, `postgres:16-alpine`, Linux 컨테이너)가 이유다. CI 는 이 이미지를 받게 된다.
 - **root 아님과 `--no-skip`:** `gates` 작업은 root 가 아닌지 먼저 확인하고 selftest 를 `--no-skip` 으로 돌린다. `desktop` 작업은 `test.sh` 안의 인자 없는 selftest 만 돌리므로, Git Bash 에서 권한 000 시나리오가 SKIP 되어도 막히지 않는다(미검증).
 - **캐시:** 의존성 캐시뿐이고 빌드 산출물은 없다. Gradle(`setup-java` 의 `cache: gradle`), pnpm store(`setup-node` 의 `cache: pnpm`, `cache-dependency-path: desktop/pnpm-lock.yaml`), `~/.cargo/registry/index`, `~/.cargo/registry/cache`, `~/.cargo/git/db`(키: `runner.os`, `1.97.1`, `Cargo.lock` 해시). `target`, `node_modules`, `dist`, `build`, `test-results` 는 캐시하지 않으므로 매 실행이 새 빌드다. 다만 `cache: gradle` 은 `~/.gradle/caches` 와 `~/.gradle/wrapper` 를 담고, 그 안에는 Gradle 이 만든 데이터(transforms, 컴파일된 빌드 스크립트)도 있다. 복원한 캐시는 검증하지 않는다(Gradle 의존성 검증이 없다, [BACKLOG.md](BACKLOG.md) CI-2).
 - **트리거와 권한:** main 의 push·pull_request 와 수동 실행(`workflow_dispatch`). 최상위 권한 `contents: read` 하나, 비밀 값 없음([SECURITY.md](SECURITY.md)).
-- **첫 실행 전에는 알 수 없는 것:** 러너 레이블, action 입력 이름, Git Bash 위의 Windows 단계(가짜 실행 파일과 심볼릭 링크를 쓰는 selftest 시나리오 포함), Linux WebKitGTK 빌드, ubuntu 의 awk(mawk)에서 새 awk 코드, `#[cfg(windows)]` 테스트.
+- **첫 실행(2026-11-23)에서 확인한 것:** 세 러너 레이블, action 입력 이름, Linux WebKitGTK 빌드, ubuntu 의 awk(mawk)에서 새 awk 코드(gates 의 selftest). **아직 모르는 것:** Windows 의 `test.sh` 나머지(가짜 실행 파일과 심볼릭 링크를 쓰는 selftest 시나리오, cargo test 와 `#[cfg(windows)]` 테스트)와 `lint.sh`.
 
 ## 테스트 수
 
@@ -154,7 +162,8 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 | P1-03 | 2698115 (2026-11-22) | 703 | 24 | 42 | 50 |
 | P1-04 | 037385b (2026-11-23) | 868 | 26 | 43 | 68 |
 | P1-05 | 6ceef51 (2026-11-23) | 871 | 28 | 43 | 71 |
-| P1-06 | 커밋 전 | 894 | 33 | 44 | 79 |
+| P1-06 | 39c90e1 (2026-11-23) | 894 | 33 | 44 | 79 |
+| P1-07 | 커밋 전 | 1093 | 52 | 44 | 79 |
 
 - P0-D 의 수는 macOS 로컬의 게이트 실행에서 센 값이다. cargo test 의 새 테스트 2건은 모든 플랫폼에서 돈다. `#[cfg(windows)]` 테스트 1건은 macOS 에서 컴파일되지 않아 32 에 들어 있지 않고 미검증이다. `selftest.sh` 는 93 시나리오(P0-D 전 35, 새로 58)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
 - P1-01 의 수도 macOS 로컬의 게이트 실행에서 센 값이다. 게이트 스크립트, 문서와 주석만 바꿨으므로 runtime·통합·vitest·cargo test 수는 P0-D 와 같다. `selftest.sh` 는 227 시나리오(P0-D 의 93, 새로 134)를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
@@ -178,6 +187,15 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 - P1-06 의 통합 32(28 에서)는 `MetadataStartupIntegrationTest` 10(저장소 파일이 소유자 전용, 4 개 풀 연결의 PRAGMA, desktop 컨텍스트가 쓴 값을 같은 저장소의 server 프로파일이 읽고 같은 inode·V1 한 줄, Flyway 고정), `MetadataStartupFailureIntegrationTest` 5(심볼릭 링크·0750 데이터 디렉터리, SQLite 가 아닌 파일, 손상된 파일, 0755 네이티브 디렉터리가 지연·비지연 모두 포트를 열기 전에 멈추고 파일과 권한이 그대로이며 출력에 토큰·키가 없다), `AppSettingRepositoryIntegrationTest` 5, `BootJarIntegrationTest` 8, `BootJarClassVersionIntegrationTest` 2, `DesktopParentWatchIntegrationTest` 2 다. `MetadataSchemaIntegrationTest`(MariaDB 전용)는 지웠다. `BootJarIntegrationTest` 는 실행 JAR 자식 프로세스로 다음을 본다: `-Djava.io.tmpdir=<빈 디렉터리>` 와 `QUERYHUB_DATA_DIR` 로 띄우면 health 가 UP 이고 `<data-dir>/native`(0700)에 `sqlite-…-libsqlitejdbc.dylib` 와 `.lck` 가 있고 tmpdir 에는 없다. `QUERYHUB_SQLITE_NATIVE_DIR` 을 주면 그곳에 풀리고 `<data-dir>/native` 는 생기지 않는다. 재시작은 같은 inode 를 쓰고 마이그레이션하지 않는다. `--spring.config.additional-location` 의 설정 파일만으로 server 프로파일이 healthy 가 된다. 데이터 디렉터리가 없으면 종료 코드 1 이고 설정 이름을 말한다. 기동 줄은 `using Java 17 with` 와 `using Java 17.0.x with` 를 모두 받는다(P1-05 리뷰 R2). 모든 자식 출력에 관리자 토큰과 마스터 키가 없다. 한계: 설정을 쓰는 API 가 아직 없어서, 자식 프로세스의 재시작 시험은 두 실행 사이에 시험이 직접 `app_setting` 행을 넣고 두 번째 실행이 그것을 지켰는지 본다(「첫 실행이 쓰고 둘째가 읽는다」는 위 in-process 시험이 본다). 네이티브 위치는 새 JVM 에서만 확인할 수 있어 단위·통합 시험 JVM 은 네이티브를 기본 위치에 먼저 불러 둔다.
 - P1-06 의 vitest 44(43 에서)는 `data_dir_unavailable` 실패 화면 1건을 더한 수다. cargo test 79(71 에서)는 Metadata 설정 시험 3건을 지우고 11건을 더했다: `data_dir.rs` 7(없으면 0700 으로 만든다, 상대 경로 거부, 있는 디렉터리 재사용, 심볼릭 링크·파일·그룹·기타 비트(0755/0750/0701/0770/0707) 거부와 권한 그대로, 소유자 규칙은 공용 `private_dir` 규칙), `launch.rs` 1(자식 환경의 `QUERYHUB_DATA_DIR` 이 준비한 경로이고 셸의 `QUERYHUB_DATA_DIR`·`QUERYHUB_SQLITE_NATIVE_DIR`·예전 Metadata 변수 다섯 개는 넘어가지 않으며 `QUERYHUB_*` 는 정확히 넷. AC21 의 grep `git grep -n -E 'metadata_settings_missing|MetadataSettings|QUERYHUB_METADATA_DB' -- desktop` 은 비어 있다. 예외(P1-06 리뷰 R7): AC19 를 시험하려고 예전 변수 이름이 시험 코드에 남아 있지만 `concat!("QUERYHUB_", "METADATA_DB_")` 로 만들어 이 grep 에 걸리지 않는다. 자리는 `desktop/src-tauri/src/runtime/launch.rs` 의 `RETIRED_METADATA_PREFIX`·`QUERYHUB_METADATA_DB_PASSWORD` 줄과 `tests.rs` 의 `RETIRED_METADATA_PREFIX` 다. 나중의 grep 감사는 `concat!` 도 찾아야 한다), 감독 시험 3(허용 목록 변수만 있는 셸 환경에서 런타임이 뜨고 데이터 디렉터리가 0700 으로 생기며 재시작이 같은 inode 를 쓴다, 심볼릭 링크·파일·0755·0750 데이터 디렉터리는 `data_dir_unavailable` 이고 아무것도 띄우지 않으며 키 파일도 만들지 않는다, 가림 목록이 정확히 토큰과 키). `master_key.rs` 의 시험 15건은 6ceef51 과 같은 코드로 통과한다(규칙은 `private_dir.rs` 로 옮겼다). 게이트 스크립트 `junit-check.sh`, `cargo-test-check.sh`, `selftest.sh`, `lib.sh` 는 바꾸지 않았고(`integration.sh` 는 주석 줄만) `selftest.sh` 는 279 시나리오를 SKIP 0 으로 통과한다. CI 의 수는 없다(미실행).
 - P1-06 의 수동 확인(AC33, macOS arm64, Queen, 2026-11-23): `QUERYHUB_*` 변수 없이(`env -i` 에 `HOME`, `USER`, `LANG` 과 node·pnpm·cargo 만 더한 `PATH`) MariaDB 와 Docker 없이 개발 모드 앱을 시작했다. 첫 실행 뒤 `~/Library/Application Support/com.queryhub.desktop/data` 가 `drwx------`, `queryhub.db` 가 `-rw-------` 이고(`-wal`, `queryhub.lock` 은 0600, `native/` 는 0700) 런타임이 running, health 가 UP 이었다. 앱을 끝내고 다시 시작하자 같은 `queryhub.db`(같은 inode)를 다시 썼고 running 이었다. 런타임의 argv 와 개발 로그에 16진수 64 자 문자열이 없었고 MariaDB·Metadata 변수 이야기도 없었다. 런타임은 `PATH` 의 `/usr/bin/java`(macOS 스텁, 설치된 유일한 JDK 인 Temurin 17.0.19 로 넘겼다)로 떴다. Linux·Windows 의 같은 확인은 미검증이다(PLAT-1).
+- P1-07 의 수는 macOS arm64 로컬의 게이트 실행(run D 의 최종 트리, Java 17 toolchain)에서 센 값이다. runtime 단위 1093 은 모듈별로 adapter-crypto 77, adapter-dbprovider 20(새 모듈), adapter-metadata 135, adapter-web 249, app 422, application 35, domain 109, provider-mariadb 20(새 모듈), provider-postgresql 26(새 모듈)이다. P1-06 의 894 에서 199 가 늘었다.
+  - run A 23(Metadata 저장소, P1-06 리뷰 N1–N6): adapter-metadata 22(`StoreBootstrapTest` 의 새 저장소 롤백 저널(진짜 저널 머리글, 안내한 대로 옮기면 열린다)과 데이터가 있던 저장소의 안내, 저널 머리글 읽기, 심볼릭 링크 `-journal`, 잠금 채널의 `Error`, 0400 파일 거부, 사라진 DB 를 다시 만들지 않음, `VACUUM INTO` 사본의 WAL 전환, UNC 실제 경로(주입한 뿌리), `StoreRulesTest` 의 소유자 읽기·쓰기 규칙과 `open_mode`), app 1(`open_mode` 거부).
+  - run B 125: domain 97(`ConnectionSettingsTest` 88, `ConnectionPasswordTest` 4, `ConnectionTestResultTest` 5), application 3(`TestConnectionUseCaseTest`), adapter-dbprovider 20(`JdbcDatabaseProviderTest` 10, `HikariConnectionPoolsTest` 6, `StandardFailureClassifierTest` 4), app 5(ArchUnit R8·R11 자체 검증 3, R11 운영 검사 2).
+  - run C 49: provider-mariadb 20, provider-postgresql 26(정확한 URL, 고정 속성, 허용 목록, 거부되는 옵션 이름 16·22 개, 분류), app 3(`DatabaseProviderConfigurationTest`: DataSource 빈 하나, 기동 때 업무 DB 스레드 없음, 컨텍스트를 닫으면 풀이 닫힌다).
+  - run D 2: domain 1(`DATABASE_NOT_FOUND` 메시지가 두 원인을 말한다), app 1(관리 키 거부 메시지의 설정 목록이 `StorePragmas.MANAGED_KEYS` 와 같다. 거부 시험 두 개는 그 목록이 있고 넘긴 값이 없는 것도 확인한다).
+- P1-07 의 통합 52(33 에서)는 `MariaDbProviderIntegrationTest` 10 과 `PostgreSqlProviderIntegrationTest` 9 를 더한 수다(공통 기반 `DatabaseProviderContainerTest`). 포트가 127.0.0.1 에만 열린다(`docker inspect` 의 HostIp), 성공과 제품 이름·버전, 틀린 비밀번호의 `AUTHENTICATION_FAILED` 와 결과·풀 예외 사슬·TRACE 로그에 비밀번호 없음, 모르는 DB 의 `DATABASE_NOT_FOUND`(MariaDB 는 root 의 1049 도), 닫힌 포트의 `UNREACHABLE`, 응답 없는 서버의 `TIMEOUT`(드라이버가 소켓을 닫고 시험 스레드가 남지 않는다), 풀의 `SELECT 1` 과 INSERT 거부(25006, 같은 사용자의 일반 연결로는 INSERT 가 된다), `close(id)` 뒤 서버 세션 0, MariaDB 의 LOCAL INFILE 거부, PostgreSQL 의 `.pgpass`·서비스 파일 미사용을 확인한다. `BootJarClassVersionIntegrationTest` 는 새 모듈 JAR 세 개와 두 드라이버 JAR 도 요구한다. vitest 44 와 cargo test 79 는 그대로다(desktop 은 바뀌지 않았다).
+- P1-07 의 통합 시험 이미지는 로컬의 `mariadb:12.3`(MariaDB 12.3.3), `postgres:16-alpine`(PostgreSQL 16.15), `testcontainers/ryuk:0.14.0` 이고 받은 것은 없다. 응답 없는 서버의 `TIMEOUT` 은 MariaDB 가 약 2.0 초, PostgreSQL 이 2.0 초 또는 4.0 초였다(run D 의 게이트에서 4.0 초, 원인 미확인, [BACKLOG.md](BACKLOG.md) P107-9). 메모리는 [DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)에 있다.
+- **업무 DB 시험의 규칙 (P1-07):** 거부·부정 시험(허용 목록 밖 옵션, 닫힌 포트, 위조한 실패)은 **닫힌 로컬 포트**만 쓰고, 3306·5432 같은 잘 알려진 서비스 포트를 쓰지 않는다. P1-07 개발 중 허용 목록을 일부러 넓힌 확인 실행에서 거부 시험 하나가 127.0.0.1:3306 에서 돌던 실제 로컬 DB 서비스(QueryHub 와 상관없는 것)에 닿아 「access denied」를 받았다. 버려도 되는 비밀번호였고, 그 뒤 거부 시험을 닫힌 포트로 바꿔 허용 목록이 깨져도 살아 있는 서비스에 닿지 않게 했다. 시험의 비밀번호는 실행마다 새 UUID 다. 컨테이너 포트는 127.0.0.1 의 무작위 포트에만 묶는다.
+- P1-07 의 거짓 통과 확인: run A, B, C 의 개발자가 새 방어를 하나씩 끄거나 되돌린 트리에서 대상 시험이 의도한 이유로 실패하는 것을 보고 파일을 SHA-256 으로 되돌렸다(허용 목록 넓히기, `allowLocalInfile=true`, `readOnlyPropagatesToServer=false`, `readOnlyMode=transaction`, 기본 포트 바인딩, DataSource 빈 하나 더하기, 마감 없애기 등).
 
 ## 명세 12절 테스트 기준과 Phase
 
@@ -194,10 +212,10 @@ sh runtime/gradlew -p runtime :app:test --tests 'com.queryhub.architecture.*'
 
 ## 미검증 플랫폼
 
-- Windows·Linux 의 Desktop 셸(빌드, 번들, 자식 환경 허용 목록, 경로 처리)은 macOS 에서 검증할 수 없어 **미검증**이다([BACKLOG.md](BACKLOG.md) PLAT-1, 목표 CI-1 첫 실행 / Phase 8). Windows 의 `Path` 대소문자 처리는 P0-D 에서 고쳤고(P0C-C2-4), 그 `#[cfg(windows)]` 테스트는 Windows CI 에서만 돈다(미검증).
+- Windows·Linux 의 Desktop 셸(빌드, 번들, 자식 환경 허용 목록, 경로 처리)은 macOS 에서 검증할 수 없어 **미검증**이다([BACKLOG.md](BACKLOG.md) PLAT-1, 목표 CI-1 의 Windows 작업 / Phase 8). Linux 는 CI 의 `gates` 작업에서 desktop 의 빌드·vitest·cargo test 가 통과했다(실제 앱 실행은 미검증). Windows 의 `Path` 대소문자 처리는 P0-D 에서 고쳤고(P0C-C2-4), 그 `#[cfg(windows)]` 테스트는 Windows CI 에서만 돈다(미검증).
 - Windows·Linux 의 마스터 키 파일(경로, `create_new`, 권한을 확인하지 않는 Windows 의 동작)은 미검증이다(PLAT-1, CI-1). unix 의 권한 시험은 macOS 에서만 실행했다.
 - macOS 에서 Windows 타깃으로 Tauri 앱 crate 를 `cargo check` 하면 `llvm-rc` 가 없어 멈춘다. Windows 전용 코드는 로컬에서 검증되지 않는다.
-- Metadata 저장소(내장 SQLite)는 macOS arm64 에서 sqlite-jdbc 의 Mac/aarch64 네이티브로만 실행했다. 나머지 네이티브 19개, Linux 의 `noexec` 마운트, Windows 백신, 실제 네트워크 파일 시스템, Windows 의 데이터 디렉터리(권한을 확인하지 않는다)는 미검증이다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md), [BACKLOG.md](BACKLOG.md) P106-3, P106-4, PLAT-1).
+- Metadata 저장소(내장 SQLite)는 macOS arm64(로컬, Mac/aarch64 네이티브)와 CI 의 Linux x86_64(Linux/x86_64 네이티브)에서 실행했다. 나머지 네이티브 18개, Linux 의 `noexec` 마운트, Windows 백신, 실제 네트워크 파일 시스템, Windows 의 데이터 디렉터리(권한을 확인하지 않는다)는 미검증이다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md), [BACKLOG.md](BACKLOG.md) P106-3, P106-4, PLAT-1).
 
 ## 문서 점검 절차
 

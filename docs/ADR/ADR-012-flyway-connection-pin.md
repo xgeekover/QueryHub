@@ -2,7 +2,7 @@
 
 - 상태: 승인됨
 - 날짜: 2026-11-18
-- 구현: 구현됨 (P0-B, f913239). P1-06 의 SQLite 저장소에서도 그대로다(커밋 전)
+- 구현: 구현됨 (P0-B, f913239). P1-06 의 SQLite 저장소에서도 그대로다(39c90e1 (2026-11-23)). P1-07 의 업무 DB 풀은 Spring 빈이 아니고 DataSource 빈은 Metadata 풀 하나뿐이라 이 고정에 닿지 않는다([ADR-027](ADR-027-database-provider.md))
 
 > 2026-11-23 주 (P1-06, [ADR-026](ADR-026-sqlite-embedded-metadata-store.md)): Metadata 저장소가 내장 SQLite 로 바뀌어도 이 결정은 그대로다. `MetadataFlywayConnectionDetails` 가 URL 과 사용자를 비워 두므로 Flyway 는 검사한 메인 Hikari 풀(`jdbc:sqlite:<data-dir>/queryhub.db`, 런타임의 PRAGMA)로만 마이그레이션한다. `spring.flyway.url`·`user` 가 다른 SQLite 파일을 가리켜도 마이그레이션은 검사한 저장소에서 돌고 그 파일은 만들어지지 않는다(단위 시험 `MetadataFlywayConnectionTest` 와 통합 시험 `MetadataStartupIntegrationTest`). 맥락의 호스트·DB 이름·`allowLocalInfile`·UTC 옵션과 결과의 DDL 권한은 MariaDB 때의 이야기다. SQLite 에는 계정이 없다.
 

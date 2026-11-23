@@ -24,10 +24,11 @@ import org.jspecify.annotations.Nullable;
  *   <li>없는 디렉터리는 만든다(부모는 createDirectories, 마지막 디렉터리는 POSIX 에서 0700).
  *   <li>있는 디렉터리는 심볼릭 링크가 아니고(링크를 따라가지 않고 본다), 디렉터리이며, 런타임을 실행한 사용자의 것이고, 그룹·기타 권한 비트가 없고, 쓰고 들어갈 수
  *       있어야 한다.
- *   <li>있는 파일은 심볼릭 링크가 아닌 일반 파일이고, 런타임을 실행한 사용자의 것이며, 그룹·기타 권한 비트가 없어야 한다.
+ *   <li>있는 파일은 심볼릭 링크가 아닌 일반 파일이고, 런타임을 실행한 사용자의 것이며, 그룹·기타 권한 비트가 없고, 소유자가 읽고 쓸 수 있어야 한다(0600).
+ *       소유자가 쓸 수 없는 -shm 이나 DB 파일이면 SQLite 가 저장소를 조용히 읽기 전용으로 열고 쓰기마다 실패한다(P1-06 리뷰 N4).
  *   <li>느슨한 권한을 조용히 고치지 않는다. 메시지가 chmod 명령을 알려 준다. 거부한 경로는 바꾸거나, 자르거나, 이름을 바꾸거나, 지우지 않는다.
- *   <li>POSIX 권한이 없는 파일 시스템(Windows)에서는 소유자와 권한을 보지 않는다. 사용자 프로필의 ACL 에 기댄다(미검증, PLAT-1). 심볼릭 링크와
- *       종류 검사는 그대로 한다.
+ *   <li>POSIX 권한이 없는 파일 시스템(Windows)에서는 소유자와 권한 비트를 보지 않는다. 사용자 프로필의 ACL 에 기댄다(미검증, PLAT-1). 심볼릭
+ *       링크와 종류 검사는 그대로 하고, 쓸 수 없는 디렉터리와 파일(읽기 전용 속성 등)은 거부한다.
  * </ul>
  */
 final class PrivatePaths {
@@ -37,6 +38,9 @@ final class PrivatePaths {
 
   static final Set<PosixFilePermission> OWNER_ONLY_FILE =
       PosixFilePermissions.fromString("rw-------");
+
+  private static final Set<PosixFilePermission> OWNER_READ_WRITE =
+      EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
 
   private static final Set<PosixFilePermission> GROUP_OR_OTHER =
       EnumSet.of(
@@ -55,7 +59,7 @@ final class PrivatePaths {
 
   /**
    * 링크를 따라가지 않고 읽은 경로의 상태. POSIX 가 아니면 {@code owner}, {@code currentUser}, {@code permissions} 는
-   * null 이다.
+   * null 이다. {@code writableAndSearchable} 은 디렉터리면 쓰고 들어갈 수 있는지, 파일이면 쓸 수 있는지다.
    */
   record Facts(
       boolean symbolicLink,
@@ -90,10 +94,16 @@ final class PrivatePaths {
           subject + "가 일반 파일이 아니라서(디렉터리 등) 런타임을 시작하지 않는다. 그 경로의 항목을 옮기거나 다른 데이터 디렉터리를 지정하라.");
     }
     if (facts.permissions() == null) {
-      // POSIX 권한이 없는 파일 시스템(Windows): 소유자와 권한은 보지 않는다(PLAT-1).
-      return kind == Kind.DIRECTORY && !facts.writableAndSearchable()
-          ? Optional.of(subject + "에 쓸 수 없어 런타임을 시작하지 않는다. 런타임을 실행하는 사용자에게 쓰기 권한을 주라.")
-          : Optional.empty();
+      // POSIX 권한이 없는 파일 시스템(Windows): 소유자와 권한 비트는 보지 않는다(PLAT-1). 쓸 수 없으면 거부한다.
+      if (facts.writableAndSearchable()) {
+        return Optional.empty();
+      }
+      return Optional.of(
+          kind == Kind.DIRECTORY
+              ? subject + "에 쓸 수 없어 런타임을 시작하지 않는다. 런타임을 실행하는 사용자에게 쓰기 권한을 주라."
+              : subject
+                  + "에 쓸 수 없어(읽기 전용) 런타임을 시작하지 않으며 권한을 대신 고치지 않는다. 파일의 읽기 전용 속성을 끄거나 런타임을 실행하는 사용자에게"
+                  + " 쓰기 권한을 주라.");
     }
     if (facts.currentUser() == null) {
       return Optional.of(
@@ -123,6 +133,15 @@ final class PrivatePaths {
     if (kind == Kind.DIRECTORY && !facts.writableAndSearchable()) {
       return Optional.of(
           subject + "에 쓰거나 들어갈 수 없어(권한 " + mode + ") 런타임을 시작하지 않는다. 고치는 방법: " + chmod);
+    }
+    if (kind == Kind.FILE && !facts.permissions().containsAll(OWNER_READ_WRITE)) {
+      return Optional.of(
+          subject
+              + "의 권한이 "
+              + mode
+              + " 라서 소유자(런타임을 실행한 사용자)가 읽고 쓸 수 없다. SQLite 가 저장소를 읽기 전용으로 열어 쓰기가 실패하므로 런타임을 시작하지 않으며 권한을"
+              + " 대신 고치지 않는다. 고치는 방법: "
+              + chmod);
     }
     return Optional.empty();
   }
