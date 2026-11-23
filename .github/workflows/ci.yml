@@ -11,10 +11,22 @@
 #   Git Bash 의 ln -s 는 기본으로 대상을 복사하므로 대상이 없는 링크를 만들지 못한다.
 # 앞선 두 실행(P1-06 39c90e1 의 45135537429, MIT 라이선스 319c8ee 의 45139240703)도 gates 와 macOS 는 성공, Windows 는
 #   같은 자리에서 실패였다.
-# P1-07a(커밋 전)는 이 파일이 아니라 selftest.sh 의 그 ln -s 한 명령에만 MSYS2 의 winsymlinks:native 설정을 주고, 그래도 깨진
-#   링크를 만들지 못하면 이유를 적고 i6 을 SKIP 한다(desktop 작업의 인자 없는 selftest 는 SKIP 을 받고, gates 의 --no-skip 은
-#   받지 않는다). 설정을 env 로 두는 해법은 workflow-check.sh 의 FORBIDDEN_ENV(MSYS*)가 거부하고, 그 규칙은 그대로다(BACKLOG
-#   CI-1). Windows 는 P1-07a 를 push 한 뒤의 CI 실행까지 미검증이다(PLAT-1).
+# P1-07a(1bcf01b, 2026-11-24)는 이 파일이 아니라 selftest.sh 의 그 ln -s 한 명령에만 MSYS2 의 winsymlinks:native 설정을 주고,
+#   그래도 깨진 링크를 만들지 못하면 이유를 적고 i6 을 SKIP 한다(desktop 작업의 인자 없는 selftest 는 SKIP 을 받고, gates 의
+#   --no-skip 은 받지 않는다). 설정을 env 로 두는 해법은 workflow-check.sh 의 FORBIDDEN_ENV(MSYS*)가 거부하고, 그 규칙은
+#   그대로다(BACKLOG CI-1).
+# P1-07a 코드(공개 저장소의 de110e2)를 돌린 실행 45262721122 의 결과(2026-11-23 UTC, 2회차는 gates 만 다시 돌렸다):
+# - desktop (windows-2025, --desktop-only): build.sh 는 통과했다. test.sh 의 selftest 에서 i6 는 PASS(깨진 링크를 [INVALID] 로
+#   거부)였고 i1, c-i4 는 예상대로 SKIP 이었다. d11 하나가 실패했다:
+#   docs-check.sh: line 22: /lib.sh: No such file or directory
+#   d11 의 NO_SHA_BIN 에 복사된 도구가 MSYS 런타임 DLL 을 찾지 못해 시작하지 못한 것으로 본다(Windows 에서 확인하지 않았다).
+#   P1-07b(커밋 전)는 이 파일이 아니라 selftest.sh 의 d11 픽스처만 고쳐, MSYS 에서만 도구 옆에 msys-*.dll 을 복사한다.
+# - gates (ubuntu-24.04): 1회차는 test.sh 의 cargo test 에서 1건 실패했다(78건 통과). 감독의 데이터 디렉터리 시험이 포트 27699
+#   에서 DataDirUnavailable 대신 PortInUse 를 받았다. 2회차는 성공했다. P1-07b 는 포트가 주제가 아닌 감독 시험에서 실제 포트
+#   확인을 뺐다(TEST_PLAN 「CI」).
+# - desktop (macos-15, --desktop-only): 1회차에 성공했다.
+# Windows 는 P1-07b 를 push 한 뒤의 CI 실행까지 미검증이다. selftest 뒤의 단계(vitest, cargo test 와 cfg(windows) 시험, lint.sh)는
+#   Windows 에서 한 번도 돌지 않았다(PLAT-1).
 #
 # 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
 # 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서

@@ -519,6 +519,22 @@ mkdir -p "$NO_SHA_BIN"
 for tool in dirname awk grep cut wc tr find sort; do
   ln -s "$(command -v "$tool")" "$NO_SHA_BIN/$tool"
 done
+# Git Bash(MSYS2)에서만: 그곳의 ln -s 는 기본으로 대상(.exe)을 복사하고, 복사한 도구는 자기 디렉터리와 PATH 에서 MSYS 런타임
+#   DLL(msys-2.0.dll 과 gawk, grep 등이 더 쓰는 msys-*.dll)을 찾는다. PATH 가 이 디렉터리뿐이면 도구가 시작하지 못해 d11 이
+#   다른 이유로 실패한다(CI 실행 45262721122 의 Windows: 'docs-check.sh: line 22: /lib.sh: No such file or directory').
+#   그래서 도구 디렉터리의 msys-*.dll 을 옆에 복사한다(P1-07b). DLL 은 해시 도구가 아니므로 sha256sum 과 shasum 은 여전히
+#   없다. macOS·Linux 에서는 아무것도 하지 않는다.
+case "$(uname -s)" in
+  MINGW* | MSYS*)
+    for tool in dirname awk grep cut wc tr find sort; do
+      for dll in "$(dirname "$(command -v "$tool")")"/msys-*.dll; do
+        if [ -f "$dll" ] && [ ! -e "$NO_SHA_BIN/${dll##*/}" ]; then
+          cp "$dll" "$NO_SHA_BIN/"
+        fi
+      done
+    done
+    ;;
+esac
 docs_without_sha() {
   PATH="$NO_SHA_BIN" "$BASH" "$DOCS_CHECK" --root "$DOCS_WORK/ok"
 }

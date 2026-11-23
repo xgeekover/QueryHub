@@ -187,7 +187,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 7. **Desktop 이 외부 MariaDB 에 의존 (P1-06 에서 해소).** Metadata 저장소는 이제 내장 SQLite 다([ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md)). 대신 SQLite 의 위험이 생겼다: 네이티브 라이브러리(Mac/aarch64 밖은 미검증, PLAT-1), 한 번에 쓰기 하나, 로컬 디스크만, 호스트 하나(여러 서버가 함께 쓰지 못한다, [BACKLOG.md](BACKLOG.md) P106-1), 운영자가 하는 백업([DEPLOYMENT.md](DEPLOYMENT.md) 「백업·복구」).
 8. **숫자 정밀도**(위 「성능 원칙」).
 9. **통합 테스트 시간과 메모리.** 호스트 16 GB, Docker VM 약 8 GB. DB 별 통합 테스트는 순차로 돌린다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)).
-10. **CI.** push 는 사람이 한다. 워크플로(`.github/workflows/ci.yml`)는 P0-D 에서 정의만 했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux(`gates`)와 macOS(`desktop`) 작업은 통과했고, Windows 작업은 `test.sh` 의 자체 검증 i6 에서 실패한다([BACKLOG.md](BACKLOG.md) CI-1, [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)). P1-07 코드(bb0cd8c)도 같았다(실행 45194878756 의 2회차. 1회차의 Linux 실패는 Maven Central 의 429 응답이었다). P1-07a(커밋 전)가 i6 를 고쳤고, Windows 는 그 push 뒤의 CI 실행까지 미검증이다.
+10. **CI.** push 는 사람이 한다. 워크플로(`.github/workflows/ci.yml`)는 P0-D 에서 정의만 했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux(`gates`)와 macOS(`desktop`) 작업은 통과했고, Windows 작업은 `test.sh` 의 자체 검증에서 실패한다([BACKLOG.md](BACKLOG.md) CI-1, [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)). P1-07 코드(bb0cd8c)까지는 i6 에서 멈췄다(실행 45194878756 의 2회차. 1회차의 Linux 실패는 Maven Central 의 429 응답이었다). P1-07a(1bcf01b, 2026-11-24)가 i6 를 고쳤고, 그 코드의 실행 45262721122 에서 Windows 는 i6 를 통과한 뒤 d11 에서 멈췄다. P1-07b(커밋 전)가 d11 픽스처를 고쳤고, Windows 는 그 push 뒤의 CI 실행까지 미검증이다.
 
 ## 설계와 다른 구현
 

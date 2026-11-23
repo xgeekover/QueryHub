@@ -8,9 +8,26 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. P1-07a 는 Windows CI 의 selftest i6 실패(CI-1)만 고친 작은 태스크다. 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. P1-07a 는 Windows CI 의 selftest i6 실패(CI-1)만 고친 작은 태스크다. P1-07b 는 그다음 Windows CI 실패(selftest d11)와 Linux CI 에서 한 번 실패한 desktop 감독 시험을 고친 작은 태스크다. 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
 
-#### P1-07a Windows CI 의 selftest i6 (커밋 전)
+#### P1-07b Windows CI 의 selftest d11 과 흔들리던 감독 시험 (커밋 전)
+
+태스크 T-20261124-070034-0f4a. 사람의 결정(2026-11-24) 「작은 태스크 P1-07b (권장)」([REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-3)에 따라 보호 파일 `scripts/gate/selftest.sh` 의 d11 픽스처만 고쳤다. 사람은 이 태스크에서만, d11 픽스처에만 보호 파일을 바꾸는 데 동의했다.
+
+##### 수정
+
+- `selftest.sh` 의 d11 픽스처(`NO_SHA_BIN`): Git Bash(MSYS2)에서만(`uname -s` 가 `MINGW*` 나 `MSYS*`) 링크한 도구의 디렉터리에 있는 `msys-*.dll` 을 `NO_SHA_BIN` 에 복사한다. Git Bash 의 `ln -s` 는 도구(.exe)를 복사하고, PATH 가 `NO_SHA_BIN` 뿐이면 복사한 도구가 MSYS 런타임 DLL 을 찾지 못해 시작하지 못하는 것으로 본다(CI 실행 45262721122 의 Windows: `docs-check.sh: line 22: /lib.sh: No such file or directory`). DLL 은 해시 도구가 아니므로 `sha256sum` 과 `shasum` 은 여전히 없다. d11 의 기대와 `docs_without_sha` 는 그대로이고, macOS·Linux 에서는 아무것도 하지 않는다.
+- desktop 감독 시험(`desktop/src-tauri/src/runtime/tests.rs`): 포트가 주제가 아닌 시험은 감독의 포트 확인으로 `always_free` 를 넣는다. 실행 45262721122 의 `gates (ubuntu-24.04)` 1회차에서 데이터 디렉터리 시험의 `file` 경우가 `free_port()` 가 고른 포트 27699 에서 `DataDirUnavailable` 대신 `PortInUse` 를 받았다(2회차는 성공). 사전 점검은 포트를 데이터 디렉터리보다 먼저 보므로, 고른 뒤 누가 그 포트를 잡으면 시험의 주제와 상관없이 실패한다. 실제 포트 확인(`launch::port_is_free`)은 포트가 주제인 두 시험(`a_bound_port_gives_port_in_use_without_spawning`, `a_wildcard_listener_gives_port_in_use_without_spawning`)만 거친다. 제품 코드는 바꾸지 않았다.
+
+##### 변경
+
+- 문서: P1-07a 의 커밋 표시(1bcf01b)와 P1-07a 코드의 CI 실행 45262721122 의 결과를 적었다([docs/BACKLOG.md](docs/BACKLOG.md) CI-1, PLAT-1, [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 「CI」). `.github/workflows/ci.yml` 은 머리 주석만 바꿨다.
+
+- 남은 것: d11 의 DLL 복사가 Windows 에서 통하는지는 P1-07b 를 push 한 뒤의 CI 실행까지 미검증이다(CI-1, PLAT-1). selftest 뒤의 Windows 단계(vitest, cargo test 와 `#[cfg(windows)]` 시험, `lint.sh`)는 Windows 에서 한 번도 돌지 않았다. 포트 27699 를 무엇이 잡았는지는 로그로 알 수 없다.
+
+테스트(macOS arm64 로컬): `selftest.sh` 는 인자 없이와 `--no-skip` 모두 279 시나리오, SKIP 0 으로 통과했고 출력이 1bcf01b 와 같다. `uname` 이 `MINGW64_NT-10.0-26100` 을 찍게 한 임시 사본(가짜 도구 디렉터리에 `msys-*.dll` 대역 7 개)에서는 `NO_SHA_BIN` 에 그 DLL 7 개가 들어가고 `sha256sum`·`shasum` 은 없었으며, d11 을 포함한 279 시나리오가 통과했고 출력이 1bcf01b 와 같았다. `cargo test --locked runtime::tests` 는 25 건 모두 통과했다.
+
+#### P1-07a Windows CI 의 selftest i6 — 1bcf01b (2026-11-24)
 
 태스크 T-20261123-234733-7f09. 사람의 결정(2026-11-23) 「별도 작은 태스크 (권장)」([REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-3)에 따라 보호 파일 `scripts/gate/selftest.sh` 의 i6 줄만 고쳤다. 사람은 이 태스크에서만 보호 파일을 바꾸는 데 동의했다.
 

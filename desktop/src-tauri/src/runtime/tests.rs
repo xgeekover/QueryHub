@@ -3,8 +3,8 @@
 //! - 가짜 자식은 sh 스크립트다. 스크립트와 JAR 경로에 표식 queryhub-fake-runtime 이 들어 있어 남은 프로세스를
 //!   `pgrep -fl queryhub-fake-runtime` 으로 찾을 수 있다.
 //! - HTTP 는 테스트 안의 작은 서버가 임시 포트에서 답한다. 포트 18580 과 std::env::set_var 는 쓰지 않는다.
-//! - 실제 포트 확인(launch::port_is_free)을 거치는 테스트의 포트는 free_port() 가 OS 의 임시 포트 범위 밖에서 고른다
-//!   (아래 설명).
+//! - 감독의 실제 포트 확인(launch::port_is_free)은 포트가 주제인 시험(8)만 거친다. 그 밖의 시험은 always_free 를 넣고
+//!   (P1-07b), 가짜 서버가 없는 시험의 포트는 free_port() 가 OS 의 임시 포트 범위 밖에서 고른다(아래 설명).
 //! - 관리 토큰은 테스트마다 AdminToken::generate() 로 만든다(고정 값을 쓰지 않는다).
 //! - 마스터 키 파일은 샌드박스의 work/secrets/master.key 다(실제 앱 데이터 디렉터리는 쓰지 않는다). 감독이 첫 시작에서 만든다.
 //! - 데이터 디렉터리는 샌드박스의 work/data 다(운영의 <앱 로컬 데이터 디렉터리>/data 자리). 감독이 시작할 때 0700 으로 만든다.
@@ -171,7 +171,9 @@ impl Drop for Sandbox {
     }
 }
 
-/// 가짜 서버가 이미 포트를 쓰므로 포트 확인을 건너뛴다.
+/// 포트 확인을 건너뛴다. 가짜 서버가 이미 포트를 쓰는 시험과 포트가 주제가 아닌 시험(P1-07b)이 쓴다. 포트가 주제가 아닌
+/// 시험이 실제 확인을 거치면, free_port() 가 고른 뒤 감독이 확인하기 전에 누가 그 포트를 잡을 때 시험의 주제와 상관없는
+/// PortInUse 로 실패한다(아래 free_port 설명).
 fn always_free(_: u16) -> bool {
     true
 }
@@ -187,6 +189,12 @@ const PORT_RANGE_SIZE: u16 = 12000;
 /// PortInUse 로 실패했다(P1-02 리뷰 R4, P1-03 실행 A 의 한 번 실패: 포트 60435). 나가는 연결과 포트 0 바인딩은 임시 포트
 /// 범위에서만 포트를 받으므로 그 범위 밖의 포트는 그렇게 빼앗기지 않는다. 테스트끼리는 원자 카운터로 서로 다른 포트를
 /// 받는다. 시작점은 PID 로 흩는다(동시에 도는 다른 테스트 프로세스와 겹칠 가능성을 줄인다).
+///
+/// 그래도 범위 안의 포트가 잡힌 일이 있다. CI 실행 45262721122 의 gates(ubuntu-24.04) 1회차에서 데이터 디렉터리 시험의 file
+/// 경우가 포트 27699 에서 DataDirUnavailable 대신 PortInUse 로 실패했다(같은 커밋의 2회차는 성공). 이 함수의 확인과 감독의
+/// 확인 사이에 무엇이 그 포트를 잡았는지는 로그로 알 수 없다(러너의 임시 포트 범위를 찍지 않았다). 그래서 P1-07b 부터는
+/// 포트가 주제인 시험(8)만 감독의 실제 포트 확인을 거치고, 그 시험은 자기가 잡은 리스너의 포트를 쓴다. 이 함수는 가짜 자식과
+/// readiness 확인이 쓸, 아무도 듣지 않는 포트 번호를 고를 뿐이다.
 fn free_port() -> u16 {
     static NEXT: AtomicU16 = AtomicU16::new(0);
     let offset = (std::process::id() % u32::from(PORT_RANGE_SIZE)) as u16;
@@ -387,7 +395,7 @@ fn an_exiting_child_gives_failed_exited_with_a_masked_tail_and_no_token_or_key_i
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", EXIT_WITH_SECRETS);
     let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.config(free_port(), always_free),
         sandbox.env(),
         token(),
     );
@@ -490,7 +498,7 @@ fn stop_sends_sigterm_and_gives_stopped() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.config(free_port(), always_free),
         sandbox.env(),
         token(),
     );
@@ -515,7 +523,7 @@ fn stop_sends_sigterm_and_gives_stopped() {
 fn stop_kills_a_child_that_ignores_sigterm_after_the_grace_period() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", TERM_IGNORING);
-    let mut config = sandbox.config(free_port(), launch::port_is_free);
+    let mut config = sandbox.config(free_port(), always_free);
     config.stop_grace = Duration::from_secs(1);
     let supervisor = Supervisor::new(config, sandbox.env(), token());
     let pid = supervisor.start().pid.expect("pid");
@@ -613,7 +621,7 @@ fn a_malformed_key_file_gives_master_key_unavailable_spawns_nothing_and_keeps_th
     fs::write(sandbox.key_path(), contents).expect("key file");
     fs::set_permissions(sandbox.key_path(), fs::Permissions::from_mode(0o600)).expect("chmod");
     let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.config(free_port(), always_free),
         sandbox.env(),
         token(),
     );
@@ -699,11 +707,7 @@ fn the_child_gets_only_the_data_dir_the_token_the_key_the_parent_pid_and_the_fix
     injected.insert(launch::MASTER_KEY_VAR.to_string(), "inherited".to_string());
     // 셸 자신의 QUERYHUB_DATA_DIR 도 넘어가지 않는다(자식의 값은 셸이 준비한 경로다).
     injected.insert(launch::DATA_DIR_VAR.to_string(), "inherited".to_string());
-    let supervisor = Supervisor::new(
-        sandbox.config(port, launch::port_is_free),
-        injected,
-        token(),
-    );
+    let supervisor = Supervisor::new(sandbox.config(port, always_free), injected, token());
     supervisor.start();
     wait_file(&sandbox.work().join("child-env.txt"), WAIT);
     wait_file(&sandbox.work().join("child-argv.txt"), WAIT);
@@ -803,11 +807,7 @@ fn the_java_version_preflight_gets_neither_the_token_nor_the_data_dir() {
     injected.insert(launch::ADMIN_TOKEN_VAR.to_string(), "inherited".to_string());
     injected.insert(launch::MASTER_KEY_VAR.to_string(), "inherited".to_string());
     injected.insert(launch::DATA_DIR_VAR.to_string(), "inherited".to_string());
-    let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
-        injected,
-        token(),
-    );
+    let supervisor = Supervisor::new(sandbox.config(free_port(), always_free), injected, token());
     let pid = supervisor.start().pid.expect("pid");
     let token = supervisor.admin_token().expose().to_string();
     let key = sandbox.key_value();
@@ -915,6 +915,7 @@ fn an_allow_listed_shell_env_spawns_the_runtime_and_the_missing_data_dir_is_crea
 
 // (7) AC20: 심볼릭 링크, 디렉터리가 아닌 것, 0755/0750 인 데이터 디렉터리는 failed(data_dir_unavailable)이고, 자식을 띄우지
 // 않으며, 바꾸지 않는다. 메시지에는 경로와 고치는 방법이 있고 토큰과 키는 없다. 키는 마지막 확인이라 만들지 않는다.
+// 포트 확인은 데이터 디렉터리보다 먼저이므로 always_free 를 넣는다(P1-07b: CI 에서 실제 확인이 PortInUse 를 먼저 냈다).
 #[test]
 fn a_symlinked_non_directory_or_open_data_dir_gives_data_dir_unavailable_and_spawns_nothing() {
     use std::os::unix::fs::symlink;
@@ -944,7 +945,7 @@ fn a_symlinked_non_directory_or_open_data_dir_gives_data_dir_unavailable_and_spa
             }
         }
         let supervisor = Supervisor::new(
-            sandbox.config(free_port(), launch::port_is_free),
+            sandbox.config(free_port(), always_free),
             sandbox.env(),
             token(),
         );
@@ -1114,7 +1115,7 @@ fn java_16_gives_java_too_old_naming_the_version_and_path() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("16.0.2", SLEEP_LOOP);
     let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.config(free_port(), always_free),
         sandbox.env(),
         token(),
     );
@@ -1168,11 +1169,7 @@ fn a_missing_java_gives_java_not_found() {
     let mut env = sandbox.env();
     let missing = sandbox.root.join("nowhere").join("java");
     env.insert(launch::JAVA_VAR.into(), missing.display().to_string());
-    let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
-        env,
-        token(),
-    );
+    let supervisor = Supervisor::new(sandbox.config(free_port(), always_free), env, token());
 
     let status = supervisor.start();
     assert_eq!(failure_kind(&status), Some(FailureKind::JavaNotFound));
@@ -1193,11 +1190,7 @@ fn a_missing_jar_gives_jar_not_found_naming_the_path() {
     let mut env = sandbox.env();
     let missing = sandbox.root.join("missing").join("queryhub-runtime.jar");
     env.insert(launch::JAR_VAR.into(), missing.display().to_string());
-    let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
-        env,
-        token(),
-    );
+    let supervisor = Supervisor::new(sandbox.config(free_port(), always_free), env, token());
 
     let status = supervisor.start();
     let failure = status.failure.as_ref().expect("failure");
@@ -1209,11 +1202,7 @@ fn a_missing_jar_gives_jar_not_found_naming_the_path() {
     // 변수도 기본 경로도 없으면(릴리스 빌드) Phase 8 계획을 말한다.
     let mut env = sandbox.env();
     env.remove(launch::JAR_VAR);
-    let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
-        env,
-        token(),
-    );
+    let supervisor = Supervisor::new(sandbox.config(free_port(), always_free), env, token());
     let status = supervisor.start();
     let failure = status.failure.as_ref().expect("failure");
     assert_eq!(failure.kind, FailureKind::JarNotFound);
@@ -1248,7 +1237,7 @@ fn shutdown_kills_the_child_and_blocks_later_starts() {
     let sandbox = Sandbox::new();
     sandbox.fake_java("21.0.11", SLEEP_LOOP);
     let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.config(free_port(), always_free),
         sandbox.env(),
         token(),
     );
@@ -1269,7 +1258,7 @@ fn shutdown_during_preflight_spawns_nothing_and_blocks_later_starts() {
     let version_started = sandbox.root.join("version-started");
     sandbox.fake_java_with_slow_version(&version_started, 2, SLEEP_LOOP);
     let supervisor = Supervisor::new(
-        sandbox.config(free_port(), launch::port_is_free),
+        sandbox.config(free_port(), always_free),
         sandbox.env(),
         token(),
     );
