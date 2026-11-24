@@ -86,7 +86,9 @@ class PostgreSqlJdbcProviderTest {
             entry("connectTimeout", "5"),
             entry("socketTimeout", "5"),
             entry("loginTimeout", "8"),
-            entry("readOnlyMode", "always"));
+            entry("readOnlyMode", "always"),
+            entry("sslcert", ""),
+            entry("sslkey", ""));
     // 초 단위 올림: 1.2 초는 2 초다.
     assertThat(provider.fixedProperties(settings("db", Duration.ofMillis(1200), Map.of())))
         .containsEntry("connectTimeout", "2")
@@ -95,7 +97,10 @@ class PostgreSqlJdbcProviderTest {
     // loginTimeout 은 공통 제한 시간(접속 제한 시간 + 여유)보다 늦다.
     assertThat(Duration.ofSeconds(8))
         .isGreaterThan(Duration.ofSeconds(5).plus(JdbcDatabaseProvider.DEADLINE_MARGIN));
-    assertThat(provider.allowedOptions()).containsExactly("sslmode");
+    assertThat(provider.allowedOptions()).containsOnlyKeys("sslmode");
+    assertThat(provider.allowedOptions().get("sslmode"))
+        .containsExactlyInAnyOrder(
+            "disable", "allow", "prefer", "require", "verify-ca", "verify-full");
   }
 
   @ParameterizedTest
@@ -113,7 +118,11 @@ class PostgreSqlJdbcProviderTest {
         "credentialType",
         "sessionVariables",
         "sslpassword",
+        "sslcert",
+        "SSLCERT",
         "sslkey",
+        "SslKey",
+        "sslrootcert",
         "options",
         "readOnlyMode",
         "READONLYMODE",
@@ -143,6 +152,66 @@ class PostgreSqlJdbcProviderTest {
           .isInstanceOf(InvalidConnectionSettingsException.class)
           .hasMessageContaining(option)
           .hasMessageNotContaining(value);
+      assertThat(pools.isOpen(id)).isFalse();
+    }
+  }
+
+  /** P1-08a A-AC3: sslmode 의 허용 값은 모두 받는다 (닫힌 로컬 포트라 연결 불가). 풀은 열 때 접속하지 않는다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"})
+  void everyAllowedTlsModeValueIsAccepted(String value) throws IOException {
+    int closedPort = closedLocalPort();
+    ConnectionTestResult result =
+        new JdbcDatabaseProvider(provider)
+            .testConnection(onPort(closedPort, Map.of("sslmode", value)), password());
+
+    assertThat(result.failureKind()).as(value).isEqualTo(ConnectionFailureKind.UNREACHABLE);
+    try (HikariConnectionPools pools = new HikariConnectionPools(List.of(provider))) {
+      ConnectionId id = new ConnectionId("p-accepted");
+      pools.open(id, onPort(closedPort, Map.of("sslmode", value)), password());
+      assertThat(pools.isOpen(id)).isTrue();
+    }
+  }
+
+  /**
+   * P1-08a A-AC3: 허용 값이 아닌 sslmode (오타, 대소문자 변형, 드라이버가 받아 주는 별칭)은 옵션 이름만 밝혀 거부된다. 결과와 예외의 메시지는 고정
+   * 문구 그대로라서 값이 없다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "requir",
+        "REQUIRE",
+        "Prefer",
+        "Disable",
+        "VERIFY-FULL",
+        "verify_full",
+        "require ",
+        ""
+      })
+  void otherTlsModeValuesAreRefusedByOptionNameOnly(String value) throws IOException {
+    int closedPort = closedLocalPort();
+    String expected = ConnectionFailureKind.OPTION_REJECTED.message("sslmode");
+    ConnectionTestResult result =
+        new JdbcDatabaseProvider(provider)
+            .testConnection(onPort(closedPort, Map.of("sslmode", value)), password());
+
+    assertThat(result.failureKind()).as(value).isEqualTo(ConnectionFailureKind.OPTION_REJECTED);
+    assertThat(result.rejectedOption()).isEqualTo("sslmode");
+    assertThat(result.message()).isEqualTo(expected);
+    assertThat(result.productName()).isNull();
+    assertThat(result.productVersion()).isNull();
+
+    try (HikariConnectionPools pools = new HikariConnectionPools(List.of(provider))) {
+      ConnectionId id = new ConnectionId("p-refused");
+      assertThatThrownBy(
+              () -> pools.open(id, onPort(closedPort, Map.of("sslmode", value)), password()))
+          .isInstanceOfSatisfying(
+              InvalidConnectionSettingsException.class,
+              refused -> {
+                assertThat(refused.getMessage()).isEqualTo(expected);
+                assertThat(refused.rejectedOption()).isEqualTo("sslmode");
+              });
       assertThat(pools.isOpen(id)).isFalse();
     }
   }

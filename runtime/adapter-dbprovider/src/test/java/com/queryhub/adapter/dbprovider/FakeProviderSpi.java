@@ -7,18 +7,23 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/** 단위 테스트용 Provider SPI: FakeDriver, 고정 속성 두 개, 허용 옵션 하나(sslMode). */
+/**
+ * 단위 테스트용 Provider SPI: FakeDriver, 고정 속성 두 개, 허용 옵션 하나(sslMode, 값 {@link #SSL_MODES}). 다른 허용 목록은 세
+ * 인자 생성자로 준다 (옵션 이름 → 허용 값).
+ */
 final class FakeProviderSpi implements JdbcProviderSpi {
+
+  static final Set<String> SSL_MODES = Set.of("disable", "require", "verify-full");
 
   final FakeDriver driver;
   private final DatabaseType type;
-  private final Set<String> allowed;
+  private final Map<String, Set<String>> allowed;
 
   FakeProviderSpi(FakeDriver driver) {
-    this(driver, DatabaseType.POSTGRESQL, Set.of("sslMode"));
+    this(driver, DatabaseType.POSTGRESQL, Map.of("sslMode", SSL_MODES));
   }
 
-  FakeProviderSpi(FakeDriver driver, DatabaseType type, Set<String> allowed) {
+  FakeProviderSpi(FakeDriver driver, DatabaseType type, Map<String, Set<String>> allowed) {
     this.driver = driver;
     this.type = type;
     this.allowed = allowed;
@@ -48,7 +53,7 @@ final class FakeProviderSpi implements JdbcProviderSpi {
   }
 
   @Override
-  public Set<String> allowedOptions() {
+  public Map<String, Set<String>> allowedOptions() {
     return allowed;
   }
 

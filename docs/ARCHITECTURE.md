@@ -86,7 +86,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | adapter-crypto | `com.queryhub.adapter.crypto` | `:application` 만. JDK 만 쓰고 외부 라이브러리는 없다. 다른 어댑터는 안 된다. `javax.crypto` 는 이 모듈만 쓴다(ArchUnit R10). 구현됨 (P1-04) |
 | adapter-metadata | `com.queryhub.adapter.metadata` | `:application`, `:domain`, 외부 라이브러리(Spring JDBC, Flyway, SQLite 드라이버 sqlite-jdbc 는 실행 시에만, P1-06). 다른 어댑터는 안 된다. 저장소를 여는 순수 Java 코드는 `com.queryhub.adapter.metadata.store` 에 있다 |
 | app | `com.queryhub.app` | 모든 모듈 (유일한 조립 지점) |
-| adapter-dbprovider | `com.queryhub.adapter.dbprovider` | `:application`(api), HikariCP. 업무 DB 연결의 공통 JDBC 코드: Provider SPI(`JdbcProviderSpi`), `Driver.connect`, 옵션 허용 목록, 마감, 연결마다 읽기 전용 풀. Provider 에 의존하지 않는다(ArchUnit R11). 구현됨 (P1-07, [ADR-027](ADR/ADR-027-database-provider.md)) |
+| adapter-dbprovider | `com.queryhub.adapter.dbprovider` | `:application`(api), HikariCP. 업무 DB 연결의 공통 JDBC 코드: Provider SPI(`JdbcProviderSpi`), `Driver.connect`, 옵션 이름과 값의 허용 목록(값은 P1-08a), 마감, 연결마다 읽기 전용 풀. Provider 에 의존하지 않는다(ArchUnit R11). 구현됨 (P1-07, [ADR-027](ADR/ADR-027-database-provider.md)) |
 | provider-mariadb, provider-postgresql | `com.queryhub.adapter.dbprovider.provider.{mariadb,postgresql}` | `:adapter-dbprovider`(api)와 그 DB 의 JDBC 드라이버 하나. 드라이버 클래스는 여기서만 쓴다(R6). 서로 의존하지 않는다(R11). 구현됨 (P1-07) |
 | provider-oracle, provider-mssql, adapter-export | | 계획 (P1-10, P1-11, Phase 5) |
 
@@ -149,7 +149,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 | Phase | 범위 | 통과 기준 | 상태 |
 |---|---|---|---|
 | 0 기반 | 모듈 골격, Gradle, Flyway, 공통 오류·응답, 게이트 스크립트, CI 정의, Desktop 셸 스파이크(D4) | 새 clone 에서 build·test·lint 가 exit 0, ArchUnit 의존 규칙 통과, 런타임 기동 후 health 200, Tauri 에서 런타임 기동·중지 | 완료(P0-D, d0b0f0f, 2026-11-20). CI 는 Phase 0 에서는 정의만 했고 2026-11-23 부터 실행된다(아래 표, [Phase 0 보고](PHASE0-REPORT.md), [BACKLOG.md](BACKLOG.md) CI-1) |
-| 1 DB 연결 | Provider 4종, 연결 CRUD·테스트, 풀, 비밀번호 암호화, 관리자 토큰 | 4개 DB 실제 컨테이너에서 연결·SELECT·타입 변환·쓰기 거부 통과. 비밀번호 평문이 DB·로그·응답에 없음 | 진행 중: P1-03 관리자 토큰, P1-04 비밀번호 암호, P1-07 Provider 2종(MariaDB, PostgreSQL)의 연결 시험과 읽기 전용 풀(bb0cd8c (2026-11-23)). 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호) → P1-09 관리 API 와 CORS → P1-10 Oracle → P1-11 MSSQL(드라이버만, 통합 시험 생략) → P1-12 Phase 1 마무리(SELECT, 타입, 네 DB 의 쓰기 거부, 쓰기 권한 경고, P0B-H1·R14·R15, P103-1, CI-2) |
+| 1 DB 연결 | Provider 4종, 연결 CRUD·테스트, 풀, 비밀번호 암호화, 관리자 토큰 | 4개 DB 실제 컨테이너에서 연결·SELECT·타입 변환·쓰기 거부 통과. 비밀번호 평문이 DB·로그·응답에 없음 | 진행 중: P1-03 관리자 토큰, P1-04 비밀번호 암호, P1-07 Provider 2종(MariaDB, PostgreSQL)의 연결 시험과 읽기 전용 풀(bb0cd8c (2026-11-23)), P1-08a P1-07 리뷰 후속(옵션 값의 허용 목록, pgjdbc 의 클라이언트 인증서, 통합 시험의 Ryuk 끄기, 커밋 전). 다음은 P1-08b 저장소 V2(`database_connection`, 암호화한 비밀번호) → P1-09 관리 API 와 CORS → P1-10 Oracle → P1-11 MSSQL(드라이버만, 통합 시험 생략) → P1-12 Phase 1 마무리(SELECT, 타입, 네 DB 의 쓰기 거부, 쓰기 권한 경고, P0B-H1·R14·R15, P103-1, CI-2) |
 | 2 SQL 저장소 | SQL CRUD, 파라미터 파서·정의, SELECT 전용 검증, 테스트 실행, 버전 이력 | 명세 12절 Parameter Test 7종 통과. 인젝션 문자열이 값으로만 바인딩됨을 4개 DB 에서 확인. DML·DDL·다중문 거부 | 계획 |
 | 3 API 관리 | API CRUD, 매핑, 라우트 레지스트리, 활성·비활성 | 중복·예약 경로 거부, 수정 즉시 라우팅 반영 | 계획 |
 | 4 API 런타임 | 동적 실행, JSON·XML, GET·POST, API Key, 오류 처리 | 명세 12절 API Test 8종 통과. 오류 응답에 DB 메시지·스택 없음 | 계획 |
@@ -187,7 +187,7 @@ Tauri 2 셸 (Rust)                            java -jar (Docker 는 계획, Phas
 7. **Desktop 이 외부 MariaDB 에 의존 (P1-06 에서 해소).** Metadata 저장소는 이제 내장 SQLite 다([ADR-026](ADR/ADR-026-sqlite-embedded-metadata-store.md)). 대신 SQLite 의 위험이 생겼다: 네이티브 라이브러리(Mac/aarch64 밖은 미검증, PLAT-1), 한 번에 쓰기 하나, 로컬 디스크만, 호스트 하나(여러 서버가 함께 쓰지 못한다, [BACKLOG.md](BACKLOG.md) P106-1), 운영자가 하는 백업([DEPLOYMENT.md](DEPLOYMENT.md) 「백업·복구」).
 8. **숫자 정밀도**(위 「성능 원칙」).
 9. **통합 테스트 시간과 메모리.** 호스트 16 GB, Docker VM 약 8 GB. DB 별 통합 테스트는 순차로 돌린다([DATABASE_SUPPORT.md](DATABASE_SUPPORT.md)).
-10. **CI.** push 는 사람이 한다. 워크플로(`.github/workflows/ci.yml`)는 P0-D 에서 정의만 했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux(`gates`)와 macOS(`desktop`) 작업은 통과했고, Windows 작업은 `test.sh` 의 자체 검증에서 실패한다([BACKLOG.md](BACKLOG.md) CI-1, [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)). P1-07 코드(bb0cd8c)까지는 i6 에서 멈췄다(실행 45194878756 의 2회차. 1회차의 Linux 실패는 Maven Central 의 429 응답이었다). P1-07a(1bcf01b, 2026-11-24)가 i6 를 고쳤고, 그 코드의 실행 45262721122 에서 Windows 는 i6 를 통과한 뒤 d11 에서 멈췄다. P1-07b(커밋 전)가 d11 픽스처를 고쳤고, Windows 는 그 push 뒤의 CI 실행까지 미검증이다.
+10. **CI.** push 는 사람이 한다. 워크플로(`.github/workflows/ci.yml`)는 P0-D 에서 정의만 했고, 2026-11-23 부터 공개 저장소(github.com/xgeekover/QueryHub)에서 push 로 실행된다. Linux(`gates`)와 macOS(`desktop`) 작업은 통과했고, Windows 작업은 `test.sh` 에서 실패한다([BACKLOG.md](BACKLOG.md) CI-1, [ADR-020](ADR/ADR-020-ci-runs-gate-scripts.md)). P1-07 코드(bb0cd8c)까지는 i6 에서 멈췄다(실행 45194878756 의 2회차. 1회차의 Linux 실패는 Maven Central 의 429 응답이었다). P1-07a(1bcf01b, 2026-11-24)가 i6 를 고쳤고, 그 코드의 실행 45262721122 에서 Windows 는 i6 를 통과한 뒤 d11 에서 멈췄다. P1-07b(019a9b8, 2026-11-24)가 d11 픽스처를 고쳤고, 그 코드의 실행 45291231932 에서 Windows 는 selftest, vitest, cargo test 를 지난 뒤 `cargo-test-check.sh` 의 `[LIB_WITHOUT_TESTS]`(Windows 의 cargo 가 찍는 역슬래시 경로 `unittests src\lib.rs`)에서 멈췄다. 보호 파일이라 사람의 결정을 기다린다. Windows 의 `lint.sh` 는 아직 돌지 않았다.
 
 ## 설계와 다른 구현
 

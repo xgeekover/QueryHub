@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import com.queryhub.domain.connection.ConnectionFailureKind;
+import com.queryhub.domain.connection.ConnectionId;
 import com.queryhub.domain.connection.ConnectionPassword;
 import com.queryhub.domain.connection.ConnectionSettings;
 import com.queryhub.domain.connection.ConnectionTestResult;
 import com.queryhub.domain.connection.DatabaseType;
+import com.queryhub.domain.connection.InvalidConnectionSettingsException;
 import java.io.IOException;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -18,6 +20,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** AC12: Driver.connect 경로, 옵션 허용 목록, 고정 속성, 비밀번호 없는 결과·예외·로그, 하드 제한 시간. */
 class JdbcDatabaseProviderTest {
@@ -32,6 +36,14 @@ class JdbcDatabaseProviderTest {
   static ConnectionSettings settings(Map<String, String> options) {
     return settings("db.example.com", Duration.ofSeconds(5), options);
   }
+
+  /** provider-postgresql 의 sslmode 허용 값 (이 모듈은 provider 를 보지 않으므로 같은 값을 둔다). */
+  static final Set<String> PG_SSL_MODES =
+      Set.of("disable", "allow", "prefer", "require", "verify-ca", "verify-full");
+
+  /** provider-mariadb 의 sslMode 허용 값. */
+  static final Set<String> MARIADB_SSL_MODES =
+      Set.of("disable", "trust", "verify-ca", "verify-full");
 
   static ConnectionPassword password() {
     return ConnectionPassword.of(SECRET.toCharArray());
@@ -102,15 +114,107 @@ class JdbcDatabaseProviderTest {
     assertThat(driver.connects).hasValue(0);
   }
 
+  /**
+   * P1-08a A-AC3: 허용 값이 아닌 sslmode(오타 requir)는 OPTION_REJECTED 이고 드라이버를 부르지 않는다. 값은 결과, 로그, 풀의 예외
+   * 어디에도 없다.
+   */
+  @Test
+  void optionValueOutsideTheAllowedSetIsRefusedByNameBeforeAnyDriverCall() {
+    FakeDriver driver = new FakeDriver();
+    FakeProviderSpi spi =
+        new FakeProviderSpi(driver, DatabaseType.POSTGRESQL, Map.of("sslmode", PG_SSL_MODES));
+    JdbcDatabaseProvider provider = new JdbcDatabaseProvider(spi);
+
+    ConnectionTestResult result;
+    String logs;
+    try (LogCapture capture = new LogCapture()) {
+      result = provider.testConnection(settings(Map.of("sslmode", "requir")), password());
+      logs = capture.text();
+      assertThat(capture.events()).as("붙잡은 로그가 있어야 검사가 뜻이 있다").isNotEmpty();
+    }
+
+    assertThat(result.failureKind()).isEqualTo(ConnectionFailureKind.OPTION_REJECTED);
+    assertThat(result.rejectedOption()).isEqualTo("sslmode");
+    assertThat(result.message()).isEqualTo("허용되지 않은 접속 옵션입니다: sslmode");
+    assertThat(result.toString()).doesNotContain("requir");
+    assertThat(logs).doesNotContain("requir").doesNotContain(SECRET);
+    assertThat(driver.connects).hasValue(0);
+
+    try (HikariConnectionPools pools = new HikariConnectionPools(List.of(spi))) {
+      ConnectionId id = new ConnectionId("value-check");
+      assertThatThrownBy(() -> pools.open(id, settings(Map.of("sslmode", "requir")), password()))
+          .isInstanceOf(InvalidConnectionSettingsException.class)
+          .hasMessage("허용되지 않은 접속 옵션입니다: sslmode");
+      assertThat(pools.isOpen(id)).isFalse();
+    }
+    assertThat(driver.connects).hasValue(0);
+  }
+
+  /**
+   * P1-08a A-AC3: PostgreSQL 과 MariaDB 의 값 집합에서 받지 않는 값 (오타, 대소문자 변형, 드라이버 별칭). 거부는 옵션 이름만 밝히고 값은
+   * 메시지, 결과, 로그에 없다. 값마다 둘레에 표식을 붙여 짧은 값(0, 1)도 검사가 뜻이 있게 한다.
+   */
+  @ParameterizedTest
+  @CsvSource({
+    "sslmode, requir",
+    "sslmode, REQUIRE",
+    "sslmode, Prefer",
+    "sslMode, allow",
+    "sslMode, REQUIRED",
+    "sslMode, VERIFY_IDENTITY",
+    "sslMode, 0",
+    "sslMode, true",
+    "sslMode, Trust"
+  })
+  void refusedValuesNeverAppearInMessagesResultsOrLogs(String option, String value) {
+    FakeDriver driver = new FakeDriver();
+    FakeProviderSpi spi =
+        new FakeProviderSpi(
+            driver,
+            DatabaseType.POSTGRESQL,
+            Map.of("sslmode", PG_SSL_MODES, "sslMode", MARIADB_SSL_MODES));
+    // 거부된 값과 같은 글자가 고정 문구나 로그에 우연히 있어도 걸리지 않도록, 값 자체 대신 표식을 붙인 값도 따로 시험한다.
+    for (String given : List.of(value, "VALMARK-" + value + "-VALMARK")) {
+      ConnectionTestResult result;
+      String logs;
+      try (LogCapture capture = new LogCapture()) {
+        result =
+            new JdbcDatabaseProvider(spi)
+                .testConnection(settings(Map.of(option, given)), password());
+        logs = capture.text();
+      }
+      assertThat(result.failureKind()).as(given).isEqualTo(ConnectionFailureKind.OPTION_REJECTED);
+      assertThat(result.rejectedOption()).isEqualTo(option);
+      assertThat(result.message()).isEqualTo(ConnectionFailureKind.OPTION_REJECTED.message(option));
+      assertThat(result.toString() + logs).doesNotContain("VALMARK");
+      assertThatThrownBy(() -> ConnectionProperties.build(spi, settings(Map.of(option, given))))
+          .isInstanceOf(InvalidConnectionSettingsException.class)
+          .hasMessage(ConnectionFailureKind.OPTION_REJECTED.message(option));
+    }
+    assertThat(driver.connects).hasValue(0);
+  }
+
   @Test
   void fixedPropertiesWinAndCannotBeSetThroughOptions() {
     FakeDriver driver = new FakeDriver();
     // 잘못 만든 Provider: 허용 목록에 고정 속성과 user/password 이름이 들어 있다. 그래도 옵션으로 바꿀 수 없다.
+    // 값 999999 는 허용 값에 넣어 둔다: 거부는 값이 아니라 겹치는 이름 때문이다.
+    Set<String> anyValue = Set.of("999999");
     FakeProviderSpi careless =
         new FakeProviderSpi(
             driver,
             DatabaseType.POSTGRESQL,
-            Set.of("sslMode", "connectTimeout", "ALLOWLOCALINFILE", "password", "User"));
+            Map.of(
+                "sslMode",
+                FakeProviderSpi.SSL_MODES,
+                "connectTimeout",
+                anyValue,
+                "ALLOWLOCALINFILE",
+                anyValue,
+                "password",
+                anyValue,
+                "User",
+                anyValue));
     JdbcDatabaseProvider provider = new JdbcDatabaseProvider(careless);
 
     for (String name : List.of("connectTimeout", "ALLOWLOCALINFILE", "password", "User")) {

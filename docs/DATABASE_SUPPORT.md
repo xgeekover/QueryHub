@@ -79,7 +79,7 @@ sqlite-jdbc 는 SQLite C 라이브러리를 JAR 안에 OS·아키텍처별로 �
 
 ## 업무 DB (P1-07: MariaDB·PostgreSQL 구현됨, Oracle·SQL Server 계획)
 
-결정은 [ADR-027](ADR/ADR-027-database-provider.md)(제안)이다. P1-07 은 연결 시험과 연결마다 읽기 전용 풀까지다. 연결 정보 저장(`database_connection`, 암호화한 비밀번호)은 P1-08, 관리 API 는 P1-09, Oracle 은 P1-10, SQL Server 는 P1-11, SELECT·타입 변환·네 DB 의 쓰기 거부·쓰기 권한 경고는 P1-12 다.
+결정은 [ADR-027](ADR/ADR-027-database-provider.md)(제안)이다. P1-07 은 연결 시험과 연결마다 읽기 전용 풀까지다. P1-08a 는 P1-07 리뷰 후속(옵션 값의 허용 목록, pgjdbc 의 클라이언트 인증서, 통합 시험의 Ryuk)이다. 연결 정보 저장(`database_connection`, 암호화한 비밀번호)은 P1-08b, 관리 API 는 P1-09, Oracle 은 P1-10, SQL Server 는 P1-11, SELECT·타입 변환·네 DB 의 쓰기 거부·쓰기 권한 경고는 P1-12 다.
 
 ### 드라이버 (P1-07 에서 해석한 JAR)
 
@@ -95,31 +95,45 @@ sqlite-jdbc 는 SQLite C 라이브러리를 JAR 안에 OS·아키텍처별로 �
 - 클래스패스: `:app` 의 `runtimeClasspath` 는 68 에서 71 모듈(두 드라이버와 checker-qual), `integrationTestRuntimeClasspath` 는 103 에서 122 모듈이다. 실행 JAR 의 `BOOT-INF/lib` 에 두 드라이버 JAR 이 들어가고 `BootJarClassVersionIntegrationTest` 가 확인한다.
 - 설치본의 라이선스 고지(LGPL 드라이버, BSD·MIT 고지 파일)는 Phase 8 에서 정한다.
 
-### 연결 동작 (구현됨, P1-07)
+### 연결 동작 (구현됨, P1-07, P1-08a)
 
 | | MariaDB | PostgreSQL |
 |---|---|---|
 | URL (필드로 만든다) | `jdbc:mariadb://<호스트>:<포트>/<DB>` | `jdbc:postgresql://<호스트>:<포트>/<DB>` |
-| 받는 옵션 | `sslMode` 하나 | `sslmode` 하나 |
-| 고정 속성 (옵션보다 이긴다) | `connectTimeout`·`socketTimeout`(밀리초, connectTimeout), `allowLocalInfile=false`, `readOnlyPropagatesToServer=true`, `permitRedirect=false` | `connectTimeout`·`socketTimeout`(초, 올림, connectTimeout), `loginTimeout`(connectTimeout + 3 초), `readOnlyMode=always` |
+| 받는 옵션 | `sslMode` 하나. 값은 `disable`, `trust`, `verify-ca`, `verify-full` 가운데 하나(P1-08a, 아래 「옵션 값」) | `sslmode` 하나. 값은 `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full` 가운데 하나(P1-08a) |
+| 고정 속성 (옵션보다 이긴다) | `connectTimeout`·`socketTimeout`(밀리초, connectTimeout), `allowLocalInfile=false`, `readOnlyPropagatesToServer=true`, `permitRedirect=false` | `connectTimeout`·`socketTimeout`(초, 올림, connectTimeout), `loginTimeout`(connectTimeout + 3 초), `readOnlyMode=always`, `sslcert=""`·`sslkey=""`(P1-08a: 클라이언트 인증서·키 파일을 어떤 sslmode 에서도 읽지 않는다, 단위 시험) |
 | 읽기 전용 (통합 시험) | 풀 연결의 INSERT 가 SQLState 25006 으로 거부된다. `readOnlyPropagatesToServer` 가 없으면 성공했다 | 풀 연결의 INSERT 가 25006 으로 거부된다. pgjdbc 기본값 `transaction` 에서는 성공했다 |
 | 실패 분류 | 1049·1044 → `DATABASE_NOT_FOUND`(1044 는 권한 없음일 수도 있어 메시지가 두 원인을 말한다, P107-10), 1045 → `AUTHENTICATION_FAILED`, 나머지는 표준 분류 | 표준 SQLState 분류 |
 | 그 밖에 확인한 것 | 서버가 LOCAL INFILE 을 허용해도(`--local-infile=1`) `LOAD DATA LOCAL INFILE` 이 실패하고 표가 비어 있다 | `.pgpass`·`pg_service.conf` 를 쓰지 않는다(맞는 비밀번호를 담은 파일이 있어도 틀린 비밀번호는 `AUTHENTICATION_FAILED`, `service` 옵션은 거부) |
-| 미검증 | `permitRedirect=false`(P107-7) | `verify-ca`·`verify-full` 의 홈 디렉터리 인증서·키 파일(P107-6), 응답 없는 서버의 시간 차이(P107-9) |
+| 미검증 | `permitRedirect=false`(P107-7) | `verify-ca`·`verify-full` 이 읽는 `~/.postgresql/root.crt` 와 실제 TLS 서버(P107-6. 통합 시험의 서버는 SSL 이 꺼져 있다), 응답 없는 서버의 시간 차이(P107-9) |
 
 - 공통(두 DB): 연결 시험의 마감은 connectTimeout + 2 초이고 결과와 예외는 고정 한국어 메시지만 담는다. 풀은 연결마다 `queryhub-conn-<id>`, 읽기 전용, MBean 없음, 열어도 연결하지 않는다. 기본 한도는 connectTimeout 1–120 초, maxPoolSize 1–20, 비밀번호 1,024 자, 옵션 32 개, 옵션 값 512 자다(사람이 바꿀 수 있다, ADR-027 결정 11).
 - socketTimeout 이 connectTimeout 과 같아 긴 업무 쿼리를 끊는다. 업무 쿼리 전에 다시 설계한다(P107-5).
+
+#### 옵션 값 (구현됨, P1-08a)
+
+TLS 모드 옵션은 값도 허용 목록이다([ADR-027](ADR/ADR-027-database-provider.md) 결정 3). 이름과 값은 대소문자까지 정확히 같아야 한다. 목록 밖의 값은 연결하기 전에 `OPTION_REJECTED` 로 거부되고, 메시지는 옵션 이름만 말한다(「허용되지 않은 접속 옵션입니다: <옵션 이름>」, 값은 메시지·결과·로그에 없다). P1-07 까지는 값을 보지 않아, 틀린 값이 드라이버 안에서 실패해 `UNREACHABLE`(pgjdbc 의 08001)이나 `CONNECTION_FAILED`(Connector/J 의 `IllegalArgumentException`)라는 틀린 안내가 되었다.
+
+| | MariaDB `sslMode` (Connector/J 3.5.11) | PostgreSQL `sslmode` (pgjdbc 42.7.14) |
+|---|---|---|
+| 받는 값 | `disable`, `trust`, `verify-ca`, `verify-full` | `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full` |
+| 드라이버는 받지만 일부러 거부하는 모양 | `allow`, 별칭 `DISABLED`, `0`, `false`, `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`, `1`, `true`, 대소문자 변형(예: `Trust`, `Disable`) | 대소문자 변형(pgjdbc 는 대소문자를 무시한다. 예: `REQUIRE`, `Prefer`, `VERIFY-FULL`) |
+| 그 밖에 거부하는 것 | 오타와 앞뒤 공백(예: `verify_full`, `verify-full `), 빈 값 | 오타와 앞뒤 공백(예: `requir`, `verify_full`, `require `), 빈 값. 옵션 이름 `sslcert`·`sslkey`(고정 속성이라 대소문자와 상관없이)와 `sslrootcert`(허용 목록 밖) |
+
+- 별칭을 받지 않는 까닭: 별칭은 드라이버 버전마다 다르고, 옵션 이름도 이미 대소문자를 구분한다. 저장된 값이 드라이버를 바꾼 뒤 다른 뜻이 되지 않게 한 가지 철자만 받는다.
+- Provider 가 값 집합 없이(또는 빈 집합으로) 옵션을 허용하면 공통 코드가 `IllegalStateException` 을 던진다(값을 검사하지 않는 옵션은 둘 수 없다).
+- `sslrootcert` 는 고정하지 않았다: 빈 값으로 고정하면 verify-ca·verify-full 이 그 경로를 열다가 실패한다. 두 모드는 런타임 사용자의 `~/.postgresql/root.crt` 를 읽는다(P107-6).
 
 ### 시험한 이미지와 메모리 (P1-07, macOS arm64 로컬)
 
 | 이미지 (arm64, 로컬에 있던 것) | 서버 | 쓰는 시험 | 메모리 |
 |---|---|---|---|
-| `mariadb:12.3` (103,246,639 바이트) | MariaDB 12.3.3 | `MariaDbProviderIntegrationTest` 10 | 약 125 MiB (run D 의 통합 게이트 중 `docker stats`) |
-| `postgres:16-alpine` (113,895,262 바이트) | PostgreSQL 16.15 (이미지의 `PG_VERSION`) | `PostgreSqlProviderIntegrationTest` 9 | 재지 못했다(시험이 짧아 `docker stats` 가 잡기 전에 끝났다) |
-| `testcontainers/ryuk:0.14.0` (2,124,447 바이트) | — | Testcontainers 의 정리 컨테이너 | 약 11.5 MiB (같은 때) |
+| `mariadb:12.3` (103,246,639 바이트) | MariaDB 12.3.3 | `MariaDbProviderIntegrationTest` 11 (P1-07 은 10) | 약 125 MiB (run D 의 통합 게이트 중 `docker stats`) |
+| `postgres:16-alpine` (113,895,262 바이트) | PostgreSQL 16.15 (이미지의 `PG_VERSION`) | `PostgreSqlProviderIntegrationTest` 10 (P1-07 은 9) | 재지 못했다(시험이 짧아 `docker stats` 가 잡기 전에 끝났다) |
+| `testcontainers/ryuk:0.14.0` (2,124,447 바이트) | — | Testcontainers 의 정리 컨테이너. P1-08a 부터 통합 시험에서 끈다(8080/tcp 를 모든 인터페이스에 열었다, P107-11) | 약 11.5 MiB (P1-07 run D 의 게이트 때) |
 
 - 세 이미지는 모두 이미 로컬에 있었고 받은 것(`docker pull`)은 없다. CI 의 `gates` 작업에서는 이 이미지(Linux 컨테이너)로 통합 시험이 통과했다(P1-07 코드 bb0cd8c, 실행 45194878756 의 2회차, 2026-11-23).
-- 컨테이너는 시험 클래스마다 하나씩, 차례로 뜬다. run D 의 통합 게이트 전체는 75 초였다. 컨테이너 포트는 127.0.0.1 에만 묶는다([TEST_PLAN.md](TEST_PLAN.md)).
+- 컨테이너는 시험 클래스마다 하나씩, 차례로 뜬다. run D 의 통합 게이트 전체는 75 초였다. 컨테이너 포트는 127.0.0.1 에만 묶는다. P1-08a 부터 Ryuk 없이 돌고, 세션 검사가 세션의 모든 컨테이너가 127.0.0.1 에만 열리는지 본다. 강제로 죽은 실행이 남긴 컨테이너는 사람이 세션 라벨로 지운다([TEST_PLAN.md](TEST_PLAN.md) 「integration.sh」).
 - 호스트 메모리 16 GB, Docker VM 약 8 GB(`docker stats` 의 한도 7.75 GiB). SQL Server 는 arm64 이미지가 없어 P1-11 에서 통합 시험을 생략한다(사람의 결정 「Oracle만, MSSQL은 테스트 생략」).
 
 ### 네 DB 의 비교 (설계 §6)

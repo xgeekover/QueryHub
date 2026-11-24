@@ -13,8 +13,8 @@ import java.util.Set;
  * 모듈(com.queryhub.adapter.dbprovider.provider.&lt;db&gt;)이 구현하고, 공통 코드({@link
  * JdbcDatabaseProvider}, {@link HikariConnectionPools})는 이 인터페이스만 안다.
  *
- * <p>공통 코드가 맡는 것: 옵션 허용 목록 검사, 고정 속성 우선, user/password 속성, Driver.connect 호출과 제한 시간, 오류 메시지 정리. 그래서
- * 구현은 아래 값만 돌려주면 되고 비밀번호를 보지 않는다.
+ * <p>공통 코드가 맡는 것: 옵션 이름과 값의 허용 목록 검사, 고정 속성 우선, user/password 속성, Driver.connect 호출과 제한 시간, 오류 메시지
+ * 정리. 그래서 구현은 아래 값만 돌려주면 되고 비밀번호를 보지 않는다.
  */
 public interface JdbcProviderSpi {
 
@@ -37,8 +37,14 @@ public interface JdbcProviderSpi {
    */
   Map<String, String> fixedProperties(ConnectionSettings settings);
 
-  /** 사용자가 줄 수 있는 옵션 이름 (대소문자 구분). 나머지는 이름을 밝혀 거부된다. */
-  Set<String> allowedOptions();
+  /**
+   * 사용자가 줄 수 있는 옵션 이름과 각 옵션의 허용 값. 이름과 값 모두 대소문자를 구분해 정확히 같아야 한다 (드라이버가 받아 주는 별칭이나 대소문자 변형도 받지
+   * 않는다). 목록에 없는 이름이나 허용 값이 아닌 값은 옵션 이름만 밝혀 거부되고 값은 어디에도 밝히지 않는다.
+   *
+   * <p>모든 옵션은 비어 있지 않은 값 집합을 가져야 한다. 값 집합이 없거나(null) 비어 있으면 공통 코드가 {@link IllegalStateException} 을
+   * 던진다 (값을 검사하지 않는 옵션은 둘 수 없다).
+   */
+  Map<String, Set<String>> allowedOptions();
 
   /** 접속 테스트의 확인 쿼리 (예: SELECT 1). */
   String validationQuery();

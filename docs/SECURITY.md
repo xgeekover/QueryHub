@@ -93,16 +93,16 @@ Metadata 저장소는 내장 SQLite 파일이다([ADR-026](ADR/ADR-026-sqlite-em
 - **메시지:** 거부 메시지는 설정 이름, 경로(비밀 값이 아니다), 고치는 법만 말한다. 관리자 토큰과 마스터 키는 담지 않는다(P1-06 의 통합 시험이 실행 JAR 자식 프로세스의 출력에서 확인한다).
 - **백업의 민감도:** `queryhub.db` 의 사본에는 암호화한 비밀번호가 들어 있다(연결 저장 태스크부터). 저장소와 마스터 키는 같은 시점에 함께 백업하고 함께 되살려야 한다. 키 없이 되살린 저장소의 비밀번호는 되살릴 수 없다. 반대로 둘이 같은 백업에 있으면 그 백업을 읽는 사람은 비밀번호를 풀 수 있으므로 그 백업 전체를 키와 같은 비밀 값으로 다룬다. 키 사본은 조직이 통제하는 비밀 보관소에 따로 둘 수 있다. 사본은 0600 으로 만든다(`umask 077`). 쓰고 있는 WAL 저장소의 `queryhub.db` 하나만 복사한 사본은 데이터를 잃거나 앞뒤가 맞지 않으므로 백업으로 치지 않는다([DEPLOYMENT.md](DEPLOYMENT.md) 「백업·복구」).
 
-### 업무 DB 연결 (구현됨, P1-07)
+### 업무 DB 연결 (구현됨, P1-07, P1-08a)
 
 결정은 [ADR-027](ADR/ADR-027-database-provider.md)(제안)이다. MariaDB 와 PostgreSQL 만 구현했다.
 
-- **URL 과 옵션:** 사용자는 JDBC URL 을 주지 않는다. 런타임이 검사한 필드(호스트, 포트, 데이터베이스 이름)로 URL 을 만들고 질의 문자열을 붙이지 않는다. 드라이버 옵션은 Provider 마다 TLS 모드 하나(`sslMode`, `sslmode`)만 받고, 목록 밖의 이름(`socketFactory`, `loggerFile`, `allowLocalInfile`, `service` 등)은 연결하기 전에 이름만으로 거부한다. 값은 메시지와 `toString` 에 나오지 않는다.
-- **고정 속성:** MariaDB `allowLocalInfile=false`(클라이언트 파일 읽기 차단, 통합 시험), `readOnlyPropagatesToServer=true`, `permitRedirect=false`. PostgreSQL `readOnlyMode=always`. 옵션이 고정 속성, `user`, `password` 를 덮을 수 없다. pgjdbc 는 `.pgpass` 와 `pg_service.conf` 를 쓰지 않는다(연결마다 비밀번호를 넘기고 `service` 옵션은 거부한다, 통합 시험).
+- **URL 과 옵션:** 사용자는 JDBC URL 을 주지 않는다. 런타임이 검사한 필드(호스트, 포트, 데이터베이스 이름)로 URL 을 만들고 질의 문자열을 붙이지 않는다. 드라이버 옵션은 Provider 마다 TLS 모드 하나(`sslMode`, `sslmode`)만 받고, 목록 밖의 이름(`socketFactory`, `loggerFile`, `allowLocalInfile`, `service` 등)은 연결하기 전에 이름만으로 거부한다. P1-08a 부터 TLS 모드의 값도 허용 목록이다(PostgreSQL `sslmode` 는 disable, allow, prefer, require, verify-ca, verify-full, MariaDB `sslMode` 는 disable, trust, verify-ca, verify-full 가운데 하나를 대소문자까지 정확히). 다른 값도 같은 `OPTION_REJECTED` 로 거부하고 옵션 이름만 말한다. 값은 메시지와 `toString` 에 나오지 않는다.
+- **고정 속성:** MariaDB `allowLocalInfile=false`(클라이언트 파일 읽기 차단, 통합 시험), `readOnlyPropagatesToServer=true`, `permitRedirect=false`. PostgreSQL `readOnlyMode=always`, `sslcert=""`·`sslkey=""`(P1-08a). P1-07 까지 pgjdbc 는 disable 밖의 모든 sslmode(기본 `prefer` 포함)에서 런타임 사용자의 `~/.postgresql/postgresql.crt`·`postgresql.pk8` 로 키 관리자를 만들어, 클라이언트 인증서를 요청하는 서버(공격자의 서버나 중간자 포함)에 그 인증서를 보낼 수 있었다(개인 키는 보내지 않는다). P1-08a 부터 클라이언트 인증서와 키는 어떤 sslmode 에서도 읽지 않는다(단위 시험 `PostgreSqlClientCertificateTest`). verify-ca·verify-full 은 여전히 `~/.postgresql/root.crt` 를 읽는다(아래 「알려진 빈 곳」, P107-6). 옵션이 고정 속성, `user`, `password` 를 덮을 수 없다. pgjdbc 는 `.pgpass` 와 `pg_service.conf` 를 쓰지 않는다(연결마다 비밀번호를 넘기고 `service` 옵션은 거부한다, 통합 시험).
 - **연결:** `Driver.connect` 만 쓰고 `DriverManager` 는 쓰지 않는다. 비밀번호는 `char[]` 에만 두고 연결할 때만 `Properties` 에 넣는다(JDBC 가 문자열을 요구해 짧게 사는 사본이 생긴다). 연결 시험은 connectTimeout + 2 초에 끝난다.
-- **풀:** 연결마다 읽기 전용 Hikari 풀이고 Spring 빈이 아니다. 앱의 DataSource 빈은 Metadata 저장소 하나뿐이다. 두 DB 모두 풀 연결의 INSERT 가 서버에서 SQLState 25006 으로 거부된다(통합 시험). 쓰기 권한 경고는 아직 없다(P107-4).
-- **메시지와 로그:** 결과와 예외는 고정 한국어 메시지만 담고 드라이버 메시지와 원인 사슬을 옮기지 않는다. 로그는 분류, SQLState, 벤더 코드, 예외 클래스 이름만 적는다. 통합 시험은 실행마다 새 비밀번호로 결과, 예외 사슬, TRACE 로그에 비밀번호가 없는 것을 확인한다.
-- **시험 컨테이너:** 업무 DB 컨테이너의 포트는 127.0.0.1 에만 묶는다(P0B-R6). 거부·부정 시험은 닫힌 로컬 포트만 쓴다: P1-07 개발 중 거부 시험 하나가 127.0.0.1:3306 에서 돌던 실제 로컬 DB 서비스(QueryHub 와 상관없는 것)에 닿아 「access denied」를 받았다. 버려도 되는 비밀번호였고 그 뒤 시험을 닫힌 포트로 바꿨다([TEST_PLAN.md](TEST_PLAN.md)).
+- **풀:** 연결마다 읽기 전용 Hikari 풀이고 Spring 빈이 아니다. 앱의 DataSource 빈은 Metadata 저장소 하나뿐이다. 두 DB 모두 풀 연결의 INSERT 가 서버에서 SQLState 25006 으로 거부된다(통합 시험). 쓰기 권한 경고는 아직 없다(P107-4). 세션 읽기 전용은 한 겹일 뿐이다: 빌린 연결에서 `SET SESSION … READ WRITE`, `BEGIN READ WRITE`, `Connection.setReadOnly(false)` 로 되돌릴 수 있으므로, 업무 쿼리(P1-12)는 [ADR-004](ADR/ADR-004-select-only-defense.md) 의 파싱, 세션을 바꾸는 문장의 거부, 쓰기 권한 경고를 함께 둔다([ADR-027](ADR/ADR-027-database-provider.md) 결정 8).
+- **메시지와 로그:** 결과와 예외는 고정 한국어 메시지만 담고 드라이버 메시지와 원인 사슬을 옮기지 않는다. 이 정리는 연결(`Driver.connect`)의 실패에만 해당한다: 풀의 연결 준비(Hikari 의 `setReadOnly`, `isValid`, `setNetworkTimeout`)가 실패하면 드라이버 메시지가 풀의 로그와 예외 원인에 남을 수 있다(아래 「알려진 빈 곳」, P107-R3). 로그는 분류, SQLState, 벤더 코드, 예외 클래스 이름만 적는다. 통합 시험은 실행마다 새 비밀번호로 결과, 예외 사슬, TRACE 로그에 비밀번호가 없는 것을 확인한다.
+- **시험 컨테이너:** 업무 DB 컨테이너의 포트는 127.0.0.1 에만 묶는다(P0B-R6). 거부·부정 시험은 닫힌 로컬 포트만 쓴다: P1-07 개발 중 거부 시험 하나가 127.0.0.1:3306 에서 돌던 실제 로컬 DB 서비스(QueryHub 와 상관없는 것)에 닿아 「access denied」를 받았다. 버려도 되는 비밀번호였고 그 뒤 시험을 닫힌 포트로 바꿨다([TEST_PLAN.md](TEST_PLAN.md)). Testcontainers 의 Ryuk 컨테이너(`testcontainers/ryuk:0.14.0`)는 2026-11-24 이 머신(macOS, Docker 29.5.2, Testcontainers 2.0.5)에서 8080/tcp 를 `0.0.0.0` 과 `::` 에 열었다. Ryuk 는 TCP 로 받은 라벨 필터에 맞는 컨테이너·네트워크·볼륨을 지운다. 그래서 P1-08a 전에는 이 머신의 통합 시험이 도는 동안 같은 LAN 의 누구나 이 머신의 Docker 자원을 지우게 할 수 있었다(그런 일이 있었는지는 확인하지 않았다). Testcontainers 2.0.5 에는 Ryuk 의 바인딩을 바꾸는 설정이 없으므로 P1-08a 부터 `integrationTest` 는 Ryuk 를 끈다(`TESTCONTAINERS_RYUK_DISABLED=true`). 세션 검사가 Ryuk 가 없고 세션의 모든 컨테이너가 127.0.0.1 에만 열리는지 본다([BACKLOG.md](BACKLOG.md) P107-11 완료). 남는 위험: 강제로 죽은 실행이 남긴 컨테이너는 저절로 지워지지 않고 사람이 세션 라벨로 지운다([TEST_PLAN.md](TEST_PLAN.md) 「integration.sh」).
 
 ### Desktop 셸의 자식 환경 (구현됨, P0-C)
 
@@ -147,8 +147,10 @@ Metadata 저장소는 내장 SQLite 파일이다([ADR-026](ADR/ADR-026-sqlite-em
 | Windows 에서는 데이터 디렉터리와 저장소 파일의 권한·소유자를 확인하지 않는다 | PLAT-1 | CI-1 첫 실행 |
 | SQLite 네이티브는 Mac/aarch64(로컬)와 Linux/x86_64(CI)만 실행했다. 나머지 18개, `noexec` 마운트, Windows 백신은 미검증이다 | P106-3, PLAT-1 | Phase 8 |
 | 업무 DB 연결은 사용자가 주는 원시 JDBC URL 을 받지 않는다. 받을지와 그 규칙은 정하지 않았다 | P107-1 | 연결 API 전 |
-| pgjdbc 의 `sslmode=verify-ca`·`verify-full` 은 런타임 사용자의 `~/.postgresql/root.crt` 와 클라이언트 키 파일을 읽는다(시험하지 않았다) | P107-6 | 정하지 않음 |
-| MariaDB 의 `permitRedirect=false` 는 통합 시험이 없다. Testcontainers 의 Ryuk 컨테이너 포트 바인딩은 확인하지 않았다 | P107-7, P107-11 | 정하지 않음 |
+| pgjdbc 의 `sslmode=verify-ca`·`verify-full` 은 런타임 사용자의 `~/.postgresql/root.crt` 를 읽는다(실제 TLS 서버로 시험하지 않았다). `sslrootcert` 는 정하지 않았다. P1-08a 부터 클라이언트 인증서와 키(`postgresql.crt`, `postgresql.pk8`)는 어떤 sslmode 에서도 읽지 않는다(P1-07 까지는 disable 밖의 모든 sslmode 에서 읽었다). 그 근거는 단위 시험뿐이고 Windows(`%APPDATA%\postgresql`)에서는 건너뛴다 | P107-6, PLAT-1 | 정하지 않음 (연결 API·화면과 함께) |
+| 풀의 연결 준비(Hikari 의 `setReadOnly`, `isValid`, `setNetworkTimeout`)가 실패하면 드라이버 메시지(서버가 준 글. 비밀번호는 아니다)가 풀의 로그와 예외 원인에 남을 수 있다. 정리는 `Driver.connect` 실패에만 해당한다. P1-08 까지 업무 코드는 풀에서 연결을 꺼내지 않는다 | P107-R3 | P1-12 |
+| MariaDB 의 `permitRedirect=false` 는 통합 시험이 없다 | P107-7 | 정하지 않음 |
+| 통합 시험은 P1-08a 부터 Ryuk 없이 돈다(P1-08a 전에는 Ryuk 가 8080/tcp 를 모든 인터페이스에 열었다, 2026-11-24 확인). 강제로 죽은 실행(시간 초과, SIGKILL)이 남긴 컨테이너는 저절로 지워지지 않고 사람이 세션 라벨로 지운다 | P107-11 (완료) | 남는 위험 (사람이 정리, [TEST_PLAN.md](TEST_PLAN.md)) |
 | 내장 백업 명령이 없다. 운영자가 `sqlite3` 나 멈추고 복사로 백업하고, 사본의 권한과 보관을 직접 관리한다 | P106-2 | 정하지 않음 |
 | `.gitignore` 의 `*.key`, `*.p12`, `*.pem` 이 경로 고정 없이 걸려 정상 파일도 커밋에서 말없이 빠진다 | P0A-N4 | Phase 1 |
 | `desktop/pnpm-workspace.yaml` 의 `minimumReleaseAgeExclude` 에 `lucide-react@1.74.0` 예외가 남아 있다 | P0C-R5 | Phase 6 |

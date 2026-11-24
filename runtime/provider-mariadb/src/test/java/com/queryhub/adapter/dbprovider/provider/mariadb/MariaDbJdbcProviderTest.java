@@ -89,7 +89,9 @@ class MariaDbJdbcProviderTest {
             entry("allowLocalInfile", "false"),
             entry("readOnlyPropagatesToServer", "true"),
             entry("permitRedirect", "false"));
-    assertThat(provider.allowedOptions()).containsExactly("sslMode");
+    assertThat(provider.allowedOptions()).containsOnlyKeys("sslMode");
+    assertThat(provider.allowedOptions().get("sslMode"))
+        .containsExactlyInAnyOrder("disable", "trust", "verify-ca", "verify-full");
   }
 
   @ParameterizedTest
@@ -131,6 +133,72 @@ class MariaDbJdbcProviderTest {
           .isInstanceOf(InvalidConnectionSettingsException.class)
           .hasMessageContaining(option)
           .hasMessageNotContaining(value);
+      assertThat(pools.isOpen(id)).isFalse();
+    }
+  }
+
+  /** P1-08a A-AC3: sslMode 의 허용 값은 모두 받는다 (닫힌 로컬 포트라 연결 불가). 풀은 열 때 접속하지 않는다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"disable", "trust", "verify-ca", "verify-full"})
+  void everyAllowedTlsModeValueIsAccepted(String value) throws IOException {
+    int closedPort = closedLocalPort();
+    ConnectionTestResult result =
+        new JdbcDatabaseProvider(provider)
+            .testConnection(onPort(closedPort, Map.of("sslMode", value)), password());
+
+    assertThat(result.failureKind()).as(value).isEqualTo(ConnectionFailureKind.UNREACHABLE);
+    try (HikariConnectionPools pools = new HikariConnectionPools(List.of(provider))) {
+      ConnectionId id = new ConnectionId("m-accepted");
+      pools.open(id, onPort(closedPort, Map.of("sslMode", value)), password());
+      assertThat(pools.isOpen(id)).isTrue();
+    }
+  }
+
+  /**
+   * P1-08a A-AC3: 허용 값이 아닌 sslMode (오타, 대소문자 변형, 드라이버가 받아 주는 별칭)은 옵션 이름만 밝혀 거부된다. 결과와 예외의 메시지는 고정
+   * 문구 그대로라서 값이 없다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "allow",
+        "REQUIRED",
+        "VERIFY_IDENTITY",
+        "0",
+        "true",
+        "Trust",
+        "DISABLED",
+        "false",
+        "1",
+        "VERIFY_CA",
+        "Disable",
+        "verify_full",
+        "verify-full ",
+        ""
+      })
+  void otherTlsModeValuesAreRefusedByOptionNameOnly(String value) throws IOException {
+    int closedPort = closedLocalPort();
+    String expected = ConnectionFailureKind.OPTION_REJECTED.message("sslMode");
+    ConnectionTestResult result =
+        new JdbcDatabaseProvider(provider)
+            .testConnection(onPort(closedPort, Map.of("sslMode", value)), password());
+
+    assertThat(result.failureKind()).as(value).isEqualTo(ConnectionFailureKind.OPTION_REJECTED);
+    assertThat(result.rejectedOption()).isEqualTo("sslMode");
+    assertThat(result.message()).isEqualTo(expected);
+    assertThat(result.productName()).isNull();
+    assertThat(result.productVersion()).isNull();
+
+    try (HikariConnectionPools pools = new HikariConnectionPools(List.of(provider))) {
+      ConnectionId id = new ConnectionId("m-refused");
+      assertThatThrownBy(
+              () -> pools.open(id, onPort(closedPort, Map.of("sslMode", value)), password()))
+          .isInstanceOfSatisfying(
+              InvalidConnectionSettingsException.class,
+              refused -> {
+                assertThat(refused.getMessage()).isEqualTo(expected);
+                assertThat(refused.rejectedOption()).isEqualTo("sslMode");
+              });
       assertThat(pools.isOpen(id)).isFalse();
     }
   }

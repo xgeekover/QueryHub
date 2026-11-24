@@ -20,13 +20,17 @@
 #   거부)였고 i1, c-i4 는 예상대로 SKIP 이었다. d11 하나가 실패했다:
 #   docs-check.sh: line 22: /lib.sh: No such file or directory
 #   d11 의 NO_SHA_BIN 에 복사된 도구가 MSYS 런타임 DLL 을 찾지 못해 시작하지 못한 것으로 본다(Windows 에서 확인하지 않았다).
-#   P1-07b(커밋 전)는 이 파일이 아니라 selftest.sh 의 d11 픽스처만 고쳐, MSYS 에서만 도구 옆에 msys-*.dll 을 복사한다.
+#   P1-07b(019a9b8, 2026-11-24)는 이 파일이 아니라 selftest.sh 의 d11 픽스처만 고쳐, MSYS 에서만 도구 옆에 msys-*.dll 을 복사한다.
 # - gates (ubuntu-24.04): 1회차는 test.sh 의 cargo test 에서 1건 실패했다(78건 통과). 감독의 데이터 디렉터리 시험이 포트 27699
 #   에서 DataDirUnavailable 대신 PortInUse 를 받았다. 2회차는 성공했다. P1-07b 는 포트가 주제가 아닌 감독 시험에서 실제 포트
 #   확인을 뺐다(TEST_PLAN 「CI」).
 # - desktop (macos-15, --desktop-only): 1회차에 성공했다.
-# Windows 는 P1-07b 를 push 한 뒤의 CI 실행까지 미검증이다. selftest 뒤의 단계(vitest, cargo test 와 cfg(windows) 시험, lint.sh)는
-#   Windows 에서 한 번도 돌지 않았다(PLAT-1).
+# P1-07b 코드(공개 저장소의 1a37405)를 돌린 실행 45291231932 의 결과:
+# - gates (ubuntu-24.04), desktop (macos-15, --desktop-only): 성공했다.
+# - desktop (windows-2025, --desktop-only): build.sh 와 test.sh 의 selftest(d11 PASS, SKIP 은 i1 과 c-i4 둘), vitest 는 통과했다.
+#   cargo test --locked 는 exit 0(lib 시험 41 건 통과)이었지만 cargo-test-check.sh --require-lib 이 [LIB_WITHOUT_TESTS] 로 실패했다.
+#   Windows 의 cargo 는 unittests 줄의 경로를 역슬래시로 찍고(src\lib.rs), cargo-test-check.sh 는 unittests src/lib.rs 만 맞춘다.
+#   다음 막힘이고, 보호 파일이라 고치려면 사람의 결정이 필요하다(결정 대기). lint.sh 는 Windows 에서 아직 돌지 않았다(PLAT-1).
 #
 # 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
 # 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서

@@ -71,6 +71,12 @@ testing {
                         timeout = Duration.ofMinutes(10)
                         // 테스트 JVM 기본 시간대를 UTC 가 아닌 값으로 둔다. 저장 값이 JVM 시간대에 기대면 9 시간 차이로 드러난다.
                         systemProperty 'user.timezone', 'Asia/Seoul'
+                        // P1-08a (BACKLOG P107-11): Testcontainers 의 Ryuk 컨테이너는 포트 8080 을 모든 호스트 인터페이스(0.0.0.0, ::)에
+                        // 연다 (2026-11-24 확인). Testcontainers 2.0.5 에는 Ryuk 의 바인딩 주소를 바꾸는 설정이 없고, 같은 LAN 의 누구나
+                        // 라벨 필터를 보내 이 머신의 Docker 자원을 지우게 할 수 있다. 그래서 끈다. 정리는 JUnit 컨테이너 수명(@Container)과
+                        // Testcontainers 의 JVM 종료 훅(JVMHookResourceReaper)이 맡는다. 강제로 죽은 실행이 남긴 컨테이너는 사람이 지운다 (TEST_PLAN).
+                        // DatabaseProviderContainerTest 의 세션 검사가 Ryuk 컨테이너가 없고 세션의 모든 포트가 127.0.0.1 인지 확인한다.
+                        environment 'TESTCONTAINERS_RYUK_DISABLED', 'true'
                         // BootJarIntegrationTest 가 실행 JAR 을 자식 프로세스로 띄운다(JAR 안의 마이그레이션, 네이티브 라이브러리 추출 위치 확인).
                         dependsOn tasks.named('bootJar')
                         inputs.file(bootJarFile).withPropertyName('bootJar').withPathSensitivity(PathSensitivity.NONE)

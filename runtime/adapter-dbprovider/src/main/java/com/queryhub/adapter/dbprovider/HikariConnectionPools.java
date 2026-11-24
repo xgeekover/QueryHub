@@ -27,7 +27,11 @@ import java.util.Objects;
  *       MBean 등록 없음.
  *   <li>여는 순간에는 접속하지 않는다 (minimumIdle=0, initializationFailTimeout=-1). 연결은 {@link #getConnection}
  *       때 만든다.
- *   <li>연결은 {@link DriverConnectDataSource} 로 만든다: Provider 드라이버의 connect, 고정 속성, 정리된 예외.
+ *   <li>연결은 {@link DriverConnectDataSource} 로 만든다: Provider 드라이버의 connect, 고정 속성, 정리된 예외. 정리는
+ *       Driver.connect 실패에만 해당한다. 연결이 만들어진 뒤 Hikari 가 연결을 준비하며 부르는 setReadOnly(readOnly=true 라서),
+ *       isValid, 네트워크 제한 시간 설정이 실패하면 Hikari(PoolBase)가 드라이버 예외를 그대로 받아 그 메시지를 로그와 예외 원인에 남길 수 있다.
+ *       돌려받은 Connection 을 감싸는 일은 P1-12 로 미룬다 (BACKLOG). P1-08 까지 업무 코드는 {@link #getConnection} 을
+ *       부르지 않는다.
  *   <li>Spring 빈이 아니다 (앱의 DataSource 는 Metadata 저장소 하나뿐이다). 앱은 종료할 때 {@link #closeAll()} 을 부른다.
  * </ul>
  */
@@ -117,7 +121,9 @@ public final class HikariConnectionPools implements ConnectionPools, AutoCloseab
    * 풀에서 연결을 꺼낸다 (readOnly). 다 쓰면 닫아 돌려준다.
    *
    * @throws IllegalStateException 열린 풀이 없으면
-   * @throws SQLException 제한 시간 안에 연결을 얻지 못하면. 원인은 정리된 {@link ConnectionFailedException} 이다
+   * @throws SQLException 제한 시간 안에 연결을 얻지 못하면. 접속(Driver.connect) 실패이면 원인은 정리된 {@link
+   *     ConnectionFailedException} 이다. 연결 준비(setReadOnly, isValid, 네트워크 제한 시간)의 실패이면 원인에 드라이버 예외가
+   *     남을 수 있다 (P1-12)
    */
   public Connection getConnection(ConnectionId id) throws SQLException {
     return dataSource(id).getConnection();

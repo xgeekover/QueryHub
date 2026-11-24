@@ -21,8 +21,10 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>JDBC 전역 드라이버 등록부를 쓰지 않는다: 클래스패스의 다른 드라이버가 URL 을 가로채지 못한다.
  *   <li>비밀번호는 char[] 사본으로 들고 있다가 접속하는 순간에만 속성에 넣고, 호출이 끝나면 속성을 비운다. {@link #close()} 가 사본을 지운다.
- *   <li>드라이버 예외는 {@link ConnectionFailedException}(고정 메시지, 원인 없음)으로 바꾼다. 로그에는 분류, SQLState, 오류 코드,
- *       예외 클래스 이름만 남긴다.
+ *   <li>{@link Driver#connect} 의 드라이버 예외는 {@link ConnectionFailedException}(고정 메시지, 원인 없음)으로 바꾼다.
+ *       로그에는 분류, SQLState, 오류 코드, 예외 클래스 이름만 남긴다. 이 정리는 connect 실패에만 해당한다: 돌려준 연결은 드라이버의 연결 그대로라서,
+ *       풀 (HikariCP)이 그 연결에 부르는 setReadOnly, isValid, setNetworkTimeout 이 실패하면 드라이버 예외가 그대로 Hikari
+ *       에 가고 그 메시지가 풀의 로그에 남을 수 있다. 연결을 감싸는 일은 P1-12 로 미룬다 (BACKLOG).
  * </ul>
  */
 final class DriverConnectDataSource implements DataSource, AutoCloseable {
@@ -59,7 +61,8 @@ final class DriverConnectDataSource implements DataSource, AutoCloseable {
   /**
    * 옵션을 검사하고 URL 과 속성을 준비한다. 아직 접속하지 않는다.
    *
-   * @throws com.queryhub.domain.connection.InvalidConnectionSettingsException 허용되지 않은 옵션이 있으면
+   * @throws com.queryhub.domain.connection.InvalidConnectionSettingsException 허용되지 않은 옵션이나 옵션 값이
+   *     있으면
    */
   static DriverConnectDataSource create(
       JdbcProviderSpi spi, ConnectionSettings settings, ConnectionPassword password) {

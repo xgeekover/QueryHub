@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.JdbcDatabaseContainer;
 
 /**
@@ -127,6 +128,28 @@ abstract class DatabaseProviderContainerTest {
         .isNotEmpty()
         .containsOnly(LoopbackPorts.LOOPBACK);
     assertThat(container().getContainerInfo().getHostConfig().getPublishAllPorts()).isFalse();
+  }
+
+  /**
+   * P1-08a A-AC5, A-AC6: 이 시험 세션의 모든 컨테이너({@link LoopbackPorts#sessionContainerHostIps()})가
+   * 127.0.0.1 에만 포트를 열고, Ryuk 컨테이너는 없다. Ryuk 는 포트를 0.0.0.0 과 :: 에 열기 때문에 integrationTest 태스크가
+   * TESTCONTAINERS_RYUK_DISABLED=true 로 끈다 (runtime/app/build.gradle).
+   */
+  @Test
+  void everyContainerOfTheSessionPublishesOnLoopbackOnlyAndRyukIsOff() {
+    Map<String, List<String>> published = LoopbackPorts.sessionContainerHostIps();
+    System.out.printf(
+        "[P1-08a] %s session %s containers (name=HostIps): %s%n",
+        spi().type(), DockerClientFactory.SESSION_ID, published);
+
+    assertThat(published).as("이 세션의 컨테이너").containsKey(container().getContainerName());
+    assertThat(published.keySet())
+        .as("Ryuk 컨테이너 (integrationTest 태스크의 TESTCONTAINERS_RYUK_DISABLED=true 가 끈다)")
+        .noneMatch(name -> name.contains("testcontainers-ryuk-"));
+    assertThat(published.values().stream().flatMap(List::stream).toList())
+        .as("이 세션의 모든 컨테이너가 연 HostIp")
+        .isNotEmpty()
+        .containsOnly(LoopbackPorts.LOOPBACK);
   }
 
   @Test

@@ -8,9 +8,28 @@ Phase 마다 구현한 기능, 테스트 결과, 남은 문제를 적는다(명�
 
 ### Phase 1 (진행 중)
 
-남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. P1-07a 는 Windows CI 의 selftest i6 실패(CI-1)만 고친 작은 태스크다. P1-07b 는 그다음 Windows CI 실패(selftest d11)와 Linux CI 에서 한 번 실패한 desktop 감독 시험을 고친 작은 태스크다. 다음은 P1-08 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
+남은 문제: [docs/BACKLOG.md](docs/BACKLOG.md). P1-01 과 P1-02 는 Phase 1 의 범위(DB 연결, Provider, 관리자 토큰)가 아니라 P0-D 리뷰와 P1-01 리뷰의 후속이다. P1-03 이 Phase 1 범위의 첫 태스크(관리자 토큰), P1-04 가 둘째(마스터 키와 비밀번호 암호)다. P1-05 는 사용자 요청에 따라 Java 기준선을 17 로 맞춘 태스크다. P1-06 은 사용자 결정에 따라 Metadata 저장소를 내장 SQLite 로 바꾼 태스크다. P1-07 은 업무 DB Provider 의 첫 태스크(MariaDB, PostgreSQL)이고 P1-06 리뷰 후속을 함께 했다. P1-07a 는 Windows CI 의 selftest i6 실패(CI-1)만 고친 작은 태스크다. P1-07b 는 그다음 Windows CI 실패(selftest d11)와 Linux CI 에서 한 번 실패한 desktop 감독 시험을 고친 작은 태스크다. P1-08 은 둘로 나눴다(2026-11-24): P1-08a 는 P1-07 리뷰 후속(R1–R7)이고, 다음은 P1-08b 저장소 V2(`database_connection`, 암호화한 비밀번호), P1-09 관리 API 와 CORS, P1-10 Oracle, P1-11 MSSQL, P1-12 Phase 1 마무리다. 릴리스는 Phase 8 로 미뤘다(2026-11-23).
 
-#### P1-07b Windows CI 의 selftest d11 과 흔들리던 감독 시험 (커밋 전)
+#### P1-08a P1-07 리뷰 후속 R1–R7 (커밋 전)
+
+태스크 T-20261124-054704-a729. P1-08 요청의 A 부분이다: Queen 이 Planner 의 권고대로 P1-08 을 P1-08a(P1-07 리뷰 R1–R7 과 P1-07a 리뷰의 문서 후속)와 P1-08b(연결 저장)로 나눴다(2026-11-24). 결정은 [ADR-027](docs/ADR/ADR-027-database-provider.md)(제안)에 더했다.
+
+##### 보안
+
+- pgjdbc 의 클라이언트 인증서(P1-07 리뷰 R1): PostgreSQL Provider 의 고정 속성에 `sslcert=""`·`sslkey=""` 를 더했다. P1-07 까지 pgjdbc 42.7.14 의 기본 SSL 팩토리는 disable 밖의 모든 sslmode(기본 `prefer` 포함)에서 런타임 사용자의 `~/.postgresql/postgresql.crt`·`postgresql.pk8` 로 키 관리자를 만들어, 인증서를 요청하는 서버에 그 인증서를 보냈다(개인 키는 보내지 않는다). 이제 어떤 sslmode 에서도 두 파일을 읽지 않고, 옵션 `sslcert`·`sslkey` 는 대소문자와 상관없이 거부된다. `sslrootcert` 는 그대로다(verify 모드는 여전히 `~/.postgresql/root.crt` 를 읽는다, P107-6).
+- 통합 시험의 Ryuk(P1-07 리뷰 R4): 2026-11-24 이 머신(Docker 29.5.2, Testcontainers 2.0.5)에서 Ryuk(`testcontainers/ryuk:0.14.0`)가 8080/tcp 를 `0.0.0.0` 과 `::` 에 열었다(DB 컨테이너는 127.0.0.1 만). P1-08a 전에는 이 머신의 통합 시험이 도는 동안 Docker 자원을 지우는 끝점이 LAN 에 열려 있었다. `integrationTest` 는 이제 `TESTCONTAINERS_RYUK_DISABLED=true` 로 Ryuk 를 끄고, 새 세션 검사가 세션에 Ryuk 가 없고 모든 컨테이너가 127.0.0.1 에만 열리는지 본다([docs/BACKLOG.md](docs/BACKLOG.md) P107-11 닫힘, P0B-R6 의 남은 부분). 강제로 죽은 실행이 남긴 컨테이너는 사람이 세션 라벨로 지운다([docs/TEST_PLAN.md](docs/TEST_PLAN.md) 「integration.sh」).
+
+##### 변경
+
+- 옵션 값의 허용 목록(P1-07 리뷰 R2): `JdbcProviderSpi.allowedOptions()` 가 옵션마다 허용 값을 함께 돌려준다(`Map<String, Set<String>>`). PostgreSQL `sslmode` 는 disable, allow, prefer, require, verify-ca, verify-full, MariaDB `sslMode` 는 disable, trust, verify-ca, verify-full 이고, 값은 대소문자까지 정확히 같아야 한다. 다른 값은 연결하기 전에 `OPTION_REJECTED` 로 거부되고 메시지는 옵션 이름만 말한다(「허용되지 않은 접속 옵션입니다: <옵션 이름>」, `ConnectionFailureKind` 는 그대로). 전에는 `sslmode=requir` 같은 값이 `UNREACHABLE` 이라는 틀린 안내가 되었다. 드라이버가 받는 별칭과 대소문자 변형은 받지 않는다([docs/DATABASE_SUPPORT.md](docs/DATABASE_SUPPORT.md) 「옵션 값」). 값 집합이 없거나 빈 허용 옵션은 `IllegalStateException` 이다.
+- Javadoc 과 문서(P1-07 리뷰 R3, R5, R6, R7): 드라이버 메시지 정리는 `Driver.connect` 실패에만 해당한다고 좁혔다(`ConnectionFailedException`, `DriverConnectDataSource`, `HikariConnectionPools`, ADR-027 결정 9. 풀의 연결 준비 실패는 P107-R3, P1-12). P1-07 항목의 「결과, 예외, 로그에 드라이버 메시지가 없다」도 연결 실패에 대한 말로 읽는다. ADR-027 결정 8 은 세션 읽기 전용이 한 겹이라고 적는다. TEST_PLAN 은 추적하지 않은 파일의 근거를 `git grep --untracked` 나 `grep -rn` 으로 남기라고 적는다. P107-5 에 풀 속성을 나누라는 R7 의 권고를 적었다. socketTimeout 코드는 바뀌지 않았다.
+- 문서: P1-07b 의 커밋 표시(019a9b8)와 P1-07b 코드의 CI 실행 45291231932 의 결과를 적었다(Windows 에서 selftest 의 i6·d11 통과, 다음 막힘은 `cargo-test-check.sh` 의 `[LIB_WITHOUT_TESTS]` 로 사람의 결정 대기. [docs/BACKLOG.md](docs/BACKLOG.md) CI-1, PLAT-1, [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 「CI」). P1-07a 리뷰 R4(PLAT-1 의 통합 시험 괄호를 Linux 쪽으로)와 R5(i6 도 SKIP 될 수 있다)를 반영했다. P1-07a 리뷰 R1·R2 와 P1-07b 리뷰 R1 은 CI-3, P1-07b 리뷰 R2 는 CI-4 로 적었다. `.github/workflows/ci.yml` 은 머리 주석만 바꿨다.
+
+- 남은 것: verify 모드의 신뢰 출처와 `sslrootcert`(P107-6), 풀의 연결 준비 실패의 드라이버 메시지(P107-R3), socketTimeout 과 풀 속성(P107-5). R1 의 근거는 단위 시험뿐이다(통합 시험의 PostgreSQL 은 서버 SSL 이 없다). `PostgreSqlClientCertificateTest` 는 Windows 에서 건너뛰므로, Windows 에서 runtime 단계까지 `test.sh` 를 돌리면 `[SKIPPED]` 로 실패한다(지금의 Windows CI 는 `--desktop-only` 라 닿지 않는다, PLAT-1). 보호 파일 `selftest.sh`, `junit-check.sh`, `cargo-test-check.sh` 는 바꾸지 않았다.
+
+테스트(테스터가 2026-11-24 macOS arm64 에서 돌린 게이트 스크립트 네 개, 모두 exit 0): runtime 단위 1146(P1-07 의 1093 에서 +53, 건너뜀 0), 통합 54(52 에서 +2), vitest 44, cargo test 79, `selftest.sh` 279 시나리오. 개발 중의 대상 실행(macOS arm64, `--offline`)에서 adapter-dbprovider 35, provider-mariadb 38, provider-postgresql 46 건이 통과했고(P1-07 은 20, 20, 26), 통합은 `MariaDbProviderIntegrationTest` 11, `PostgreSqlProviderIntegrationTest` 10 건이 통과했다(P1-07 은 10, 9). 거짓 통과 확인: `sslcert`·`sslkey` 를 뺀 임시 사본에서 「인증서를 내지 않는다」 시험이 별칭 `user` 로 실패했고, Ryuk 설정을 뺀 임시 사본에서 세션 검사가 Ryuk 컨테이너로 실패했다(두 파일은 바이트 그대로 되돌렸다). `docker images` 는 실행 앞뒤가 같았다(받은 이미지 없음).
+
+#### P1-07b Windows CI 의 selftest d11 과 흔들리던 감독 시험 — 019a9b8 (2026-11-24)
 
 태스크 T-20261124-070034-0f4a. 사람의 결정(2026-11-24) 「작은 태스크 P1-07b (권장)」([REQUIREMENTS.md](docs/REQUIREMENTS.md) AR-3)에 따라 보호 파일 `scripts/gate/selftest.sh` 의 d11 픽스처만 고쳤다. 사람은 이 태스크에서만, d11 픽스처에만 보호 파일을 바꾸는 데 동의했다.
 

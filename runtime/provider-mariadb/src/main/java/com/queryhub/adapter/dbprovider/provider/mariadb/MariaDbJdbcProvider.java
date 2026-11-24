@@ -31,7 +31,9 @@ import java.util.Set;
  * </ul>
  *
  * <p>옵션 허용 목록은 TLS 모드({@code sslMode}) 하나다. 나머지(allowLocalInfile, sessionVariables, credentialType,
- * socketFactory 등)는 이름을 밝혀 거부된다.
+ * socketFactory 등)는 이름을 밝혀 거부된다. {@code sslMode} 의 값은 {@link #SSL_MODES} 중 하나와 정확히 같아야 한다.
+ * Connector/J 3.5.11 이 함께 받는 {@code allow} 와 별칭(DISABLED, 0, false, REQUIRED, VERIFY_CA,
+ * VERIFY_IDENTITY, 1, true), 대소문자 변형은 일부러 받지 않는다 (별칭은 드라이버 버전마다 다르다).
  */
 public final class MariaDbJdbcProvider implements JdbcProviderSpi {
 
@@ -46,7 +48,10 @@ public final class MariaDbJdbcProvider implements JdbcProviderSpi {
    */
   static final int ER_DBACCESS_DENIED_ERROR = 1044;
 
-  static final Set<String> ALLOWED_OPTIONS = Set.of("sslMode");
+  /** Connector/J 3.5.11 SslMode 의 기본 이름 (allow 제외). */
+  static final Set<String> SSL_MODES = Set.of("disable", "trust", "verify-ca", "verify-full");
+
+  static final Map<String, Set<String>> ALLOWED_OPTIONS = Map.of("sslMode", SSL_MODES);
 
   private static final int MAX_CAUSE_DEPTH = 16;
 
@@ -80,7 +85,7 @@ public final class MariaDbJdbcProvider implements JdbcProviderSpi {
   }
 
   @Override
-  public Set<String> allowedOptions() {
+  public Map<String, Set<String>> allowedOptions() {
     return ALLOWED_OPTIONS;
   }
 
