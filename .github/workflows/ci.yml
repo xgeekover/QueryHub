@@ -31,6 +31,9 @@
 #   cargo test --locked 는 exit 0(lib 시험 41 건 통과)이었지만 cargo-test-check.sh --require-lib 이 [LIB_WITHOUT_TESTS] 로 실패했다.
 #   Windows 의 cargo 는 unittests 줄의 경로를 역슬래시로 찍고(src\lib.rs), cargo-test-check.sh 는 unittests src/lib.rs 만 맞춘다.
 #   다음 막힘이고, 보호 파일이라 고치려면 사람의 결정이 필요하다(결정 대기). lint.sh 는 Windows 에서 아직 돌지 않았다(PLAT-1).
+# P1-08a 코드(공개 저장소의 e1ae6fb)의 실행 45341111870: gates(통합 시험이 처음으로 Ryuk 없이 돌았다)와 macOS 는 성공, Windows 는
+#   같은 [LIB_WITHOUT_TESTS] 에서 실패. 사람의 결정 「작은 태스크 P1-07c (권장)」(2026-11-24): P1-07c(커밋 전)는 이 파일이 아니라
+#   cargo-test-check.sh 의 lib 블록 줄만 고쳐 src/lib.rs 와 src\lib.rs 를 모두 받는다. 그다음 Windows 단계 lint.sh 는 미검증이다.
 #
 # 팩토리 게이트와 같은 스크립트를 같은 명령으로 실행한다. gradle, pnpm, cargo 명령을 여기에 따로 적지 않는다. 그래서 거짓 통과
 # 방어(junit-check.sh, cargo-test-check.sh, selftest.sh)가 로컬과 똑같이 적용된다. 이 파일은 workflow-check.sh 가 lint 단계에서

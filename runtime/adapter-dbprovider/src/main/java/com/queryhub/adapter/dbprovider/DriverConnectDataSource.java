@@ -23,8 +23,11 @@ import org.slf4j.LoggerFactory;
  *   <li>비밀번호는 char[] 사본으로 들고 있다가 접속하는 순간에만 속성에 넣고, 호출이 끝나면 속성을 비운다. {@link #close()} 가 사본을 지운다.
  *   <li>{@link Driver#connect} 의 드라이버 예외는 {@link ConnectionFailedException}(고정 메시지, 원인 없음)으로 바꾼다.
  *       로그에는 분류, SQLState, 오류 코드, 예외 클래스 이름만 남긴다. 이 정리는 connect 실패에만 해당한다: 돌려준 연결은 드라이버의 연결 그대로라서,
- *       풀 (HikariCP)이 그 연결에 부르는 setReadOnly, isValid, setNetworkTimeout 이 실패하면 드라이버 예외가 그대로 Hikari
- *       에 가고 그 메시지가 풀의 로그에 남을 수 있다. 연결을 감싸는 일은 P1-12 로 미룬다 (BACKLOG).
+ *       connect 뒤에 풀 (HikariCP 7.0.2)이 그 연결에 부르는 모든 호출(연결 준비의 setReadOnly, getAutoCommit,
+ *       getTransactionIsolation, getNetworkTimeout/setNetworkTimeout, isValid 같은 것, 빌릴 때의 확인, 돌려받을
+ *       때의 상태 되돌리기, close)이 실패하면 드라이버 예외가 그대로 Hikari 에 가고 그 메시지가 Hikari 의 로그(WARN/INFO/DEBUG)와 예외
+ *       원인에 남을 수 있다. 이름들은 예일 뿐이고, 감싸려면 Connection 전체(또는 Hikari 가 부르는 모든 메서드)를 감싸야 한다. 그 일은 P1-12 로
+ *       미룬다 (BACKLOG P107-R3).
  * </ul>
  */
 final class DriverConnectDataSource implements DataSource, AutoCloseable {

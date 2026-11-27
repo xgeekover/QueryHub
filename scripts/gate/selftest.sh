@@ -309,6 +309,38 @@ sed "s/Running/${esc}[1m${esc}[92mRunning${esc}[0m/" "$CARGO_WORK/ok.txt" >"$CAR
 # 읽기 권한이 없는 파일
 write_cargo unreadable 3 0 0 0
 chmod 000 "$CARGO_WORK/unreadable.txt"
+# P1-07c: Windows 의 cargo 는 머리 줄의 경로 구분자를 역슬래시로 찍는다(CI 실행 45291231932 의 windows-2025 작업).
+# 역슬래시가 파일에 그대로 들어가도록 작은따옴표 인자를 printf '%s\n' 로 쓴다(echo -e 는 쓰지 않는다).
+# write_cargo_win NAME LIB_HEADER LIB_RESULT_ARGS... : write_cargo 와 같은 세 블록을 Windows 형식 머리 줄로 쓴다.
+#   LIB_HEADER 는 첫 블록의 이름("unittests src\lib.rs" 또는 닮은꼴)이다.
+write_cargo_win() {
+  local name="$1" lib_header="$2"
+  shift 2
+  {
+    printf '%s\n' '   Compiling queryhub-desktop v0.1.0 (D:\a\QueryHub\QueryHub\desktop\src-tauri)'
+    printf '%s\n' '    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.90s'
+    printf '%s %s\n' "     Running $lib_header" '(desktop\src-tauri\target\debug\deps\queryhub_desktop_lib-0cef3de975e09c55.exe)'
+    printf '%s\n' '' "running $1 tests" 'test runtime::tests::sample ... ok' ''
+    cargo_result "$@"
+    printf '%s\n' '' '     Running unittests src\main.rs (desktop\src-tauri\target\debug\deps\queryhub_desktop-a7b6b843b5d83e63.exe)'
+    printf '%s\n' '' 'running 0 tests' ''
+    cargo_result 0 0 0 0
+    printf '%s\n' '' '   Doc-tests queryhub_desktop_lib' '' 'running 0 tests' ''
+    cargo_result 0 0 0 0
+  } >"$CARGO_WORK/$name.txt"
+}
+# (c-w1) lib 3 건, main 0 건, doc-tests 0 건: --require-lib 로 통과해야 한다.
+write_cargo_win win-ok 'unittests src\lib.rs' 3 0 0 0
+# (c-w2) lib 블록은 0 건이고 다른 바이너리(tests\it.rs)에만 테스트가 있다: --require-lib 이면 LIB_WITHOUT_TESTS 로만 거부.
+write_cargo_win win-lib-empty 'unittests src\lib.rs' 0 0 0 0
+{
+  printf '%s\n' '     Running tests\it.rs (desktop\src-tauri\target\debug\deps\it-89ab.exe)' '' 'running 3 tests' ''
+  cargo_result 3 0 0 0
+} >>"$CARGO_WORK/win-lib-empty.txt"
+# (c-w3) 닮은꼴 src_lib.rs: 구분자 자리에 아무 글자나 받는 정규식이면 통과해 버린다.
+write_cargo_win win-lookalike 'unittests src_lib.rs' 3 0 0 0
+# (c-w4) 역슬래시 두 개(src\\lib.rs): 구분자를 한 글자보다 많이 받는 정규식이면 통과해 버린다.
+write_cargo_win win-double-sep 'unittests src\\lib.rs' 3 0 0 0
 
 # expect_cargo WANT REASON LABEL ARGS...: expect 와 같지만 cargo-test-check.sh 를 실행한다.
 expect_cargo() {
@@ -355,6 +387,10 @@ else
 fi
 expect_cargo reject - '(c-u1) 사용법 오류: FILE 없음' --require-lib
 expect_cargo reject - '(c-u2) 사용법 오류: 모르는 옵션' --strict "$CARGO_WORK/ok.txt"
+expect_cargo pass - '(c-w1) Windows 형식 머리 줄 unittests src\lib.rs (lib 3, main 0, doc-tests 0)' --require-lib "$CARGO_WORK/win-ok.txt"
+expect_cargo reject LIB_WITHOUT_TESTS '(c-w2) Windows 형식, --require-lib 에서 lib 블록 0 건' --require-lib "$CARGO_WORK/win-lib-empty.txt"
+expect_cargo reject LIB_WITHOUT_TESTS '(c-w3) 닮은꼴 unittests src_lib.rs 는 lib 블록이 아니다' --require-lib "$CARGO_WORK/win-lookalike.txt"
+expect_cargo reject LIB_WITHOUT_TESTS '(c-w4) 역슬래시 두 개 unittests src\\lib.rs 는 lib 블록이 아니다' --require-lib "$CARGO_WORK/win-double-sep.txt"
 
 # ---- P0-D: 게이트 범위 해석기, docker_preflight, docs-check.sh, workflow-check.sh ----
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"

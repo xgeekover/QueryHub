@@ -59,7 +59,8 @@ parsed="$(LC_ALL=C awk '
     current = name
     open = 1
     binaries++
-    lib_block = (name ~ /^unittests src\/lib\.rs/)
+    # Windows 의 cargo 는 구분자를 역슬래시로 찍는다(CI 실행 45291231932, P1-07c). src 와 lib.rs 사이에는 / 또는 역슬래시 한 글자만 받는다.
+    lib_block = (name ~ /^unittests src(\/|\\)lib\.rs/)
     if (lib_block) {
       lib_found = 1
     }

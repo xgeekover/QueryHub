@@ -121,6 +121,7 @@ TLS 모드 옵션은 값도 허용 목록이다([ADR-027](ADR/ADR-027-database-p
 | 그 밖에 거부하는 것 | 오타와 앞뒤 공백(예: `verify_full`, `verify-full `), 빈 값 | 오타와 앞뒤 공백(예: `requir`, `verify_full`, `require `), 빈 값. 옵션 이름 `sslcert`·`sslkey`(고정 속성이라 대소문자와 상관없이)와 `sslrootcert`(허용 목록 밖) |
 
 - 별칭을 받지 않는 까닭: 별칭은 드라이버 버전마다 다르고, 옵션 이름도 이미 대소문자를 구분한다. 저장된 값이 드라이버를 바꾼 뒤 다른 뜻이 되지 않게 한 가지 철자만 받는다.
+- MariaDB 의 `allow` 는 별칭이 아니다: Connector/J 3.5.11 에서 `allow` 는 `SslMode` 의 주 값(`ALLOW`)이므로 위 까닭에 들지 않고, 빼는 까닭은 아직 적지 않았다. 그래서 MariaDB 에는 기회적 TLS 모드가 없고 PostgreSQL 은 `allow`·`prefer` 를 받는다. 받을지는 연결 API 와 함께 정하는 열린 선택이다([BACKLOG.md](BACKLOG.md) P108A-R5, P1-08a 리뷰 1회차 R5).
 - Provider 가 값 집합 없이(또는 빈 집합으로) 옵션을 허용하면 공통 코드가 `IllegalStateException` 을 던진다(값을 검사하지 않는 옵션은 둘 수 없다).
 - `sslrootcert` 는 고정하지 않았다: 빈 값으로 고정하면 verify-ca·verify-full 이 그 경로를 열다가 실패한다. 두 모드는 런타임 사용자의 `~/.postgresql/root.crt` 를 읽는다(P107-6).
 
